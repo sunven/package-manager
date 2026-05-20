@@ -20,6 +20,7 @@ body,
 #app {
   min-height: 100%;
   margin: 0;
+  overflow-x: hidden;
 }
 
 button {
@@ -196,7 +197,7 @@ button:disabled {
 
 .managers {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -253,6 +254,7 @@ button:disabled {
 }
 
 .panel {
+  min-width: 0;
   border: 1px solid #d9e1e4;
   border-radius: 8px;
   background: #ffffff;
@@ -278,13 +280,13 @@ button:disabled {
 }
 
 .table {
-  overflow: auto;
+  overflow: hidden;
 }
 
 .table-head,
 .row {
   display: grid;
-  grid-template-columns: minmax(170px, 1fr) 110px minmax(120px, 0.7fr) minmax(220px, 1.2fr) 118px;
+  grid-template-columns: minmax(0, 1fr) 82px minmax(0, 0.7fr) minmax(0, 1.2fr) 108px;
   gap: 10px;
   align-items: center;
 }
@@ -332,11 +334,13 @@ button:disabled {
 
 .action-cell {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
 }
 
 .path-card,
+.cleanup-card,
 .failure,
 .command-list {
   margin: 12px;
@@ -353,6 +357,12 @@ button:disabled {
   justify-content: space-between;
   gap: 10px;
   align-items: center;
+}
+
+.path-main > *,
+.failure-head > *,
+.command-row > * {
+  min-width: 0;
 }
 
 .path-label {
@@ -374,13 +384,15 @@ button:disabled {
   display: block;
   margin-top: 10px;
   padding: 9px;
-  overflow-x: auto;
+  overflow-x: hidden;
   border-radius: 6px;
   background: #eef3f5;
   color: #26343a;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 18px;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .path-detail {
@@ -432,7 +444,8 @@ button:disabled {
 
 .failure pre {
   max-height: 180px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   margin: 10px 0 0;
   padding: 10px;
   border-radius: 6px;
@@ -441,6 +454,84 @@ button:disabled {
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cleanup-card pre {
+  max-height: 220px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  margin: 10px 0 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: #2b3033;
+  color: #f2f5f6;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.homebrew-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid #e4eaed;
+  background: #fbfcfd;
+}
+
+.homebrew-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e4eaed;
+}
+
+.filter {
+  border: 1px solid #ccd6da;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1b2b32;
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.filter.active {
+  border-color: #1d6f68;
+  background: #e6f4ef;
+  color: #16624d;
+}
+
+.kind-tag,
+.signal {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.kind-tag {
+  background: #edf2f4;
+  color: #52656e;
+}
+
+.signal-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.signal {
+  margin-left: 0;
 }
 
 .empty {
@@ -478,5 +569,9 @@ button:disabled {
 
   .managers {
     grid-template-columns: 1fr;
+  }
+
+  .homebrew-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

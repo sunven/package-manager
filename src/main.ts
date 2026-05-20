@@ -2,10 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
-type ManagerId = "Npm" | "Pnpm" | "Yarn";
+type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Homebrew";
 type ManagerStatus = "Ready" | "Missing" | "Unsupported" | "Partial" | "Failed";
-type DiskUsageStatus = "Ready" | "Missing" | "PermissionDenied" | "Error";
-type PathKind = "Cache" | "Store" | "GlobalModules" | "GlobalDir";
+type DiskUsageStatus = "Pending" | "Ready" | "Missing" | "PermissionDenied" | "Error";
+type PathKind = "Cache" | "Store" | "GlobalModules" | "GlobalDir" | "Prefix" | "Cellar" | "Caskroom";
+type PackageKind = "Generic" | "Formula" | "Cask";
+type PackageSignal = "Outdated" | "Leaf";
+type AsyncStatus = "Pending" | "Ready" | "Failed";
+type HomebrewFilter = "All" | "Formulae" | "Casks" | "Outdated" | "Leaves";
 type FailureKind =
   | "MissingBinary"
   | "CommandFailed"
@@ -43,6 +47,9 @@ interface PackageRow {
   version: string;
   path: string | null;
   source: string;
+  kind: PackageKind;
+  signals: PackageSignal[];
+  actions: CommandEnvelope[];
 }
 
 interface PathInfo {
@@ -62,11 +69,32 @@ interface ManagerSnapshot {
   commands: CommandEnvelope[];
   failures: CommandFailure[];
   unsupportedReason: string | null;
+  homebrew: HomebrewMaintenance | null;
 }
 
-interface ScanSnapshot {
+interface HomebrewMaintenance {
+  formulaCount: number;
+  caskCount: number;
+  outdatedCount: number;
+  leafCount: number;
+  outdated: string[];
+  leaves: string[];
+  cleanup: HomebrewCleanupPreview;
+}
+
+interface HomebrewCleanupPreview {
+  status: AsyncStatus;
+  command: CommandEnvelope;
+  rawOutput: string;
+  reclaimedBytes: number | null;
+  reclaimedHuman: string | null;
+  message: string | null;
+  failure: CommandFailure | null;
+}
+
+interface ManagerScanSnapshot {
   scanDurationMs: number;
-  managers: ManagerSnapshot[];
+  manager: ManagerSnapshot;
 }
 
 type MessageTone = "bad" | "ok" | "warn";
@@ -82,20 +110,33 @@ if (!app) {
   throw new Error("App container missing");
 }
 
-let snapshot: ScanSnapshot | null = null;
+const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Homebrew"];
+const managerLabels: Record<ManagerId, string> = {
+  Npm: "npm",
+  Pnpm: "pnpm",
+  Yarn: "Yarn",
+  Homebrew: "Homebrew",
+};
+
+let managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>> = {};
+let scanDurationMsByManager: Partial<Record<ManagerId, number>> = {};
 let selectedManager: ManagerId = "Npm";
 let selectedPackageIndex = 0;
+let selectedHomebrewFilter: HomebrewFilter = "All";
 let lastCopied = "";
-let isScanning = false;
+let scanningManagers = new Set<ManagerId>();
+let sizeScanTokens: Record<ManagerId, number> = { Npm: 0, Pnpm: 0, Yarn: 0, Homebrew: 0 };
+let pendingSizeScansByManager: Record<ManagerId, number> = { Npm: 0, Pnpm: 0, Yarn: 0, Homebrew: 0 };
+let homebrewCleanupToken = 0;
+let pendingHomebrewCleanup = false;
 let uiMessage: UiMessage | null = null;
 
 app.innerHTML = `
   <div class="shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">Local Tauri tool</p>
         <h1>Package Manager Control Center</h1>
-        <p class="lede">查看 npm、pnpm 和 Yarn Classic 的全局包、缓存位置和总空间。Yarn modern 只展示缓存信息，不伪装成全局列表。</p>
+        <p class="lede">查看 npm、pnpm、Yarn Classic 和 Homebrew 的全局包、缓存位置和维护信号。Homebrew 只复制安全命令，不直接执行清理或升级。</p>
       </div>
       <div class="topbar-actions">
         <button id="refresh-button" data-action="refresh" class="primary" type="button">Refresh scan</button>
@@ -167,12 +208,23 @@ async function handleAction(target: HTMLElement) {
 
   try {
     if (action === "refresh") {
-      await refresh();
+      await refresh(selectedManager);
       return;
     }
 
     if (action === "manager-tab" && target.dataset.manager) {
-      selectedManager = target.dataset.manager as ManagerId;
+      const managerId = target.dataset.manager as ManagerId;
+      selectedManager = managerId;
+      selectedPackageIndex = 0;
+      render();
+      if (!managerSnapshots[managerId] && !scanningManagers.has(managerId)) {
+        void refresh(managerId);
+      }
+      return;
+    }
+
+    if (action === "homebrew-filter" && target.dataset.filter) {
+      selectedHomebrewFilter = target.dataset.filter as HomebrewFilter;
       selectedPackageIndex = 0;
       render();
       return;
@@ -202,6 +254,26 @@ async function handleAction(target: HTMLElement) {
       return;
     }
 
+    if (action === "copy-cleanup-command") {
+      const cleanup = manager?.homebrew?.cleanup;
+      if (cleanup) {
+        await writeText(cleanup.command.preview);
+        markCopied(cleanup.command.preview);
+      }
+      return;
+    }
+
+    if (action === "copy-package-action" && manager) {
+      const pkg = packageFromTarget(target);
+      const actionIndex = Number(target.dataset.actionIndex);
+      const packageAction = Number.isNaN(actionIndex) ? null : pkg?.actions[actionIndex];
+      if (packageAction) {
+        await writeText(packageAction.preview);
+        markCopied(packageAction.preview);
+      }
+      return;
+    }
+
     if (action === "copy-package" && manager) {
       const pkg = packageFromTarget(target);
       if (pkg) {
@@ -223,28 +295,96 @@ async function handleAction(target: HTMLElement) {
   }
 }
 
-async function refresh() {
-  if (isScanning) return;
+async function refresh(managerId: ManagerId) {
+  if (scanningManagers.has(managerId)) return;
 
-  isScanning = true;
+  scanningManagers.add(managerId);
+  sizeScanTokens[managerId] += 1;
+  if (managerId === "Homebrew") {
+    homebrewCleanupToken += 1;
+    pendingHomebrewCleanup = false;
+  }
+  pendingSizeScansByManager[managerId] = 0;
   uiMessage = null;
   render();
 
   try {
-    snapshot = await invoke<ScanSnapshot>("scan_managers");
-    if (!snapshot.managers.some((manager) => manager.id === selectedManager)) {
-      selectedManager = snapshot.managers[0]?.id ?? "Npm";
-    }
-    const current = currentManager();
-    if (current && selectedPackageIndex >= current.packages.length) {
+    const result = await invoke<ManagerScanSnapshot>("scan_manager", { manager: managerId });
+    managerSnapshots[result.manager.id] = result.manager;
+    scanDurationMsByManager[result.manager.id] = result.scanDurationMs;
+    if (result.manager.id === selectedManager && selectedPackageIndex >= result.manager.packages.length) {
       selectedPackageIndex = 0;
     }
+    void hydratePathSizes(result.manager.id, sizeScanTokens[result.manager.id]);
+    if (result.manager.id === "Homebrew" && result.manager.homebrew?.cleanup.status === "Pending") {
+      void hydrateHomebrewCleanup(homebrewCleanupToken);
+    }
   } catch (error) {
-    showError("Scan failed", error);
+    if (managerId === selectedManager) {
+      showError(`${managerLabel(managerId)} scan failed`, error);
+    }
   } finally {
-    isScanning = false;
+    scanningManagers.delete(managerId);
     render();
   }
+}
+
+async function hydrateHomebrewCleanup(token: number) {
+  pendingHomebrewCleanup = true;
+  renderMeta();
+
+  try {
+    const cleanup = await invoke<HomebrewCleanupPreview>("hydrate_homebrew_cleanup");
+    const manager = managerSnapshots.Homebrew;
+    if (token !== homebrewCleanupToken || !manager?.homebrew) return;
+    manager.homebrew.cleanup = cleanup;
+  } catch (error) {
+    const manager = managerSnapshots.Homebrew;
+    if (token !== homebrewCleanupToken || !manager?.homebrew) return;
+    manager.homebrew.cleanup = {
+      status: "Failed",
+      command: manager.homebrew.cleanup.command,
+      rawOutput: "",
+      reclaimedBytes: null,
+      reclaimedHuman: null,
+      message: errorToString(error),
+      failure: null,
+    };
+  } finally {
+    if (token === homebrewCleanupToken) {
+      pendingHomebrewCleanup = false;
+      render();
+    }
+  }
+}
+
+async function hydratePathSizes(managerId: ManagerId, token: number) {
+  const activeManager = managerSnapshots[managerId];
+  if (!activeManager) return;
+
+  const paths = activeManager.paths;
+  pendingSizeScansByManager[managerId] = paths.filter((path) => path.size.status === "Pending").length;
+  renderMeta();
+
+  await Promise.all(
+    paths.map(async (pathInfo) => {
+      if (pathInfo.size.status !== "Pending") return;
+
+      try {
+        const size = await invoke<DiskUsage>("measure_path_size", { path: pathInfo.path });
+        if (token !== sizeScanTokens[managerId] || managerSnapshots[managerId] !== activeManager) return;
+        pathInfo.size = size;
+      } catch (error) {
+        if (token !== sizeScanTokens[managerId] || managerSnapshots[managerId] !== activeManager) return;
+        pathInfo.size = sizeScanError(error);
+      } finally {
+        if (token === sizeScanTokens[managerId] && managerSnapshots[managerId] === activeManager) {
+          pendingSizeScansByManager[managerId] = Math.max(0, pendingSizeScansByManager[managerId] - 1);
+          render();
+        }
+      }
+    }),
+  );
 }
 
 function render() {
@@ -257,12 +397,12 @@ function render() {
 }
 
 function renderOverview() {
-  const managers = snapshot?.managers ?? [];
+  const managers = scannedManagers();
   const totalBytes = managers.reduce((sum, manager) => {
     return (
       sum +
       manager.paths.reduce((pathSum, path) => {
-        return path.kind === "Cache" || path.kind === "Store"
+        return countedSizePath(path.kind)
           ? pathSum + (path.size.bytes ?? 0)
           : pathSum;
       }, 0)
@@ -274,7 +414,7 @@ function renderOverview() {
   const unsupported = managers.filter((manager) => manager.status === "Unsupported").length;
 
   overviewEl.innerHTML = `
-    ${statCard("Managers", String(managers.length))}
+    ${statCard("Managers", `${managers.length}/${managerOrder.length}`)}
     ${statCard("Ready", String(readyManagers))}
     ${statCard("Packages", String(totalPackages))}
     ${statCard("Total size", formatBytes(totalBytes))}
@@ -283,14 +423,17 @@ function renderOverview() {
 }
 
 function renderManagers() {
-  const managers = snapshot?.managers ?? [];
-  managerTabsEl.innerHTML = managers
-    .map((manager) => {
-      const active = manager.id === selectedManager ? "active" : "";
+  managerTabsEl.innerHTML = managerOrder
+    .map((managerId) => {
+      const manager = managerSnapshots[managerId];
+      const active = managerId === selectedManager ? "active" : "";
+      const scanning = scanningManagers.has(managerId);
+      const status = scanning ? "Scanning" : manager?.status ?? "Not scanned";
+      const statusClassName = scanning ? "partial" : statusClass(manager?.status ?? "neutral");
       return `
-        <button class="tab ${active}" data-action="manager-tab" data-manager="${manager.id}">
-          <span>${manager.label}</span>
-          <span class="tab-status ${statusClass(manager.status)}">${manager.status}</span>
+        <button class="tab ${active}" data-action="manager-tab" data-manager="${managerId}">
+          <span>${manager?.label ?? managerLabel(managerId)}</span>
+          <span class="tab-status ${statusClassName}">${status}</span>
         </button>
       `;
     })
@@ -299,9 +442,12 @@ function renderManagers() {
 
 function renderWorkspace() {
   const manager = currentManager();
-  managerTitleEl.textContent = manager ? `${manager.label}${manager.version ? ` ${manager.version}` : ""}` : "Manager";
-  managerStatusEl.textContent = manager?.status ?? "Unknown";
-  managerStatusEl.className = `pill ${statusClass(manager?.status ?? "Failed")}`;
+  const scanning = scanningManagers.has(selectedManager);
+  managerTitleEl.textContent = manager
+    ? `${manager.label}${manager.version ? ` ${manager.version}` : ""}`
+    : managerLabel(selectedManager);
+  managerStatusEl.textContent = scanning ? "Scanning" : manager?.status ?? "Not scanned";
+  managerStatusEl.className = `pill ${scanning ? "partial" : statusClass(manager?.status ?? "neutral")}`;
   packageTableEl.innerHTML = renderPackageTable(manager);
   pathListEl.innerHTML = renderPathList(manager);
   failureListEl.innerHTML = renderFailures(manager);
@@ -309,7 +455,11 @@ function renderWorkspace() {
 
 function renderPackageTable(manager: ManagerSnapshot | null) {
   if (!manager) {
-    return emptyState("No manager selected");
+    return emptyState(scanningManagers.has(selectedManager) ? "Scanning packages..." : "Not scanned yet");
+  }
+
+  if (manager.id === "Homebrew") {
+    return renderHomebrewPackageTable(manager);
   }
 
   if (manager.status === "Unsupported") {
@@ -354,13 +504,23 @@ function renderPackageTable(manager: ManagerSnapshot | null) {
 }
 
 function renderPathList(manager: ManagerSnapshot | null) {
-  if (!manager) return emptyState("No path data");
+  if (!manager) {
+    return emptyState(scanningManagers.has(selectedManager) ? "Scanning paths..." : "Not scanned yet");
+  }
 
   const paths = manager.paths.length
     ? manager.paths
     .map((path) => {
       const size = path.size;
       const openDisabled = size.status === "Missing" ? "disabled" : "";
+      const detail =
+        size.status === "Pending"
+          ? `<span>Waiting for size scan</span>`
+          : `
+            <span>${size.files} files</span>
+            <span>${size.directories} dirs</span>
+            <span>${size.skipped} skipped</span>
+          `;
       return `
         <div class="path-card">
           <div class="path-main">
@@ -374,9 +534,7 @@ function renderPathList(manager: ManagerSnapshot | null) {
           </div>
           <code class="path-value">${escapeHtml(path.path)}</code>
           <div class="path-detail">
-            <span>${size.files} files</span>
-            <span>${size.directories} dirs</span>
-            <span>${size.skipped} skipped</span>
+            ${detail}
           </div>
           ${size.message ? `<p class="path-message">${escapeHtml(size.message)}</p>` : ""}
           <div class="path-actions">
@@ -390,8 +548,43 @@ function renderPathList(manager: ManagerSnapshot | null) {
     : emptyState("No cache or store path resolved");
 
   return `
+    ${manager.id === "Homebrew" ? renderHomebrewCleanup(manager.homebrew) : ""}
     ${paths}
     ${renderCommandList(manager)}
+  `;
+}
+
+function renderHomebrewCleanup(maintenance: HomebrewMaintenance | null) {
+  if (!maintenance) return "";
+
+  const cleanup = maintenance.cleanup;
+  const status = pendingHomebrewCleanup && cleanup.status === "Pending" ? "Pending" : cleanup.status;
+  const body =
+    cleanup.status === "Ready"
+      ? cleanup.rawOutput
+        ? `<pre>${escapeHtml(trimTail(cleanup.rawOutput, 10))}</pre>`
+        : `<p class="path-message">Cleanup dry-run completed with no output.</p>`
+      : cleanup.status === "Failed"
+        ? `<p class="path-message">${escapeHtml(cleanup.message ?? "Cleanup dry-run failed")}</p>${cleanup.rawOutput ? `<pre>${escapeHtml(trimTail(cleanup.rawOutput, 10))}</pre>` : ""}`
+        : `<p class="path-message">Cleanup dry-run is loading separately so the Homebrew tab can render quickly.</p>`;
+
+  return `
+    <div class="cleanup-card">
+      <div class="path-main">
+        <div>
+          <p class="path-label">Cleanup dry-run</p>
+          <p class="path-kind">Preview only, no files are deleted</p>
+        </div>
+        <div class="size-badge ${statusClass(status)}">
+          ${cleanup.reclaimedHuman ?? status}
+        </div>
+      </div>
+      <code class="path-value">${escapeHtml(cleanup.command.preview)}</code>
+      ${body}
+      <div class="path-actions">
+        <button class="ghost" data-action="copy-cleanup-command" type="button">Copy dry-run</button>
+      </div>
+    </div>
   `;
 }
 
@@ -417,7 +610,7 @@ function renderCommandList(manager: ManagerSnapshot) {
 }
 
 function renderFailures(manager: ManagerSnapshot | null) {
-  if (!manager) return emptyState("No diagnostics");
+  if (!manager) return emptyState("Not scanned yet");
   if (!manager.failures.length) return emptyState("No failures recorded");
 
   return manager.failures
@@ -438,15 +631,20 @@ function renderFailures(manager: ManagerSnapshot | null) {
 
 function renderMeta() {
   const parts: string[] = [];
-  if (isScanning) parts.push("Scanning...");
-  if (snapshot) parts.push(`Scan ${snapshot.scanDurationMs} ms`);
+  const pendingSizeScans = pendingSizeScansByManager[selectedManager];
+  const scanDurationMs = scanDurationMsByManager[selectedManager];
+  if (scanningManagers.has(selectedManager)) parts.push(`Scanning ${managerLabel(selectedManager)}...`);
+  if (pendingSizeScans > 0) parts.push(`Sizing ${pendingSizeScans} paths...`);
+  if (selectedManager === "Homebrew" && pendingHomebrewCleanup) parts.push("Cleanup dry-run...");
+  if (scanDurationMs !== undefined) parts.push(`Scan ${scanDurationMs} ms`);
   if (lastCopied) parts.push(`Copied ${lastCopied}`);
   scanMetaEl.textContent = parts.join(" · ");
 }
 
 function renderControls() {
-  refreshButtonEl.disabled = isScanning;
-  refreshButtonEl.textContent = isScanning ? "Scanning..." : "Refresh scan";
+  const scanning = scanningManagers.has(selectedManager);
+  refreshButtonEl.disabled = scanning;
+  refreshButtonEl.textContent = scanning ? `Scanning ${managerLabel(selectedManager)}...` : `Refresh ${managerLabel(selectedManager)}`;
 }
 
 function renderMessage() {
@@ -487,7 +685,7 @@ function showError(title: string, error: unknown) {
 }
 
 function currentManager(): ManagerSnapshot | null {
-  return snapshot?.managers.find((manager) => manager.id === selectedManager) ?? null;
+  return managerSnapshots[selectedManager] ?? null;
 }
 
 function packageFromTarget(target: HTMLElement): PackageRow | null {
@@ -506,6 +704,17 @@ function statCard(label: string, value: string) {
   `;
 }
 
+function scannedManagers() {
+  return managerOrder.flatMap((managerId) => {
+    const manager = managerSnapshots[managerId];
+    return manager ? [manager] : [];
+  });
+}
+
+function managerLabel(managerId: ManagerId) {
+  return managerLabels[managerId];
+}
+
 function emptyState(message: string) {
   return `<div class="empty"><p class="empty-title">${message}</p></div>`;
 }
@@ -521,11 +730,144 @@ function statusClass(status: string) {
     case "PermissionDenied":
     case "Error":
       return "bad";
+    case "Pending":
     case "Partial":
       return "partial";
     default:
       return "neutral";
   }
+}
+
+function countedSizePath(kind: PathKind) {
+  return kind === "Cache" || kind === "Store" || kind === "Cellar" || kind === "Caskroom";
+}
+
+function actionLabel(action: CommandEnvelope) {
+  const [firstArg, secondArg] = action.args;
+  if (firstArg === "upgrade" && secondArg === "--cask") return "Copy cask upgrade";
+  if (firstArg === "upgrade") return "Copy upgrade";
+  if (firstArg === "uses") return "Copy uses";
+  if (firstArg === "info") return "Copy info";
+  return "Copy command";
+}
+
+function renderHomebrewPackageTable(manager: ManagerSnapshot) {
+  const maintenance = manager.homebrew;
+  const filteredPackages = filteredHomebrewPackages(manager);
+
+  return `
+    ${renderHomebrewSummary(maintenance)}
+    ${renderHomebrewFilters()}
+    ${
+      filteredPackages.length
+        ? `
+          <div class="table-head homebrew-head">
+            <span>Name</span>
+            <span>Version</span>
+            <span>Signals</span>
+            <span>Path</span>
+            <span>Actions</span>
+          </div>
+          ${filteredPackages
+            .map(({ pkg, index }) => {
+              const active = index === selectedPackageIndex ? "selected" : "";
+              return `
+                <div class="row homebrew-row ${active}" data-action="select-package" data-index="${index}">
+                  <span class="cell strong">
+                    ${escapeHtml(pkg.name)}
+                    <span class="kind-tag">${escapeHtml(pkg.kind)}</span>
+                  </span>
+                  <span class="cell">${escapeHtml(pkg.version)}</span>
+                  <span class="cell signal-cell">${renderPackageSignals(pkg)}</span>
+                  <span class="cell muted">${escapeHtml(pkg.path ?? "n/a")}</span>
+                  <span class="cell action-cell">
+                    ${renderPackageActions(pkg, index)}
+                  </span>
+                </div>
+              `;
+            })
+            .join("")}
+        `
+        : emptyState("No Homebrew packages match this filter")
+    }
+  `;
+}
+
+function renderHomebrewSummary(maintenance: HomebrewMaintenance | null) {
+  if (!maintenance) return "";
+
+  const cleanup = maintenance.cleanup;
+  const cleanupValue =
+    cleanup.status === "Ready"
+      ? cleanup.reclaimedHuman ?? "Ready"
+      : cleanup.status === "Pending"
+        ? "Pending"
+        : "Failed";
+
+  return `
+    <div class="homebrew-summary">
+      ${statCard("Formulae", String(maintenance.formulaCount))}
+      ${statCard("Casks", String(maintenance.caskCount))}
+      ${statCard("Outdated", String(maintenance.outdatedCount))}
+      ${statCard("Leaves", String(maintenance.leafCount))}
+      ${statCard("Cleanup", cleanupValue)}
+    </div>
+  `;
+}
+
+function renderHomebrewFilters() {
+  const filters: HomebrewFilter[] = ["All", "Formulae", "Casks", "Outdated", "Leaves"];
+  return `
+    <div class="homebrew-filters">
+      ${filters
+        .map((filter) => {
+          const active = filter === selectedHomebrewFilter ? "active" : "";
+          return `<button class="filter ${active}" data-action="homebrew-filter" data-filter="${filter}" type="button">${filter}</button>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function filteredHomebrewPackages(manager: ManagerSnapshot) {
+  return manager.packages
+    .map((pkg, index) => ({ pkg, index }))
+    .filter(({ pkg }) => {
+      switch (selectedHomebrewFilter) {
+        case "Formulae":
+          return pkg.kind === "Formula";
+        case "Casks":
+          return pkg.kind === "Cask";
+        case "Outdated":
+          return pkg.signals.includes("Outdated");
+        case "Leaves":
+          return pkg.signals.includes("Leaf");
+        case "All":
+        default:
+          return true;
+      }
+    });
+}
+
+function renderPackageSignals(pkg: PackageRow) {
+  if (!pkg.signals.length) return `<span class="signal neutral">Current</span>`;
+
+  return pkg.signals
+    .map((signal) => `<span class="signal ${signal === "Outdated" ? "warn" : "partial"}">${signal}</span>`)
+    .join("");
+}
+
+function renderPackageActions(pkg: PackageRow, index: number) {
+  const actionButtons = pkg.actions.map((action, actionIndex) => {
+    return `<button class="ghost" data-action="copy-package-action" data-index="${index}" data-action-index="${actionIndex}" type="button">${escapeHtml(actionLabel(action))}</button>`;
+  });
+
+  actionButtons.unshift(`<button class="ghost" data-action="copy-package" data-index="${index}" type="button">Copy pkg</button>`);
+  if (pkg.path) {
+    actionButtons.push(`<button class="ghost" data-action="open-package" data-index="${index}" type="button">Open</button>`);
+  }
+
+  return actionButtons.join("");
 }
 
 function shorten(value: string) {
@@ -545,9 +887,9 @@ function formatBytes(bytes: number) {
   return unit === 0 ? `${value} ${units[unit]}` : `${value.toFixed(1)} ${units[unit]}`;
 }
 
-function trimTail(value: string) {
+function trimTail(value: string, lineCount = 5) {
   const lines = value.trim().split(/\r?\n/);
-  return lines.slice(-5).join("\n");
+  return lines.slice(-lineCount).join("\n");
 }
 
 function actionFailureTitle(action: string | undefined) {
@@ -555,6 +897,8 @@ function actionFailureTitle(action: string | undefined) {
     case "copy-path":
     case "copy-command":
     case "copy-package":
+    case "copy-package-action":
+    case "copy-cleanup-command":
       return "Copy failed";
     case "open-path":
     case "open-package":
@@ -574,6 +918,18 @@ function errorToString(error: unknown) {
   } catch {
     return "Unknown error";
   }
+}
+
+function sizeScanError(error: unknown): DiskUsage {
+  return {
+    status: "Error",
+    bytes: null,
+    human: null,
+    files: 0,
+    directories: 0,
+    skipped: 0,
+    message: errorToString(error),
+  };
 }
 
 function must<T extends Element>(selector: string) {
@@ -600,4 +956,7 @@ function escapeHtmlAttr(value: string) {
   return escapeHtml(value).split("'").join("&#39;");
 }
 
-void refresh();
+render();
+requestAnimationFrame(() => {
+  void refresh(selectedManager);
+});

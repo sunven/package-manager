@@ -1,19 +1,21 @@
 # Package Manager Control Center
 
-一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn 的全局包和缓存/仓库占用情况。
+一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn 和 Homebrew 的包、缓存/仓库占用情况，以及 Homebrew 的维护信号。
 
 当前 v1 目标是 **read-only + safe actions**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；不直接执行卸载、清缓存、批量删除等破坏性操作。
 
 ## 功能
 
-- 扫描 npm、pnpm、Yarn。
+- 扫描 npm、pnpm、Yarn、Homebrew。
 - 查看全局安装的包名、版本、包路径。
 - 查看 cache / store / global modules 等路径。
 - 统计 cache / store 总占用空间。
 - pnpm store/global modules 使用 hardlink 去重统计，避免重复计算同一物理文件。
 - Yarn Classic 支持全局包列表。
 - Yarn modern 标记为 unsupported，只展示可解析的缓存信息。
+- Homebrew 支持 formula/cask 清单、outdated、leaves、cleanup dry-run、prefix/cache/cellar 路径。
 - 复制路径、复制扫描命令、复制包名版本。
+- 复制 Homebrew 维护命令，如 `brew upgrade <formula>`、`brew upgrade --cask <cask>`、`brew cleanup --dry-run`。
 - 打开 cache / store / package 目录。
 - 展示扫描失败、缺少二进制、权限问题、命令超时等诊断信息。
 
@@ -25,8 +27,11 @@
 - 不直接执行危险操作：
   - 不直接 uninstall 全局包
   - 不直接 clean cache/store
+  - 不直接执行 `brew cleanup`
+  - 不直接执行 `brew upgrade`
   - 不做批量删除
 - Yarn 2+ 没有 npm/pnpm/Yarn Classic 等价的全局包列表，因此不伪装出一个全局列表。
+- Homebrew leaves 只标记为 review candidate，不等于“安全删除”。
 
 ## 开发环境
 
@@ -97,9 +102,21 @@ yarn global list --json
 yarn cache dir
 yarn global dir
 yarn config get cacheFolder
+
+brew --version
+brew list --formula --versions
+brew list --cask --versions
+brew outdated --json=v2
+brew leaves
+brew --prefix
+brew --cache
+brew --cellar
+brew cleanup --dry-run
 ```
 
 如果命令缺失、失败、输出无法解析或超时，界面会显示诊断信息。
+
+Homebrew 扫描会禁用 auto-update，避免只读扫描触发 Homebrew 更新。`brew cleanup --dry-run` 不阻塞首屏扫描；Homebrew tab 先展示已安装、outdated、leaves 和路径，再单独加载 cleanup dry-run 预览。
 
 ## 空间统计
 
@@ -131,6 +148,7 @@ yarn config get cacheFolder
 - 自动清理 cache/store。
 - 自动卸载全局包。
 - 自动修改 npm/pnpm/yarn 配置。
+- 自动执行 Homebrew upgrade、cleanup、uninstall。
 
 以后如果加入执行能力，应优先做“生成命令并复制”，再考虑带确认弹窗、操作日志和 dry-run 的直接执行。
 
@@ -168,11 +186,16 @@ pnpm tauri build
 - Yarn Classic human fallback
 - scoped package 版本拆分
 - hardlink 去重统计
+- Homebrew formula/cask JSON 解析
+- Homebrew outdated/leaves 合并
+- Homebrew Missing/Partial 状态
+- Homebrew cleanup dry-run raw output 和空间估算
 
 ## 后续候选
 
 - 复制 `npm uninstall -g <pkg>` / `pnpm remove -g <pkg>` / `yarn global remove <pkg>` 命令。
 - 复制 cache clean 命令，但不直接执行。
+- Homebrew services / doctor / Brewfile。
 - 增加操作日志。
 - 增加搜索和排序。
 - 增加 README 截图。
