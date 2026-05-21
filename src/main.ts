@@ -122,6 +122,7 @@ let managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>> = {};
 let scanDurationMsByManager: Partial<Record<ManagerId, number>> = {};
 let selectedManager: ManagerId = "Npm";
 let selectedPackageIndex = 0;
+let openPackageActionMenuIndex: number | null = null;
 let selectedHomebrewFilter: HomebrewFilter = "All";
 let lastCopied = "";
 let scanningManagers = new Set<ManagerId>();
@@ -197,9 +198,18 @@ const refreshButtonEl = must<HTMLButtonElement>("#refresh-button");
 
 document.addEventListener("click", (event) => {
   const target = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-action]");
-  if (!target) return;
+  if (!target) {
+    closePackageActionMenu();
+    return;
+  }
 
   void handleAction(target);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closePackageActionMenu();
+  }
 });
 
 async function handleAction(target: HTMLElement) {
@@ -216,6 +226,7 @@ async function handleAction(target: HTMLElement) {
       const managerId = target.dataset.manager as ManagerId;
       selectedManager = managerId;
       selectedPackageIndex = 0;
+      openPackageActionMenuIndex = null;
       render();
       if (!managerSnapshots[managerId] && !scanningManagers.has(managerId)) {
         void refresh(managerId);
@@ -226,12 +237,21 @@ async function handleAction(target: HTMLElement) {
     if (action === "homebrew-filter" && target.dataset.filter) {
       selectedHomebrewFilter = target.dataset.filter as HomebrewFilter;
       selectedPackageIndex = 0;
+      openPackageActionMenuIndex = null;
       render();
       return;
     }
 
     if (action === "select-package" && target.dataset.index) {
       selectedPackageIndex = Number(target.dataset.index);
+      openPackageActionMenuIndex = null;
+      render();
+      return;
+    }
+
+    if (action === "toggle-package-actions" && target.dataset.index) {
+      const index = Number(target.dataset.index);
+      openPackageActionMenuIndex = openPackageActionMenuIndex === index ? null : index;
       render();
       return;
     }
@@ -269,7 +289,9 @@ async function handleAction(target: HTMLElement) {
       const packageAction = Number.isNaN(actionIndex) ? null : pkg?.actions[actionIndex];
       if (packageAction) {
         await writeText(packageAction.preview);
+        openPackageActionMenuIndex = null;
         markCopied(packageAction.preview);
+        renderWorkspace();
       }
       return;
     }
@@ -278,7 +300,9 @@ async function handleAction(target: HTMLElement) {
       const pkg = packageFromTarget(target);
       if (pkg) {
         await writeText(`${pkg.name}@${pkg.version}`);
+        openPackageActionMenuIndex = null;
         markCopied(`${pkg.name}@${pkg.version}`);
+        renderWorkspace();
       }
       return;
     }
@@ -287,7 +311,9 @@ async function handleAction(target: HTMLElement) {
       const pkg = packageFromTarget(target);
       if (pkg?.path) {
         await openPath(pkg.path);
+        openPackageActionMenuIndex = null;
         clearMessage();
+        renderWorkspace();
       }
     }
   } catch (error) {
@@ -493,8 +519,7 @@ function renderPackageTable(manager: ManagerSnapshot | null) {
             <span class="cell muted">${escapeHtml(shorten(pkg.source))}</span>
             <span class="cell muted">${escapeHtml(pkg.path ?? "n/a")}</span>
             <span class="cell action-cell">
-              <button class="ghost" data-action="copy-package" data-index="${index}" type="button">Copy</button>
-              ${pkg.path ? `<button class="ghost" data-action="open-package" data-index="${index}" type="button">Open</button>` : ""}
+              ${renderPackageActions(pkg, index)}
             </span>
           </div>
         `;
@@ -858,16 +883,39 @@ function renderPackageSignals(pkg: PackageRow) {
 }
 
 function renderPackageActions(pkg: PackageRow, index: number) {
-  const actionButtons = pkg.actions.map((action, actionIndex) => {
-    return `<button class="ghost" data-action="copy-package-action" data-index="${index}" data-action-index="${actionIndex}" type="button">${escapeHtml(actionLabel(action))}</button>`;
+  const menuOpen = openPackageActionMenuIndex === index;
+  const menuItems = pkg.actions.map((action, actionIndex) => {
+    return `<button class="action-menu-item" data-action="copy-package-action" data-index="${index}" data-action-index="${actionIndex}" type="button">${escapeHtml(actionLabel(action))}</button>`;
   });
 
-  actionButtons.unshift(`<button class="ghost" data-action="copy-package" data-index="${index}" type="button">Copy pkg</button>`);
+  menuItems.unshift(`<button class="action-menu-item" data-action="copy-package" data-index="${index}" type="button">Copy pkg</button>`);
   if (pkg.path) {
-    actionButtons.push(`<button class="ghost" data-action="open-package" data-index="${index}" type="button">Open</button>`);
+    menuItems.push(`<button class="action-menu-item" data-action="open-package" data-index="${index}" type="button">Open</button>`);
   }
 
-  return actionButtons.join("");
+  return `
+    <div class="action-menu-wrap">
+      <button class="ghost action-trigger" data-action="toggle-package-actions" data-index="${index}" type="button" aria-haspopup="menu" aria-expanded="${menuOpen}">
+        Actions
+        <span class="action-caret" aria-hidden="true"></span>
+      </button>
+      ${
+        menuOpen
+          ? `
+            <div class="action-menu" role="menu">
+              ${menuItems.join("")}
+            </div>
+          `
+          : ""
+      }
+    </div>
+  `;
+}
+
+function closePackageActionMenu() {
+  if (openPackageActionMenuIndex === null) return;
+  openPackageActionMenuIndex = null;
+  renderWorkspace();
 }
 
 function shorten(value: string) {

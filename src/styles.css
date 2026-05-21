@@ -280,7 +280,7 @@ button:disabled {
 }
 
 .table {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .table-head,
@@ -304,6 +304,7 @@ button:disabled {
 }
 
 .row {
+  position: relative;
   min-height: 48px;
   padding: 8px 14px;
   border-bottom: 1px solid #edf1f3;
@@ -333,10 +334,64 @@ button:disabled {
 }
 
 .action-cell {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
   justify-content: flex-end;
+  overflow: visible;
+}
+
+.action-menu-wrap {
+  position: relative;
+  display: inline-flex;
+  justify-content: flex-end;
+}
+
+.action-trigger {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 88px;
+  justify-content: center;
+}
+
+.action-caret {
+  width: 0;
+  height: 0;
+  border-top: 4px solid currentColor;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+}
+
+.action-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid #ccd6da;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgb(20 32 38 / 16%);
+}
+
+.action-menu-item {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #1d6f68;
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.action-menu-item:hover {
+  background: #eaf4f2;
 }
 
 .path-card,
