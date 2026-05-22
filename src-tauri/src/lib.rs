@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -65,12 +66,19 @@ enum PackageKind {
     Generic,
     Formula,
     Cask,
+    MavenArtifact,
+    PythonDistribution,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 enum PackageSignal {
     Outdated,
     Leaf,
+    DuplicateVersions,
+    Snapshot,
+    Editable,
+    UserSite,
+    DirectUrl,
 }
 
 #[derive(Debug, Serialize)]
@@ -91,6 +99,9 @@ enum PathKind {
     Prefix,
     Cellar,
     Caskroom,
+    LocalRepository,
+    SitePackages,
+    UserSite,
 }
 
 #[derive(Debug, Serialize)]
@@ -127,6 +138,8 @@ struct ManagerSnapshot {
     failures: Vec<CommandFailure>,
     unsupported_reason: Option<String>,
     homebrew: Option<HomebrewMaintenance>,
+    maven: Option<MavenRepositoryHealth>,
+    pip: Option<PipEnvironmentHealth>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -153,6 +166,79 @@ struct HomebrewCleanupPreview {
     failure: Option<CommandFailure>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MavenRepositoryHealth {
+    local_repository: String,
+    artifact_count: usize,
+    version_count: usize,
+    snapshot_count: usize,
+    duplicate_artifact_count: usize,
+    top_duplicate_artifacts: Vec<MavenDuplicateArtifact>,
+    repository_scan_status: RepositoryScanStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MavenDuplicateArtifact {
+    coordinate: String,
+    version_count: usize,
+    versions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepositoryScanStatus {
+    partial: bool,
+    scanned_version_dirs: usize,
+    skipped: usize,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PipEnvironmentHealth {
+    python_version: String,
+    python_executable: String,
+    pip_version: String,
+    environment_kind: PipEnvironmentKind,
+    site_packages: Option<String>,
+    user_site: Option<String>,
+    installed_count: usize,
+    outdated_count: usize,
+    editable_count: usize,
+    direct_url_count: usize,
+    cache: PipCacheInfo,
+    inspect_status: AsyncStatus,
+    outdated_status: AsyncStatus,
+    outdated_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+enum PipEnvironmentKind {
+    System,
+    User,
+    VirtualEnv,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PipCacheInfo {
+    dir: Option<String>,
+    raw_info: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PipOutdatedPreview {
+    status: AsyncStatus,
+    command: CommandEnvelope,
+    outdated: Vec<String>,
+    message: Option<String>,
+    failure: Option<CommandFailure>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 enum AsyncStatus {
     Pending,
@@ -166,6 +252,8 @@ enum ManagerId {
     Pnpm,
     Yarn,
     Homebrew,
+    Maven,
+    Pip,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -205,6 +293,15 @@ async fn hydrate_homebrew_cleanup() -> Result<HomebrewCleanupPreview, String> {
         .map_err(|err| format!("Homebrew cleanup dry-run failed: {err}"))
 }
 
+#[tauri::command]
+async fn hydrate_pip_outdated(python_executable: String) -> Result<PipOutdatedPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        hydrate_pip_outdated_with_runner(&python_executable, &run_command_owned)
+    })
+    .await
+    .map_err(|err| format!("pip outdated hydration failed: {err}"))
+}
+
 fn scan_manager_snapshot(manager: ManagerId) -> ManagerScanSnapshot {
     let started = Instant::now();
     let manager = scan_single_manager(manager);
@@ -221,6 +318,8 @@ fn scan_single_manager(manager: ManagerId) -> ManagerSnapshot {
         ManagerId::Pnpm => scan_pnpm(),
         ManagerId::Yarn => scan_yarn(),
         ManagerId::Homebrew => scan_homebrew(),
+        ManagerId::Maven => scan_maven(),
+        ManagerId::Pip => scan_pip(),
     }
 }
 
@@ -442,6 +541,918 @@ fn scan_yarn_modern(snapshot: &mut ManagerSnapshot) {
 
 fn scan_homebrew() -> ManagerSnapshot {
     scan_homebrew_with_runner(&run_command)
+}
+
+fn scan_maven() -> ManagerSnapshot {
+    scan_maven_with_runner(&run_command)
+}
+
+fn scan_maven_with_runner<F>(runner: &F) -> ManagerSnapshot
+where
+    F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let mut snapshot = empty_snapshot(ManagerId::Maven, "Maven");
+
+    let version_run = match runner("mvn", &["--version"], Duration::from_secs(5)) {
+        Ok(run) if run.exit_code == Some(0) => run,
+        Ok(run) => {
+            snapshot.failures.push(command_failure(
+                FailureKind::CommandFailed,
+                "Maven version probe failed",
+                run,
+            ));
+            return finish(snapshot);
+        }
+        Err(failure) => {
+            snapshot.failures.push(failure);
+            return finish(snapshot);
+        }
+    };
+
+    push_command(&mut snapshot, "mvn", &["--version"], 5);
+    snapshot.version = Some(parse_maven_version(&version_run.stdout));
+
+    let maven_home = parse_maven_home(&version_run.stdout);
+    let resolution = resolve_maven_local_repository(maven_home.as_deref());
+    if let Some(message) = resolution.message.as_ref() {
+        snapshot.failures.push(CommandFailure {
+            kind: FailureKind::ParseFailure,
+            message: message.clone(),
+            command: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+    }
+
+    snapshot.paths.push(path_info(
+        "Local repository",
+        PathKind::LocalRepository,
+        resolution.path.display().to_string(),
+    ));
+    snapshot.commands.push(envelope(
+        "mvn",
+        &["dependency:purge-local-repository", "-DreResolve=false"],
+        0,
+    ));
+    snapshot.commands.push(envelope(
+        "mvn",
+        &[
+            "dependency:purge-local-repository",
+            "-DactTransitively=false",
+            "-DreResolve=false",
+        ],
+        0,
+    ));
+
+    let scan = scan_maven_repository(&resolution.path, MavenScanLimits::default());
+    snapshot.packages = scan.packages;
+    snapshot.maven = Some(scan.health);
+
+    finish(snapshot)
+}
+
+fn scan_pip() -> ManagerSnapshot {
+    scan_pip_with_runner(&run_command_owned)
+}
+
+fn scan_pip_with_runner<F>(runner: &F) -> ManagerSnapshot
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let mut snapshot = empty_snapshot(ManagerId::Pip, "pip");
+
+    let Some(python) = detect_python(runner, &mut snapshot) else {
+        return finish(snapshot);
+    };
+
+    let python_version = command_stdout_owned(
+        python.as_str(),
+        vec!["--version".to_string()],
+        5,
+        &mut snapshot,
+        runner,
+        "Python version probe failed",
+    )
+    .unwrap_or_else(|| "unknown".to_string());
+
+    let python_executable = command_stdout_owned(
+        python.as_str(),
+        vec![
+            "-c".to_string(),
+            "import sys; print(sys.executable)".to_string(),
+        ],
+        5,
+        &mut snapshot,
+        runner,
+        "Python executable probe failed",
+    )
+    .unwrap_or_else(|| python.clone());
+
+    let pip_version = match command_stdout_owned(
+        python_executable.as_str(),
+        vec!["-m".to_string(), "pip".to_string(), "--version".to_string()],
+        5,
+        &mut snapshot,
+        runner,
+        "pip version probe failed",
+    ) {
+        Some(version) => version,
+        None => return finish(snapshot),
+    };
+
+    snapshot.version = Some(pip_version.clone());
+    snapshot.commands.push(envelope_owned(
+        python_executable.as_str(),
+        vec![
+            "-m".to_string(),
+            "pip".to_string(),
+            "list".to_string(),
+            "--format=json".to_string(),
+        ],
+        15_000,
+    ));
+    snapshot.commands.push(envelope_owned(
+        python_executable.as_str(),
+        vec![
+            "-m".to_string(),
+            "pip".to_string(),
+            "cache".to_string(),
+            "dir".to_string(),
+        ],
+        5_000,
+    ));
+    snapshot.commands.push(envelope_owned(
+        python_executable.as_str(),
+        vec![
+            "-m".to_string(),
+            "pip".to_string(),
+            "cache".to_string(),
+            "info".to_string(),
+        ],
+        5_000,
+    ));
+    snapshot.commands.push(envelope_owned(
+        python_executable.as_str(),
+        vec![
+            "-m".to_string(),
+            "pip".to_string(),
+            "inspect".to_string(),
+            "--local".to_string(),
+        ],
+        15_000,
+    ));
+
+    match runner(
+        python_executable.as_str(),
+        &[
+            "-m".to_string(),
+            "pip".to_string(),
+            "list".to_string(),
+            "--format=json".to_string(),
+        ],
+        Duration::from_secs(15),
+    ) {
+        Ok(run) if run.exit_code == Some(0) => {
+            match parse_pip_list(&run.stdout, &python_executable) {
+                Ok(packages) => snapshot.packages = packages,
+                Err(message) => snapshot.failures.push(parse_failure(message, run)),
+            }
+        }
+        Ok(run) => snapshot.failures.push(command_failure(
+            FailureKind::CommandFailed,
+            "pip package list failed",
+            run,
+        )),
+        Err(failure) => snapshot.failures.push(failure),
+    }
+
+    let cache_dir = command_stdout_owned(
+        python_executable.as_str(),
+        vec![
+            "-m".to_string(),
+            "pip".to_string(),
+            "cache".to_string(),
+            "dir".to_string(),
+        ],
+        5,
+        &mut snapshot,
+        runner,
+        "pip cache dir failed",
+    );
+    let cache_info = command_stdout_owned(
+        python_executable.as_str(),
+        vec![
+            "-m".to_string(),
+            "pip".to_string(),
+            "cache".to_string(),
+            "info".to_string(),
+        ],
+        5,
+        &mut snapshot,
+        runner,
+        "pip cache info failed",
+    )
+    .unwrap_or_default();
+
+    if let Some(path) = cache_dir.as_ref() {
+        snapshot
+            .paths
+            .push(path_info("pip cache", PathKind::Cache, path.clone()));
+    }
+
+    let mut inspect_status = AsyncStatus::Ready;
+    let mut site_packages = None;
+    let mut user_site = None;
+    match runner(
+        python_executable.as_str(),
+        &[
+            "-m".to_string(),
+            "pip".to_string(),
+            "inspect".to_string(),
+            "--local".to_string(),
+        ],
+        Duration::from_secs(15),
+    ) {
+        Ok(run) if run.exit_code == Some(0) => {
+            match enrich_pip_from_inspect(&mut snapshot.packages, &run.stdout) {
+                Ok(enrichment) => {
+                    site_packages = enrichment.site_packages;
+                    user_site = enrichment.user_site;
+                }
+                Err(message) => {
+                    inspect_status = AsyncStatus::Failed;
+                    snapshot.failures.push(parse_failure(message, run));
+                }
+            }
+        }
+        Ok(run) => {
+            inspect_status = AsyncStatus::Failed;
+            snapshot.failures.push(command_failure(
+                FailureKind::CommandFailed,
+                "pip inspect failed",
+                run,
+            ));
+        }
+        Err(failure) => {
+            inspect_status = AsyncStatus::Failed;
+            snapshot.failures.push(failure);
+        }
+    }
+
+    if let Some(path) = site_packages.as_ref() {
+        snapshot.paths.push(path_info(
+            "site-packages",
+            PathKind::SitePackages,
+            path.clone(),
+        ));
+    }
+    if let Some(path) = user_site.as_ref() {
+        snapshot
+            .paths
+            .push(path_info("User site", PathKind::UserSite, path.clone()));
+    }
+
+    attach_pip_actions(&mut snapshot.packages, &python_executable);
+    let editable_count = snapshot
+        .packages
+        .iter()
+        .filter(|pkg| pkg.signals.contains(&PackageSignal::Editable))
+        .count();
+    let direct_url_count = snapshot
+        .packages
+        .iter()
+        .filter(|pkg| pkg.signals.contains(&PackageSignal::DirectUrl))
+        .count();
+
+    snapshot.pip = Some(PipEnvironmentHealth {
+        python_version,
+        python_executable: python_executable.clone(),
+        pip_version,
+        environment_kind: detect_pip_environment(&python_executable, site_packages.as_deref()),
+        site_packages,
+        user_site,
+        installed_count: snapshot.packages.len(),
+        outdated_count: 0,
+        editable_count,
+        direct_url_count,
+        cache: PipCacheInfo {
+            dir: cache_dir,
+            raw_info: cache_info,
+        },
+        inspect_status,
+        outdated_status: AsyncStatus::Pending,
+        outdated_message: Some("Outdated scan pending".to_string()),
+    });
+
+    finish(snapshot)
+}
+
+#[derive(Debug)]
+struct MavenLocalRepositoryResolution {
+    path: PathBuf,
+    message: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+struct MavenScanLimits {
+    max_scan_ms: u128,
+    max_version_dirs: usize,
+    max_rows_returned: usize,
+}
+
+impl Default for MavenScanLimits {
+    fn default() -> Self {
+        Self {
+            max_scan_ms: 5_000,
+            max_version_dirs: 100_000,
+            max_rows_returned: 2_000,
+        }
+    }
+}
+
+struct MavenRepositoryScan {
+    packages: Vec<PackageRow>,
+    health: MavenRepositoryHealth,
+}
+
+#[derive(Default)]
+struct MavenArtifactAccumulator {
+    versions: BTreeSet<String>,
+    path: Option<String>,
+    file_count: usize,
+    snapshot_count: usize,
+}
+
+fn parse_maven_version(stdout: &str) -> String {
+    stdout
+        .lines()
+        .find(|line| line.trim_start().starts_with("Apache Maven"))
+        .map(str::trim)
+        .unwrap_or_else(|| stdout.lines().next().unwrap_or("unknown").trim())
+        .to_string()
+}
+
+fn parse_maven_home(stdout: &str) -> Option<String> {
+    stdout.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("Maven home:")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn resolve_maven_local_repository(maven_home: Option<&str>) -> MavenLocalRepositoryResolution {
+    let home = home_dir();
+    let user_settings = home.as_ref().map(|home| home.join(".m2/settings.xml"));
+    let global_settings = maven_home.map(|home| Path::new(home).join("conf/settings.xml"));
+    let fallback = home
+        .as_ref()
+        .map(|home| home.join(".m2/repository"))
+        .unwrap_or_else(|| PathBuf::from(".m2/repository"));
+
+    let mut messages = Vec::new();
+    if let Some(path) = user_settings.as_ref() {
+        match read_maven_local_repository_setting(path) {
+            Ok(Some(value)) => {
+                return MavenLocalRepositoryResolution {
+                    path: interpolate_maven_path(value.as_str(), home.as_deref()),
+                    message: None,
+                }
+            }
+            Ok(None) => {}
+            Err(message) => messages.push(message),
+        }
+    }
+
+    if let Some(path) = global_settings.as_ref() {
+        match read_maven_local_repository_setting(path) {
+            Ok(Some(value)) => {
+                return MavenLocalRepositoryResolution {
+                    path: interpolate_maven_path(value.as_str(), home.as_deref()),
+                    message: None,
+                }
+            }
+            Ok(None) => {}
+            Err(message) => messages.push(message),
+        }
+    }
+
+    MavenLocalRepositoryResolution {
+        path: fallback,
+        message: (!messages.is_empty()).then(|| messages.join("; ")),
+    }
+}
+
+fn read_maven_local_repository_setting(path: &Path) -> Result<Option<String>, String> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("Could not read {}: {err}", path.display())),
+    };
+    parse_maven_local_repository_setting(&contents)
+        .map_err(|err| format!("Could not parse {}: {err}", path.display()))
+}
+
+fn parse_maven_local_repository_setting(contents: &str) -> Result<Option<String>, String> {
+    let document = roxmltree::Document::parse(contents).map_err(|err| err.to_string())?;
+    let root = document.root_element();
+    if root.tag_name().name() != "settings" {
+        return Ok(None);
+    }
+
+    Ok(root
+        .children()
+        .find(|node| node.is_element() && node.tag_name().name() == "localRepository")
+        .and_then(|node| node.text())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
+fn interpolate_maven_path(value: &str, home: Option<&Path>) -> PathBuf {
+    let home_string = home
+        .map(|home| home.display().to_string())
+        .unwrap_or_else(|| env::var("HOME").unwrap_or_default());
+    let interpolated = value
+        .replace("${user.home}", home_string.as_str())
+        .replace("${env.HOME}", home_string.as_str());
+    expand_tilde(interpolated.as_str(), home)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn expand_tilde(value: &str, home: Option<&Path>) -> PathBuf {
+    if value == "~" {
+        if let Some(home) = home {
+            return home.to_path_buf();
+        }
+    }
+    if let Some(rest) = value.strip_prefix("~/") {
+        if let Some(home) = home {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(value)
+}
+
+fn scan_maven_repository(root: &Path, limits: MavenScanLimits) -> MavenRepositoryScan {
+    let started = Instant::now();
+    let mut stack = vec![root.to_path_buf()];
+    let mut accumulators: BTreeMap<(String, String), MavenArtifactAccumulator> = BTreeMap::new();
+    let mut scanned_version_dirs = 0_usize;
+    let mut skipped = 0_usize;
+    let mut partial_message = None;
+
+    while let Some(path) = stack.pop() {
+        if started.elapsed().as_millis() >= limits.max_scan_ms {
+            partial_message = Some("Repository scan reached time limit".to_string());
+            break;
+        }
+        if scanned_version_dirs >= limits.max_version_dirs {
+            partial_message = Some("Repository scan reached version directory limit".to_string());
+            break;
+        }
+
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
+        };
+        if metadata.file_type().is_symlink() {
+            skipped += 1;
+            continue;
+        }
+        if !metadata.is_dir() {
+            continue;
+        }
+
+        let entries = match fs::read_dir(&path) {
+            Ok(entries) => entries.flatten().collect::<Vec<_>>(),
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
+        };
+
+        if let Some((group_id, artifact_id, version, file_count)) =
+            maven_coordinate_from_version_dir(root, &path, &entries)
+        {
+            scanned_version_dirs += 1;
+            let key = (group_id, artifact_id);
+            let accumulator = accumulators.entry(key).or_default();
+            accumulator.versions.insert(version.clone());
+            accumulator.file_count += file_count;
+            if version.to_ascii_uppercase().contains("SNAPSHOT") {
+                accumulator.snapshot_count += 1;
+            }
+            accumulator.path = Some(path.display().to_string());
+            continue;
+        }
+
+        for entry in entries {
+            stack.push(entry.path());
+        }
+    }
+
+    let mut rows = Vec::new();
+    let mut snapshot_count = 0_usize;
+    let mut duplicate_artifact_count = 0_usize;
+    let mut version_count = 0_usize;
+    let mut duplicates = Vec::new();
+
+    for ((group_id, artifact_id), accumulator) in accumulators.iter() {
+        let versions = accumulator.versions.iter().cloned().collect::<Vec<_>>();
+        version_count += versions.len();
+        snapshot_count += accumulator.snapshot_count;
+
+        let mut row = package_row(
+            format!("{group_id}:{artifact_id}"),
+            maven_version_summary(&versions),
+            accumulator.path.clone(),
+            "maven local repository scan",
+            PackageKind::MavenArtifact,
+        );
+        if versions.len() > 1 {
+            duplicate_artifact_count += 1;
+            push_signal(&mut row, PackageSignal::DuplicateVersions);
+            duplicates.push(MavenDuplicateArtifact {
+                coordinate: row.name.clone(),
+                version_count: versions.len(),
+                versions: versions.clone(),
+            });
+        }
+        if accumulator.snapshot_count > 0 {
+            push_signal(&mut row, PackageSignal::Snapshot);
+        }
+        attach_maven_actions(&mut row, group_id, artifact_id);
+        rows.push(row);
+    }
+
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    if rows.len() > limits.max_rows_returned {
+        rows.truncate(limits.max_rows_returned);
+        partial_message = Some("Repository scan reached row limit".to_string());
+    }
+
+    duplicates.sort_by(|a, b| {
+        b.version_count
+            .cmp(&a.version_count)
+            .then_with(|| a.coordinate.cmp(&b.coordinate))
+    });
+    duplicates.truncate(10);
+
+    MavenRepositoryScan {
+        health: MavenRepositoryHealth {
+            local_repository: root.display().to_string(),
+            artifact_count: accumulators.len(),
+            version_count,
+            snapshot_count,
+            duplicate_artifact_count,
+            top_duplicate_artifacts: duplicates,
+            repository_scan_status: RepositoryScanStatus {
+                partial: partial_message.is_some(),
+                scanned_version_dirs,
+                skipped,
+                message: partial_message,
+            },
+        },
+        packages: rows,
+    }
+}
+
+fn maven_coordinate_from_version_dir(
+    root: &Path,
+    path: &Path,
+    entries: &[fs::DirEntry],
+) -> Option<(String, String, String, usize)> {
+    let relative = path.strip_prefix(root).ok()?;
+    let parts = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    if parts.len() < 3 {
+        return None;
+    }
+
+    let file_count = entries
+        .iter()
+        .filter(|entry| {
+            entry
+                .file_type()
+                .map(|file_type| file_type.is_file())
+                .unwrap_or(false)
+        })
+        .count();
+    let has_marker = entries.iter().any(|entry| {
+        let name = entry.file_name().to_string_lossy().to_string();
+        matches!(
+            Path::new(&name).extension().and_then(|ext| ext.to_str()),
+            Some("pom" | "jar" | "aar" | "module")
+        ) || name.ends_with(".lastUpdated")
+    });
+    if !has_marker {
+        return None;
+    }
+
+    let version = parts.last()?.clone();
+    let artifact_id = parts.get(parts.len() - 2)?.clone();
+    let group_id = parts[..parts.len() - 2].join(".");
+    Some((group_id, artifact_id, version, file_count))
+}
+
+fn attach_maven_actions(row: &mut PackageRow, group_id: &str, artifact_id: &str) {
+    let coordinate = format!("{group_id}:{artifact_id}");
+    if row.version != "unknown" && !row.version.starts_with("multiple ") {
+        row.actions.push(envelope_owned(
+            "mvn",
+            vec![
+                "dependency:get".to_string(),
+                format!("-Dartifact={coordinate}:{}", row.version),
+            ],
+            0,
+        ));
+    }
+    row.actions.push(envelope_owned(
+        "mvn",
+        vec![
+            "dependency:tree".to_string(),
+            format!("-Dincludes={coordinate}"),
+        ],
+        0,
+    ));
+}
+
+fn maven_version_summary(versions: &[String]) -> String {
+    match versions {
+        [] => "unknown".to_string(),
+        [version] => version.clone(),
+        _ => format!("multiple ({})", versions.len()),
+    }
+}
+
+fn detect_python<F>(runner: &F, snapshot: &mut ManagerSnapshot) -> Option<String>
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    for program in ["python3", "python"] {
+        match runner(program, &["--version".to_string()], Duration::from_secs(5)) {
+            Ok(run) if run.exit_code == Some(0) => return Some(program.to_string()),
+            Ok(run) => snapshot.failures.push(command_failure(
+                FailureKind::CommandFailed,
+                "Python version probe failed",
+                run,
+            )),
+            Err(failure) if matches!(failure.kind, FailureKind::MissingBinary) => {}
+            Err(failure) => snapshot.failures.push(failure),
+        }
+    }
+
+    snapshot.failures.push(CommandFailure {
+        kind: FailureKind::MissingBinary,
+        message: "python3 and python are not installed or are not on PATH".to_string(),
+        command: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    });
+    None
+}
+
+fn command_stdout_owned<F>(
+    program: &str,
+    args: Vec<String>,
+    timeout_secs: u64,
+    snapshot: &mut ManagerSnapshot,
+    runner: &F,
+    failure_message: &str,
+) -> Option<String>
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    match runner(program, &args, Duration::from_secs(timeout_secs)) {
+        Ok(run) if run.exit_code == Some(0) => Some(trimmed(run.stdout)),
+        Ok(run) => {
+            snapshot.failures.push(command_failure(
+                FailureKind::CommandFailed,
+                failure_message,
+                run,
+            ));
+            None
+        }
+        Err(failure) => {
+            snapshot.failures.push(failure);
+            None
+        }
+    }
+}
+
+fn parse_pip_list(stdout: &str, python_executable: &str) -> Result<Vec<PackageRow>, String> {
+    let value: Value = serde_json::from_str(stdout).map_err(|err| err.to_string())?;
+    let packages = value
+        .as_array()
+        .ok_or_else(|| "pip list output was not an array".to_string())?;
+
+    let mut rows = packages
+        .iter()
+        .filter_map(|package| {
+            Some(package_row(
+                json_string(package.get("name"))?,
+                json_string(package.get("version")).unwrap_or_else(|| "unknown".to_string()),
+                None,
+                format!("{python_executable} -m pip list --format=json").as_str(),
+                PackageKind::PythonDistribution,
+            ))
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(rows)
+}
+
+#[derive(Default)]
+struct PipInspectEnrichment {
+    site_packages: Option<String>,
+    user_site: Option<String>,
+}
+
+fn enrich_pip_from_inspect(
+    packages: &mut [PackageRow],
+    stdout: &str,
+) -> Result<PipInspectEnrichment, String> {
+    let value: Value = serde_json::from_str(stdout).map_err(|err| err.to_string())?;
+    let mut enrichment = PipInspectEnrichment::default();
+    let mut by_name = packages
+        .iter_mut()
+        .map(|package| (package.name.to_ascii_lowercase(), package))
+        .collect::<HashMap<_, _>>();
+
+    let Some(installed) = value.get("installed").and_then(Value::as_array) else {
+        return Ok(enrichment);
+    };
+
+    for item in installed {
+        let name = item
+            .get("metadata")
+            .and_then(|metadata| metadata.get("name"))
+            .and_then(Value::as_str)
+            .or_else(|| item.get("name").and_then(Value::as_str));
+        let Some(name) = name else {
+            continue;
+        };
+        let Some(package) = by_name.get_mut(&name.to_ascii_lowercase()) else {
+            continue;
+        };
+
+        if let Some(location) = json_string(item.get("location")) {
+            package.path = Some(
+                Path::new(&location)
+                    .join(&package.name)
+                    .display()
+                    .to_string(),
+            );
+            if enrichment.site_packages.is_none() {
+                enrichment.site_packages = Some(location.clone());
+            }
+            if is_user_site(&location) {
+                enrichment.user_site = Some(location);
+                push_signal(package, PackageSignal::UserSite);
+            }
+        }
+        if item
+            .get("editable_project_location")
+            .and_then(Value::as_str)
+            .is_some()
+        {
+            push_signal(package, PackageSignal::Editable);
+        }
+        if item.get("direct_url").is_some() {
+            push_signal(package, PackageSignal::DirectUrl);
+        }
+    }
+
+    Ok(enrichment)
+}
+
+fn is_user_site(path: &str) -> bool {
+    path.contains("/.local/") || path.contains("/Library/Python/")
+}
+
+fn attach_pip_actions(packages: &mut [PackageRow], python_executable: &str) {
+    for package in packages {
+        package.actions.push(envelope_owned(
+            python_executable,
+            vec![
+                "-m".to_string(),
+                "pip".to_string(),
+                "show".to_string(),
+                package.name.clone(),
+            ],
+            0,
+        ));
+        package.actions.push(envelope_owned(
+            python_executable,
+            vec![
+                "-m".to_string(),
+                "pip".to_string(),
+                "install".to_string(),
+                "--upgrade".to_string(),
+                package.name.clone(),
+            ],
+            0,
+        ));
+        package.actions.push(envelope_owned(
+            python_executable,
+            vec![
+                "-m".to_string(),
+                "pip".to_string(),
+                "uninstall".to_string(),
+                package.name.clone(),
+            ],
+            0,
+        ));
+    }
+}
+
+fn detect_pip_environment(
+    python_executable: &str,
+    site_packages: Option<&str>,
+) -> PipEnvironmentKind {
+    if env::var_os("VIRTUAL_ENV").is_some() || python_executable.contains("/.venv/") {
+        return PipEnvironmentKind::VirtualEnv;
+    }
+    if site_packages.is_some_and(is_user_site) {
+        return PipEnvironmentKind::User;
+    }
+    if python_executable.starts_with("/usr/bin/") || python_executable.starts_with("/System/") {
+        return PipEnvironmentKind::System;
+    }
+    PipEnvironmentKind::Unknown
+}
+
+fn hydrate_pip_outdated_with_runner<F>(python_executable: &str, runner: &F) -> PipOutdatedPreview
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let args = vec![
+        "-m".to_string(),
+        "pip".to_string(),
+        "list".to_string(),
+        "--outdated".to_string(),
+        "--format=json".to_string(),
+    ];
+    match runner(python_executable, &args, Duration::from_secs(30)) {
+        Ok(run) if run.exit_code == Some(0) => match parse_pip_outdated(&run.stdout) {
+            Ok(outdated) => PipOutdatedPreview {
+                status: AsyncStatus::Ready,
+                command: envelope_owned(python_executable, args, 30_000),
+                outdated,
+                message: None,
+                failure: None,
+            },
+            Err(message) => PipOutdatedPreview {
+                status: AsyncStatus::Failed,
+                command: envelope_owned(python_executable, args, 30_000),
+                outdated: Vec::new(),
+                message: Some(message.clone()),
+                failure: Some(parse_failure(message, run)),
+            },
+        },
+        Ok(run) => {
+            let failure = command_failure(FailureKind::CommandFailed, "pip outdated failed", run);
+            PipOutdatedPreview {
+                status: AsyncStatus::Failed,
+                command: envelope_owned(python_executable, args, 30_000),
+                outdated: Vec::new(),
+                message: Some(failure.message.clone()),
+                failure: Some(failure),
+            }
+        }
+        Err(failure) => PipOutdatedPreview {
+            status: AsyncStatus::Failed,
+            command: envelope_owned(python_executable, args, 30_000),
+            outdated: Vec::new(),
+            message: Some(failure.message.clone()),
+            failure: Some(failure),
+        },
+    }
+}
+
+fn parse_pip_outdated(stdout: &str) -> Result<Vec<String>, String> {
+    let value: Value = serde_json::from_str(stdout).map_err(|err| err.to_string())?;
+    let packages = value
+        .as_array()
+        .ok_or_else(|| "pip outdated output was not an array".to_string())?;
+    let mut names = packages
+        .iter()
+        .filter_map(|package| json_string(package.get("name")))
+        .collect::<Vec<_>>();
+    names.sort();
+    Ok(names)
 }
 
 fn scan_homebrew_with_runner<F>(runner: &F) -> ManagerSnapshot
@@ -882,7 +1893,8 @@ fn attach_homebrew_paths(
                     );
                 }
             }
-            PackageKind::Generic => {}
+            PackageKind::Generic | PackageKind::MavenArtifact | PackageKind::PythonDistribution => {
+            }
         }
     }
 }
@@ -953,7 +1965,8 @@ fn attach_homebrew_actions(packages: &mut [PackageRow]) {
                     ));
                 }
             }
-            PackageKind::Generic => {}
+            PackageKind::Generic | PackageKind::MavenArtifact | PackageKind::PythonDistribution => {
+            }
         }
     }
 }
@@ -969,6 +1982,8 @@ fn kind_rank(kind: PackageKind) -> u8 {
         PackageKind::Generic => 0,
         PackageKind::Formula => 1,
         PackageKind::Cask => 2,
+        PackageKind::MavenArtifact => 3,
+        PackageKind::PythonDistribution => 4,
     }
 }
 
@@ -1150,6 +2165,15 @@ fn run_command(
             stderr: err.to_string(),
         }),
     }
+}
+
+fn run_command_owned(
+    program: &str,
+    args: &[String],
+    timeout: Duration,
+) -> Result<CommandRun, CommandFailure> {
+    let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_command(program, &refs, timeout)
 }
 
 fn command_failure(kind: FailureKind, message: &str, run: CommandRun) -> CommandFailure {
@@ -1520,6 +2544,8 @@ fn empty_snapshot(id: ManagerId, label: &str) -> ManagerSnapshot {
         failures: Vec::new(),
         unsupported_reason: None,
         homebrew: None,
+        maven: None,
+        pip: None,
     }
 }
 
@@ -1669,6 +2695,141 @@ info "alpha@1.0.0" has binaries:
         assert_eq!(packages[2].version, "1.0 1.1");
         assert_eq!(packages[3].name, "noversion");
         assert_eq!(packages[3].version, "unknown");
+    }
+
+    #[test]
+    fn parse_maven_settings_reads_only_top_level_local_repository() {
+        let repository = parse_maven_local_repository_setting(
+            r#"<settings>
+                <servers>
+                  <server>
+                    <username>sunven</username>
+                    <password>secret</password>
+                    <localRepository>/wrong</localRepository>
+                  </server>
+                </servers>
+                <localRepository>${user.home}/.cache/maven</localRepository>
+              </settings>"#,
+        )
+        .expect("parse settings");
+
+        assert_eq!(repository.as_deref(), Some("${user.home}/.cache/maven"));
+    }
+
+    #[test]
+    fn parse_maven_settings_rejects_malformed_xml() {
+        let error = parse_maven_local_repository_setting("<settings>").expect_err("parse failure");
+
+        assert!(!error.is_empty());
+    }
+
+    #[test]
+    fn scan_maven_repository_flags_duplicates_and_snapshots() {
+        let root = temp_dir("maven-repo");
+        let _guard = TempDirGuard(root.clone());
+        write_file(
+            &root.join("org/example/tool/1.0.0/tool-1.0.0.pom"),
+            b"<project />",
+        );
+        write_file(&root.join("org/example/tool/1.1.0/tool-1.1.0.jar"), b"jar");
+        write_file(
+            &root.join("org/example/snap/2.0-SNAPSHOT/snap-2.0-SNAPSHOT.pom"),
+            b"<project />",
+        );
+
+        let scan = scan_maven_repository(
+            &root,
+            MavenScanLimits {
+                max_scan_ms: 5_000,
+                max_version_dirs: 100,
+                max_rows_returned: 100,
+            },
+        );
+
+        assert_eq!(scan.health.artifact_count, 2);
+        assert_eq!(scan.health.version_count, 3);
+        assert_eq!(scan.health.snapshot_count, 1);
+        assert_eq!(scan.health.duplicate_artifact_count, 1);
+
+        let tool = scan
+            .packages
+            .iter()
+            .find(|package| package.name == "org.example:tool")
+            .expect("tool artifact");
+        assert!(tool.signals.contains(&PackageSignal::DuplicateVersions));
+        assert!(tool
+            .actions
+            .iter()
+            .any(|action| action.preview.contains("dependency:tree")));
+
+        let snap = scan
+            .packages
+            .iter()
+            .find(|package| package.name == "org.example:snap")
+            .expect("snapshot artifact");
+        assert!(snap.signals.contains(&PackageSignal::Snapshot));
+    }
+
+    #[test]
+    fn parse_pip_list_sorts_packages() {
+        let packages = parse_pip_list(
+            r#"[
+                {"name": "requests", "version": "2.32.3"},
+                {"name": "black", "version": "24.4.2"}
+            ]"#,
+            "/usr/bin/python3",
+        )
+        .expect("parse pip list");
+
+        assert_eq!(packages.len(), 2);
+        assert_eq!(packages[0].name, "black");
+        assert_eq!(packages[0].kind, PackageKind::PythonDistribution);
+        assert_eq!(
+            packages[0].source,
+            "/usr/bin/python3 -m pip list --format=json"
+        );
+    }
+
+    #[test]
+    fn enrich_pip_from_inspect_marks_editable_direct_url_and_user_site() {
+        let mut packages = parse_pip_list(
+            r#"[{"name": "local-tool", "version": "0.1.0"}]"#,
+            "/usr/bin/python3",
+        )
+        .expect("parse pip list");
+
+        let enrichment = enrich_pip_from_inspect(
+            &mut packages,
+            r#"{
+                "installed": [{
+                    "metadata": {"name": "local-tool"},
+                    "location": "/Users/sunven/Library/Python/3.12/lib/python/site-packages",
+                    "editable_project_location": "/Users/sunven/github/local-tool",
+                    "direct_url": {"url": "file:///Users/sunven/github/local-tool"}
+                }]
+            }"#,
+        )
+        .expect("inspect enrichment");
+
+        let package = &packages[0];
+        assert!(package.signals.contains(&PackageSignal::Editable));
+        assert!(package.signals.contains(&PackageSignal::DirectUrl));
+        assert!(package.signals.contains(&PackageSignal::UserSite));
+        assert!(package.path.as_deref().unwrap().contains("local-tool"));
+        assert!(enrichment.user_site.is_some());
+    }
+
+    #[test]
+    fn parse_pip_outdated_reads_names() {
+        let outdated = parse_pip_outdated(
+            r#"[
+                {"name": "requests", "version": "2.31.0", "latest_version": "2.32.3"},
+                {"name": "black", "version": "23.0.0", "latest_version": "24.4.2"}
+            ]"#,
+        )
+        .expect("parse outdated");
+
+        assert_eq!(outdated, vec!["black".to_string(), "requests".to_string()]);
     }
 
     #[test]
@@ -1902,6 +3063,9 @@ info "alpha@1.0.0" has binaries:
     }
 
     fn write_file(path: &Path, contents: &[u8]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent dir");
+        }
         let mut file = fs::File::create(path).expect("create file");
         file.write_all(contents).expect("write file");
     }
@@ -1948,7 +3112,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_manager,
             measure_path_size,
-            hydrate_homebrew_cleanup
+            hydrate_homebrew_cleanup,
+            hydrate_pip_outdated
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,15 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { applyPipOutdatedPreview, shouldApplyHydrationResult } from "./state";
 
-type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Homebrew";
+type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Homebrew" | "Maven" | "Pip";
 type ManagerStatus = "Ready" | "Missing" | "Unsupported" | "Partial" | "Failed";
 type DiskUsageStatus = "Pending" | "Ready" | "Missing" | "PermissionDenied" | "Error";
-type PathKind = "Cache" | "Store" | "GlobalModules" | "GlobalDir" | "Prefix" | "Cellar" | "Caskroom";
-type PackageKind = "Generic" | "Formula" | "Cask";
-type PackageSignal = "Outdated" | "Leaf";
+type PathKind = "Cache" | "Store" | "GlobalModules" | "GlobalDir" | "Prefix" | "Cellar" | "Caskroom" | "LocalRepository" | "SitePackages" | "UserSite";
+type PackageKind = "Generic" | "Formula" | "Cask" | "MavenArtifact" | "PythonDistribution";
+type PackageSignal = "Outdated" | "Leaf" | "DuplicateVersions" | "Snapshot" | "Editable" | "UserSite" | "DirectUrl";
 type AsyncStatus = "Pending" | "Ready" | "Failed";
 type HomebrewFilter = "All" | "Formulae" | "Casks" | "Outdated" | "Leaves";
+type MavenFilter = "All" | "Duplicates" | "Snapshots";
+type PipFilter = "All" | "Outdated" | "Editable" | "UserSite" | "DirectUrl";
 type FailureKind =
   | "MissingBinary"
   | "CommandFailed"
@@ -70,6 +73,8 @@ interface ManagerSnapshot {
   failures: CommandFailure[];
   unsupportedReason: string | null;
   homebrew: HomebrewMaintenance | null;
+  maven: MavenRepositoryHealth | null;
+  pip: PipEnvironmentHealth | null;
 }
 
 interface HomebrewMaintenance {
@@ -92,6 +97,59 @@ interface HomebrewCleanupPreview {
   failure: CommandFailure | null;
 }
 
+interface MavenRepositoryHealth {
+  localRepository: string;
+  artifactCount: number;
+  versionCount: number;
+  snapshotCount: number;
+  duplicateArtifactCount: number;
+  topDuplicateArtifacts: MavenDuplicateArtifact[];
+  repositoryScanStatus: RepositoryScanStatus;
+}
+
+interface MavenDuplicateArtifact {
+  coordinate: string;
+  versionCount: number;
+  versions: string[];
+}
+
+interface RepositoryScanStatus {
+  partial: boolean;
+  scannedVersionDirs: number;
+  skipped: number;
+  message: string | null;
+}
+
+interface PipEnvironmentHealth {
+  pythonVersion: string;
+  pythonExecutable: string;
+  pipVersion: string;
+  environmentKind: "System" | "User" | "VirtualEnv" | "Unknown";
+  sitePackages: string | null;
+  userSite: string | null;
+  installedCount: number;
+  outdatedCount: number;
+  editableCount: number;
+  directUrlCount: number;
+  cache: PipCacheInfo;
+  inspectStatus: AsyncStatus;
+  outdatedStatus: AsyncStatus;
+  outdatedMessage: string | null;
+}
+
+interface PipCacheInfo {
+  dir: string | null;
+  rawInfo: string;
+}
+
+interface PipOutdatedPreview {
+  status: AsyncStatus;
+  command: CommandEnvelope;
+  outdated: string[];
+  message: string | null;
+  failure: CommandFailure | null;
+}
+
 interface ManagerScanSnapshot {
   scanDurationMs: number;
   manager: ManagerSnapshot;
@@ -110,12 +168,14 @@ if (!app) {
   throw new Error("App container missing");
 }
 
-const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Homebrew"];
+const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Homebrew", "Maven", "Pip"];
 const managerLabels: Record<ManagerId, string> = {
   Npm: "npm",
   Pnpm: "pnpm",
   Yarn: "Yarn",
   Homebrew: "Homebrew",
+  Maven: "Maven",
+  Pip: "pip",
 };
 
 let managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>> = {};
@@ -124,12 +184,16 @@ let selectedManager: ManagerId = "Npm";
 let selectedPackageIndex = 0;
 let openPackageActionMenuIndex: number | null = null;
 let selectedHomebrewFilter: HomebrewFilter = "All";
+let selectedMavenFilter: MavenFilter = "All";
+let selectedPipFilter: PipFilter = "All";
 let lastCopied = "";
 let scanningManagers = new Set<ManagerId>();
-let sizeScanTokens: Record<ManagerId, number> = { Npm: 0, Pnpm: 0, Yarn: 0, Homebrew: 0 };
-let pendingSizeScansByManager: Record<ManagerId, number> = { Npm: 0, Pnpm: 0, Yarn: 0, Homebrew: 0 };
+let sizeScanTokens: Record<ManagerId, number> = { Npm: 0, Pnpm: 0, Yarn: 0, Homebrew: 0, Maven: 0, Pip: 0 };
+let pendingSizeScansByManager: Record<ManagerId, number> = { Npm: 0, Pnpm: 0, Yarn: 0, Homebrew: 0, Maven: 0, Pip: 0 };
 let homebrewCleanupToken = 0;
 let pendingHomebrewCleanup = false;
+let pipOutdatedToken = 0;
+let pendingPipOutdated = false;
 let uiMessage: UiMessage | null = null;
 
 app.innerHTML = `
@@ -137,7 +201,7 @@ app.innerHTML = `
     <header class="topbar">
       <div>
         <h1>Package Manager Control Center</h1>
-        <p class="lede">查看 npm、pnpm、Yarn Classic 和 Homebrew 的全局包、缓存位置和维护信号。Homebrew 只复制安全命令，不直接执行清理或升级。</p>
+        <p class="lede">查看 npm、pnpm、Yarn Classic、Homebrew、Maven 和 pip 的本机包、缓存/仓库位置和维护信号。所有危险操作只复制命令，不直接执行。</p>
       </div>
       <div class="topbar-actions">
         <button id="refresh-button" data-action="refresh" class="primary" type="button">Refresh scan</button>
@@ -242,6 +306,22 @@ async function handleAction(target: HTMLElement) {
       return;
     }
 
+    if (action === "maven-filter" && target.dataset.filter) {
+      selectedMavenFilter = target.dataset.filter as MavenFilter;
+      selectedPackageIndex = 0;
+      openPackageActionMenuIndex = null;
+      render();
+      return;
+    }
+
+    if (action === "pip-filter" && target.dataset.filter) {
+      selectedPipFilter = target.dataset.filter as PipFilter;
+      selectedPackageIndex = 0;
+      openPackageActionMenuIndex = null;
+      render();
+      return;
+    }
+
     if (action === "select-package" && target.dataset.index) {
       selectedPackageIndex = Number(target.dataset.index);
       openPackageActionMenuIndex = null;
@@ -330,6 +410,10 @@ async function refresh(managerId: ManagerId) {
     homebrewCleanupToken += 1;
     pendingHomebrewCleanup = false;
   }
+  if (managerId === "Pip") {
+    pipOutdatedToken += 1;
+    pendingPipOutdated = false;
+  }
   pendingSizeScansByManager[managerId] = 0;
   uiMessage = null;
   render();
@@ -345,6 +429,9 @@ async function refresh(managerId: ManagerId) {
     if (result.manager.id === "Homebrew" && result.manager.homebrew?.cleanup.status === "Pending") {
       void hydrateHomebrewCleanup(homebrewCleanupToken);
     }
+    if (result.manager.id === "Pip" && result.manager.pip?.outdatedStatus === "Pending") {
+      void hydratePipOutdated(pipOutdatedToken, result.manager.pip.pythonExecutable);
+    }
   } catch (error) {
     if (managerId === selectedManager) {
       showError(`${managerLabel(managerId)} scan failed`, error);
@@ -352,6 +439,39 @@ async function refresh(managerId: ManagerId) {
   } finally {
     scanningManagers.delete(managerId);
     render();
+  }
+}
+
+async function hydratePipOutdated(token: number, pythonExecutable: string) {
+  pendingPipOutdated = true;
+  renderMeta();
+
+  try {
+    const preview = await invoke<PipOutdatedPreview>("hydrate_pip_outdated", { pythonExecutable });
+    const manager = managerSnapshots.Pip;
+    if (!shouldApplyHydrationResult(token, pipOutdatedToken) || !manager?.pip) return;
+    applyPipOutdatedPreview(manager, preview);
+  } catch (error) {
+    const manager = managerSnapshots.Pip;
+    if (!shouldApplyHydrationResult(token, pipOutdatedToken) || !manager?.pip) return;
+    const failedPreview: PipOutdatedPreview = {
+      status: "Failed",
+      command: {
+        program: pythonExecutable,
+        args: ["-m", "pip", "list", "--outdated", "--format=json"],
+        preview: `${pythonExecutable} -m pip list --outdated --format=json`,
+        timeoutMs: 30000,
+      },
+      outdated: [],
+      message: errorToString(error),
+      failure: null,
+    };
+    applyPipOutdatedPreview(manager, failedPreview);
+  } finally {
+    if (shouldApplyHydrationResult(token, pipOutdatedToken)) {
+      pendingPipOutdated = false;
+      render();
+    }
   }
 }
 
@@ -486,6 +606,14 @@ function renderPackageTable(manager: ManagerSnapshot | null) {
 
   if (manager.id === "Homebrew") {
     return renderHomebrewPackageTable(manager);
+  }
+
+  if (manager.id === "Maven") {
+    return renderMavenPackageTable(manager);
+  }
+
+  if (manager.id === "Pip") {
+    return renderPipPackageTable(manager);
   }
 
   if (manager.status === "Unsupported") {
@@ -661,6 +789,7 @@ function renderMeta() {
   if (scanningManagers.has(selectedManager)) parts.push(`Scanning ${managerLabel(selectedManager)}...`);
   if (pendingSizeScans > 0) parts.push(`Sizing ${pendingSizeScans} paths...`);
   if (selectedManager === "Homebrew" && pendingHomebrewCleanup) parts.push("Cleanup dry-run...");
+  if (selectedManager === "Pip" && pendingPipOutdated) parts.push("pip outdated...");
   if (scanDurationMs !== undefined) parts.push(`Scan ${scanDurationMs} ms`);
   if (lastCopied) parts.push(`Copied ${lastCopied}`);
   scanMetaEl.textContent = parts.join(" · ");
@@ -764,11 +893,17 @@ function statusClass(status: string) {
 }
 
 function countedSizePath(kind: PathKind) {
-  return kind === "Cache" || kind === "Store" || kind === "Cellar" || kind === "Caskroom";
+  return kind === "Cache" || kind === "Store" || kind === "Cellar" || kind === "Caskroom" || kind === "LocalRepository";
 }
 
 function actionLabel(action: CommandEnvelope) {
   const [firstArg, secondArg] = action.args;
+  const command = action.args.join(" ");
+  if (command.includes("dependency:get")) return "Copy get";
+  if (command.includes("dependency:tree")) return "Copy tree";
+  if (command.includes("pip show")) return "Copy show";
+  if (command.includes("pip install --upgrade")) return "Copy upgrade";
+  if (command.includes("pip uninstall")) return "Copy uninstall";
   if (firstArg === "upgrade" && secondArg === "--cask") return "Copy cask upgrade";
   if (firstArg === "upgrade") return "Copy upgrade";
   if (firstArg === "uses") return "Copy uses";
@@ -818,6 +953,90 @@ function renderHomebrewPackageTable(manager: ManagerSnapshot) {
   `;
 }
 
+function renderMavenPackageTable(manager: ManagerSnapshot) {
+  const health = manager.maven;
+  const filteredPackages = filteredMavenPackages(manager);
+
+  return `
+    ${renderMavenSummary(health)}
+    ${renderMavenFilters()}
+    ${
+      filteredPackages.length
+        ? `
+          <div class="table-head homebrew-head">
+            <span>Coordinate</span>
+            <span>Version(s)</span>
+            <span>Signals</span>
+            <span>Path</span>
+            <span>Actions</span>
+          </div>
+          ${filteredPackages
+            .map(({ pkg, index }) => {
+              const active = index === selectedPackageIndex ? "selected" : "";
+              return `
+                <div class="row homebrew-row ${active}" data-action="select-package" data-index="${index}">
+                  <span class="cell strong">
+                    ${escapeHtml(pkg.name)}
+                    <span class="kind-tag">${escapeHtml(pkg.kind)}</span>
+                  </span>
+                  <span class="cell">${escapeHtml(pkg.version)}</span>
+                  <span class="cell signal-cell">${renderPackageSignals(pkg)}</span>
+                  <span class="cell muted">${escapeHtml(pkg.path ?? "n/a")}</span>
+                  <span class="cell action-cell">
+                    ${renderPackageActions(pkg, index)}
+                  </span>
+                </div>
+              `;
+            })
+            .join("")}
+        `
+        : emptyState("No Maven artifacts match this filter")
+    }
+  `;
+}
+
+function renderPipPackageTable(manager: ManagerSnapshot) {
+  const health = manager.pip;
+  const filteredPackages = filteredPipPackages(manager);
+
+  return `
+    ${renderPipSummary(health)}
+    ${renderPipFilters()}
+    ${
+      filteredPackages.length
+        ? `
+          <div class="table-head homebrew-head">
+            <span>Name</span>
+            <span>Version</span>
+            <span>Signals</span>
+            <span>Location</span>
+            <span>Actions</span>
+          </div>
+          ${filteredPackages
+            .map(({ pkg, index }) => {
+              const active = index === selectedPackageIndex ? "selected" : "";
+              return `
+                <div class="row homebrew-row ${active}" data-action="select-package" data-index="${index}">
+                  <span class="cell strong">
+                    ${escapeHtml(pkg.name)}
+                    <span class="kind-tag">${escapeHtml(pkg.kind)}</span>
+                  </span>
+                  <span class="cell">${escapeHtml(pkg.version)}</span>
+                  <span class="cell signal-cell">${renderPackageSignals(pkg)}</span>
+                  <span class="cell muted">${escapeHtml(pkg.path ?? "n/a")}</span>
+                  <span class="cell action-cell">
+                    ${renderPackageActions(pkg, index)}
+                  </span>
+                </div>
+              `;
+            })
+            .join("")}
+        `
+        : emptyState("No pip packages match this filter")
+    }
+  `;
+}
+
 function renderHomebrewSummary(maintenance: HomebrewMaintenance | null) {
   if (!maintenance) return "";
 
@@ -840,6 +1059,47 @@ function renderHomebrewSummary(maintenance: HomebrewMaintenance | null) {
   `;
 }
 
+function renderMavenSummary(health: MavenRepositoryHealth | null) {
+  if (!health) return "";
+  const scanStatus = health.repositoryScanStatus.partial ? "Partial" : "Ready";
+
+  return `
+    <div class="homebrew-summary">
+      ${statCard("Artifacts", String(health.artifactCount))}
+      ${statCard("Versions", String(health.versionCount))}
+      ${statCard("Snapshots", String(health.snapshotCount))}
+      ${statCard("Duplicates", String(health.duplicateArtifactCount))}
+      ${statCard("Scan", scanStatus)}
+    </div>
+    ${
+      health.repositoryScanStatus.message
+        ? `<p class="table-note">${escapeHtml(health.repositoryScanStatus.message)} · scanned ${health.repositoryScanStatus.scannedVersionDirs} version dirs · skipped ${health.repositoryScanStatus.skipped}</p>`
+        : ""
+    }
+  `;
+}
+
+function renderPipSummary(health: PipEnvironmentHealth | null) {
+  if (!health) return "";
+  const outdatedValue = health.outdatedStatus === "Ready" ? String(health.outdatedCount) : health.outdatedStatus;
+
+  return `
+    <div class="homebrew-summary">
+      ${statCard("Installed", String(health.installedCount))}
+      ${statCard("Outdated", outdatedValue)}
+      ${statCard("Editable", String(health.editableCount))}
+      ${statCard("Direct URL", String(health.directUrlCount))}
+      ${statCard("Env", health.environmentKind)}
+    </div>
+    <p class="table-note">${escapeHtml(health.pythonVersion)} · ${escapeHtml(health.pythonExecutable)}</p>
+    ${
+      health.outdatedMessage && health.outdatedStatus === "Failed"
+        ? `<p class="table-note bad-note">${escapeHtml(health.outdatedMessage)}</p>`
+        : ""
+    }
+  `;
+}
+
 function renderHomebrewFilters() {
   const filters: HomebrewFilter[] = ["All", "Formulae", "Casks", "Outdated", "Leaves"];
   return `
@@ -848,6 +1108,34 @@ function renderHomebrewFilters() {
         .map((filter) => {
           const active = filter === selectedHomebrewFilter ? "active" : "";
           return `<button class="filter ${active}" data-action="homebrew-filter" data-filter="${filter}" type="button">${filter}</button>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderMavenFilters() {
+  const filters: MavenFilter[] = ["All", "Duplicates", "Snapshots"];
+  return `
+    <div class="homebrew-filters">
+      ${filters
+        .map((filter) => {
+          const active = filter === selectedMavenFilter ? "active" : "";
+          return `<button class="filter ${active}" data-action="maven-filter" data-filter="${filter}" type="button">${filter}</button>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderPipFilters() {
+  const filters: PipFilter[] = ["All", "Outdated", "Editable", "UserSite", "DirectUrl"];
+  return `
+    <div class="homebrew-filters">
+      ${filters
+        .map((filter) => {
+          const active = filter === selectedPipFilter ? "active" : "";
+          return `<button class="filter ${active}" data-action="pip-filter" data-filter="${filter}" type="button">${filter}</button>`;
         })
         .join("")}
     </div>
@@ -874,11 +1162,47 @@ function filteredHomebrewPackages(manager: ManagerSnapshot) {
     });
 }
 
+function filteredMavenPackages(manager: ManagerSnapshot) {
+  return manager.packages
+    .map((pkg, index) => ({ pkg, index }))
+    .filter(({ pkg }) => {
+      switch (selectedMavenFilter) {
+        case "Duplicates":
+          return pkg.signals.includes("DuplicateVersions");
+        case "Snapshots":
+          return pkg.signals.includes("Snapshot");
+        case "All":
+        default:
+          return true;
+      }
+    });
+}
+
+function filteredPipPackages(manager: ManagerSnapshot) {
+  return manager.packages
+    .map((pkg, index) => ({ pkg, index }))
+    .filter(({ pkg }) => {
+      switch (selectedPipFilter) {
+        case "Outdated":
+          return pkg.signals.includes("Outdated");
+        case "Editable":
+          return pkg.signals.includes("Editable");
+        case "UserSite":
+          return pkg.signals.includes("UserSite");
+        case "DirectUrl":
+          return pkg.signals.includes("DirectUrl");
+        case "All":
+        default:
+          return true;
+      }
+    });
+}
+
 function renderPackageSignals(pkg: PackageRow) {
   if (!pkg.signals.length) return `<span class="signal neutral">Current</span>`;
 
   return pkg.signals
-    .map((signal) => `<span class="signal ${signal === "Outdated" ? "warn" : "partial"}">${signal}</span>`)
+    .map((signal) => `<span class="signal ${signal === "Outdated" || signal === "DuplicateVersions" ? "warn" : "partial"}">${signal}</span>`)
     .join("");
 }
 

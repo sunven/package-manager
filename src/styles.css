@@ -197,7 +197,7 @@ button:disabled {
 
 .managers {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -546,6 +546,20 @@ button:disabled {
   border-bottom: 1px solid #e4eaed;
 }
 
+.table-note {
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e4eaed;
+  background: #fbfcfd;
+  color: #65767d;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.bad-note {
+  color: #983020;
+}
+
 .filter {
   border: 1px solid #ccd6da;
   border-radius: 999px;
@@ -623,7 +637,7 @@ button:disabled {
   }
 
   .managers {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .homebrew-summary {

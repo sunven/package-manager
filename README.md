@@ -1,12 +1,12 @@
 # Package Manager Control Center
 
-一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn 和 Homebrew 的包、缓存/仓库占用情况，以及 Homebrew 的维护信号。
+一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、Homebrew、Maven 和 pip 的包、缓存/仓库占用情况，以及 Homebrew、Maven、pip 的维护信号。
 
 当前 v1 目标是 **read-only + safe actions**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；不直接执行卸载、清缓存、批量删除等破坏性操作。
 
 ## 功能
 
-- 扫描 npm、pnpm、Yarn、Homebrew。
+- 扫描 npm、pnpm、Yarn、Homebrew、Maven、pip。
 - 查看全局安装的包名、版本、包路径。
 - 查看 cache / store / global modules 等路径。
 - 统计 cache / store 总占用空间。
@@ -14,8 +14,11 @@
 - Yarn Classic 支持全局包列表。
 - Yarn modern 标记为 unsupported，只展示可解析的缓存信息。
 - Homebrew 支持 formula/cask 清单、outdated、leaves、cleanup dry-run、prefix/cache/cellar 路径。
+- Maven 支持本地仓库路径、artifact/version 统计、重复版本、snapshot 信号和 repository 级空间统计。
+- pip 支持当前 Python interpreter 的 installed/outdated package、editable/direct-url/user-site 信号、cache/site-packages 路径。
 - 复制路径、复制扫描命令、复制包名版本。
 - 复制 Homebrew 维护命令，如 `brew upgrade <formula>`、`brew upgrade --cask <cask>`、`brew cleanup --dry-run`。
+- 复制 Maven/pip 维护命令，如 `mvn dependency:tree -Dincludes=...`、`python3 -m pip show <pkg>`、`python3 -m pip install --upgrade <pkg>`。
 - 打开 cache / store / package 目录。
 - 展示扫描失败、缺少二进制、权限问题、命令超时等诊断信息。
 
@@ -32,6 +35,9 @@
   - 不做批量删除
 - Yarn 2+ 没有 npm/pnpm/Yarn Classic 等价的全局包列表，因此不伪装出一个全局列表。
 - Homebrew leaves 只标记为 review candidate，不等于“安全删除”。
+- Maven v1 是本地仓库健康检查，不是全局 Java 包管理器。
+- pip v1 只扫描当前 Python interpreter，不递归发现全机器所有 virtualenv。
+- pip outdated 单独后台加载；离线或 index 超时时不影响 installed package 展示。
 
 ## 开发环境
 
@@ -65,6 +71,12 @@ Rust 测试：
 ```bash
 cd src-tauri
 cargo test
+```
+
+前端状态测试：
+
+```bash
+pnpm test
 ```
 
 正式打包：
@@ -112,11 +124,26 @@ brew --prefix
 brew --cache
 brew --cellar
 brew cleanup --dry-run
+
+mvn --version
+
+python3 --version
+python3 -c "import sys; print(sys.executable)"
+python3 -m pip --version
+python3 -m pip list --format=json
+python3 -m pip cache dir
+python3 -m pip cache info
+python3 -m pip inspect --local
+python3 -m pip list --outdated --format=json
 ```
 
 如果命令缺失、失败、输出无法解析或超时，界面会显示诊断信息。
 
 Homebrew 扫描会禁用 auto-update，避免只读扫描触发 Homebrew 更新。`brew cleanup --dry-run` 不阻塞首屏扫描；Homebrew tab 先展示已安装、outdated、leaves 和路径，再单独加载 cleanup dry-run 预览。
+
+Maven 扫描只运行 `mvn --version` 做检测；本地仓库路径优先从 `~/.m2/settings.xml` 和 Maven home 的 `conf/settings.xml` 读取顶层 `localRepository`，不会运行可能下载插件的 `mvn help:evaluate`。扫描本地仓库时有时间、version 目录数、返回行数上限，超限会显示 partial 状态。
+
+pip 扫描优先使用 `python3 -m pip`，回退到 `python -m pip`。`pip list --outdated` 可能访问 index，因此不阻塞首屏；pip tab 先显示 installed/cache/inspect 信息，再单独合并 outdated 信号。
 
 ## 空间统计
 
@@ -149,6 +176,8 @@ Homebrew 扫描会禁用 auto-update，避免只读扫描触发 Homebrew 更新�
 - 自动卸载全局包。
 - 自动修改 npm/pnpm/yarn 配置。
 - 自动执行 Homebrew upgrade、cleanup、uninstall。
+- 自动执行 Maven purge/get/tree 命令。
+- 自动执行 pip uninstall、upgrade、cache purge。
 
 以后如果加入执行能力，应优先做“生成命令并复制”，再考虑带确认弹窗、操作日志和 dry-run 的直接执行。
 
@@ -173,8 +202,7 @@ src-tauri/
 ```bash
 pnpm build
 cd src-tauri && cargo test
-pnpm tauri dev
-pnpm tauri build
+pnpm test
 ```
 
 `cargo test` 当前覆盖：
@@ -190,6 +218,10 @@ pnpm tauri build
 - Homebrew outdated/leaves 合并
 - Homebrew Missing/Partial 状态
 - Homebrew cleanup dry-run raw output 和空间估算
+- Maven settings localRepository 解析和 secret 忽略
+- Maven 本地仓库 coordinate、重复版本、snapshot 统计
+- pip list/outdated/inspect 解析和 enrichment
+- pip outdated 前端 hydration token 防旧结果写回
 
 ## 后续候选
 
