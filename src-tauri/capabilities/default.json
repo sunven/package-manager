@@ -6,6 +6,29 @@
   "permissions": [
     "core:default",
     "clipboard-manager:default",
-    "opener:default"
+    "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$HOME/.asdf/**" },
+        { "path": "$HOME/.cache/**" },
+        { "path": "$HOME/.fnm/**" },
+        { "path": "$HOME/.local/**" },
+        { "path": "$HOME/.m2/**" },
+        { "path": "$HOME/.mise/**" },
+        { "path": "$HOME/.npm/**" },
+        { "path": "$HOME/.nvm/**" },
+        { "path": "$HOME/.pnpm-store/**" },
+        { "path": "$HOME/.pyenv/**" },
+        { "path": "$HOME/.uv/**" },
+        { "path": "$HOME/.volta/**" },
+        { "path": "$HOME/.yarn/**" },
+        { "path": "/Library/Frameworks/Python.framework/**" },
+        { "path": "/Library/Python/**" },
+        { "path": "/opt/homebrew/**" },
+        { "path": "/usr/local/**" }
+      ]
+    }
   ]
 }
