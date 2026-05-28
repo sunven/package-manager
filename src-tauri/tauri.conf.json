@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Package Manager Control Center",
+  "productName": "包管理器控制中心",
   "version": "0.1.0",
   "identifier": "com.sunven.package-manager-control-center",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Package Manager Control Center",
+        "title": "包管理器控制中心",
         "width": 1180,
         "height": 760,
         "minWidth": 960,
