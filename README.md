@@ -185,8 +185,13 @@ pip 扫描优先使用 `python3 -m pip`，回退到 `python -m pip`。`pip list 
 
 ```text
 src/
-  main.ts          前端交互和渲染
-  styles.css       前端样式
+  main.tsx         React entry
+  App.tsx          前端应用骨架
+  components/      React UI 组件
+  hooks/           Tauri 扫描、hydration、复制/打开行为
+  utils/           展示文案、筛选和格式化工具
+  styles.css       Tailwind 入口和全局基础样式
+  state.ts         前端状态纯函数
 
 src-tauri/
   src/lib.rs       Tauri command、package manager adapters、空间统计、单元测试
