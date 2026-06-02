@@ -1,8 +1,8 @@
 import { managerOrder, statusLabels } from "../constants";
 import type { ManagerId, ManagerSnapshot } from "../types";
 import { managerLabel } from "../utils/format";
-import { cx } from "../utils/classNames";
-import { statusClass } from "./ui";
+import { Badge } from "../../components/ui/badge";
+import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 
 export function ManagerTabs({
   managerSnapshots,
@@ -16,28 +16,32 @@ export function ManagerTabs({
   selectedManager: ManagerId;
 }) {
   return (
-    <section className="mb-4 grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-6">
+    <ToggleGroup
+      className="mb-4 grid w-full grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-6"
+      onValueChange={(value) => {
+        if (value) onSelect(value as ManagerId);
+      }}
+      type="single"
+      value={selectedManager}
+      variant="outline"
+    >
       {managerOrder.map((managerId) => {
         const manager = managerSnapshots[managerId];
         const scanning = scanningManagers.has(managerId);
         const status = scanning ? "Scanning" : manager?.status ?? "Not scanned";
         return (
-          <button
-            className={cx(
-              "flex min-h-12 items-center justify-between gap-3 rounded-lg border border-slate-300 bg-white px-3 text-left text-sm transition hover:bg-slate-50",
-              managerId === selectedManager && "border-teal-700 shadow-[inset_0_0_0_1px_#0f766e]",
-            )}
+          <ToggleGroupItem
+            className="min-h-12 w-full justify-between gap-3 px-3"
             key={managerId}
-            onClick={() => onSelect(managerId)}
-            type="button"
+            value={managerId}
           >
             <span className="min-w-0 truncate font-medium">{manager?.label ?? managerLabel(managerId)}</span>
-            <span className={cx("shrink-0 rounded-full px-2 py-1 text-[11px] font-extrabold leading-none", statusClass(status))}>
+            <Badge className="shrink-0" variant={status === "Failed" || status === "Missing" ? "destructive" : status === "Ready" ? "default" : "secondary"}>
               {statusLabels[status]}
-            </span>
-          </button>
+            </Badge>
+          </ToggleGroupItem>
         );
       })}
-    </section>
+    </ToggleGroup>
   );
 }

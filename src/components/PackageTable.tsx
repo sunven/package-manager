@@ -14,6 +14,9 @@ import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, i
 import { cx } from "../utils/classNames";
 import { EmptyState, SignalBadge, StatCard } from "./ui";
 import { PackageActions } from "./PackageActions";
+import { Badge } from "../../components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 
 interface PackageTableProps {
   manager: ManagerSnapshot | null;
@@ -85,8 +88,8 @@ export function PackageTable(props: PackageTableProps) {
   if (manager.status === "Unsupported") {
     return (
       <div className="px-5 py-8">
-        <p className="font-bold text-slate-600">Yarn 现代版本不提供全局软件包列表。</p>
-        <p className="mt-2 text-sm text-slate-500">{displayMessage(manager.unsupportedReason ?? "当前状态不支持扫描")}</p>
+        <p className="font-medium text-foreground">Yarn 现代版本不提供全局软件包列表。</p>
+        <p className="mt-2 text-sm text-muted-foreground">{displayMessage(manager.unsupportedReason ?? "当前状态不支持扫描")}</p>
       </div>
     );
   }
@@ -96,12 +99,12 @@ export function PackageTable(props: PackageTableProps) {
   }
 
   return (
-    <TableShell cols="grid-cols-[minmax(180px,1.1fr)_minmax(90px,0.55fr)_minmax(140px,0.8fr)_minmax(160px,1fr)_96px]" heading={["名称", "版本", "来源", "路径", "操作"]}>
+    <TableShell heading={["名称", "版本", "来源", "路径", "操作"]}>
       {indexedPackages(manager).map(({ pkg, index }) => (
-        <div
+        <TableRow
           className={cx(
-            "grid min-h-14 grid-cols-[minmax(180px,1.1fr)_minmax(90px,0.55fr)_minmax(140px,0.8fr)_minmax(160px,1fr)_96px] items-center gap-3 border-t border-slate-100 px-4 py-2 text-left text-sm transition hover:bg-slate-50",
-            index === props.selectedPackageIndex && "bg-teal-50",
+            "cursor-pointer",
+            index === props.selectedPackageIndex && "bg-muted",
           )}
           key={`${pkg.name}-${pkg.version}-${index}`}
           onClick={() => props.onSelectPackage(index)}
@@ -109,11 +112,11 @@ export function PackageTable(props: PackageTableProps) {
           role="button"
           tabIndex={0}
         >
-          <span className="min-w-0 truncate font-bold text-slate-800">{pkg.name}</span>
-          <span className="min-w-0 truncate text-slate-600">{pkg.version}</span>
-          <span className="min-w-0 truncate text-slate-500">{shortenPath(pkg.source)}</span>
-          <span className="min-w-0 truncate text-slate-500">{pkg.path ?? "无"}</span>
-          <span className="justify-self-end">
+          <TableCell className="min-w-45 max-w-70 truncate font-medium">{pkg.name}</TableCell>
+          <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
+          <TableCell className="max-w-52 truncate text-muted-foreground">{shortenPath(pkg.source)}</TableCell>
+          <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ?? "无"}</TableCell>
+          <TableCell className="w-24 text-right">
             <PackageActions
               index={index}
               menuOpen={props.menuOpenIndex === index}
@@ -123,8 +126,8 @@ export function PackageTable(props: PackageTableProps) {
               onToggle={props.onToggleActions}
               pkg={pkg}
             />
-          </span>
-        </div>
+          </TableCell>
+        </TableRow>
       ))}
     </TableShell>
   );
@@ -149,12 +152,12 @@ function SpecializedTable({
   if (!packages.length) return <EmptyState message={emptyMessage} />;
 
   return (
-    <TableShell cols="grid-cols-[minmax(180px,1.05fr)_minmax(90px,0.45fr)_minmax(120px,0.75fr)_minmax(160px,1fr)_96px]" heading={heading}>
+    <TableShell heading={heading}>
       {packages.map(({ pkg, index }) => (
-        <div
+        <TableRow
           className={cx(
-            "grid min-h-14 grid-cols-[minmax(180px,1.05fr)_minmax(90px,0.45fr)_minmax(120px,0.75fr)_minmax(160px,1fr)_96px] items-center gap-3 border-t border-slate-100 px-4 py-2 text-left text-sm transition hover:bg-slate-50",
-            index === selectedPackageIndex && "bg-teal-50",
+            "cursor-pointer",
+            index === selectedPackageIndex && "bg-muted",
           )}
           key={`${pkg.name}-${pkg.version}-${index}`}
           onClick={() => onSelectPackage(index)}
@@ -162,11 +165,15 @@ function SpecializedTable({
           role="button"
           tabIndex={0}
         >
-          <PackageName pkg={pkg} />
-          <span className="min-w-0 truncate text-slate-600">{pkg.version}</span>
-          <span className="flex min-w-0 flex-wrap gap-1.5">{renderPackageSignals(pkg)}</span>
-          <span className="min-w-0 truncate text-slate-500">{pkg.path ?? "无"}</span>
-          <span className="justify-self-end">
+          <TableCell className="min-w-45 max-w-70 truncate">
+            <PackageName pkg={pkg} />
+          </TableCell>
+          <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
+          <TableCell>
+            <span className="flex min-w-0 flex-wrap gap-1.5">{renderPackageSignals(pkg)}</span>
+          </TableCell>
+          <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ?? "无"}</TableCell>
+          <TableCell className="w-24 text-right">
             <PackageActions
               index={index}
               menuOpen={menuOpenIndex === index}
@@ -176,8 +183,8 @@ function SpecializedTable({
               onToggle={onToggleActions}
               pkg={pkg}
             />
-          </span>
-        </div>
+          </TableCell>
+        </TableRow>
       ))}
     </TableShell>
   );
@@ -191,34 +198,34 @@ function selectRowWithKeyboard(event: React.KeyboardEvent, select: () => void) {
 
 function TableShell({
   children,
-  cols,
   heading,
 }: {
   children: React.ReactNode;
-  cols: string;
   heading: string[];
 }) {
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-[760px]">
-        <div className={cx("grid gap-3 bg-slate-50 px-4 py-2 text-xs font-bold uppercase tracking-wide text-slate-500", cols)}>
+    <div className="min-w-[760px]">
+      <Table>
+        <TableHeader>
+          <TableRow>
           {heading.map((item) => (
-            <span key={item}>{item}</span>
+              <TableHead className={item === "操作" ? "w-24 text-right" : undefined} key={item}>{item}</TableHead>
           ))}
-        </div>
-        {children}
-      </div>
+          </TableRow>
+        </TableHeader>
+        <TableBody>{children}</TableBody>
+      </Table>
     </div>
   );
 }
 
 function PackageName({ pkg }: { pkg: PackageRow }) {
   return (
-    <span className="min-w-0 truncate font-bold text-slate-800">
+    <span className="min-w-0 truncate font-medium">
       {pkg.name}
-      <span className="ml-2 inline-flex rounded-full bg-slate-100 px-2 py-0.5 align-middle text-[10px] font-bold text-slate-500">
+      <Badge className="ml-2 align-middle" variant="secondary">
         {packageKindLabels[pkg.kind]}
-      </span>
+      </Badge>
     </span>
   );
 }
@@ -254,7 +261,7 @@ function MavenSummary({ health }: { health: MavenRepositoryHealth | null }) {
   const scanStatus = health.repositoryScanStatus.partial ? "部分可用" : "就绪";
 
   return (
-    <div className="space-y-2 p-4">
+    <div className="flex flex-col gap-2 p-4">
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
         <StatCard label="构件" value={String(health.artifactCount)} />
         <StatCard label="版本" value={String(health.versionCount)} />
@@ -263,7 +270,7 @@ function MavenSummary({ health }: { health: MavenRepositoryHealth | null }) {
         <StatCard label="扫描" value={scanStatus} />
       </div>
       {health.repositoryScanStatus.message ? (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-muted-foreground">
           {displayMessage(health.repositoryScanStatus.message)} · 已扫描 {health.repositoryScanStatus.scannedVersionDirs} 个版本目录 · 跳过 {health.repositoryScanStatus.skipped} 项
         </p>
       ) : null}
@@ -276,7 +283,7 @@ function PipSummary({ health }: { health: PipEnvironmentHealth | null }) {
   const outdatedValue = health.outdatedStatus === "Ready" ? String(health.outdatedCount) : health.outdatedStatus === "Pending" ? "等待中" : "失败";
 
   return (
-    <div className="space-y-2 p-4">
+    <div className="flex flex-col gap-2 p-4">
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
         <StatCard label="已安装" value={String(health.installedCount)} />
         <StatCard label="可更新" value={outdatedValue} />
@@ -284,10 +291,10 @@ function PipSummary({ health }: { health: PipEnvironmentHealth | null }) {
         <StatCard label="直接 URL" value={String(health.directUrlCount)} />
         <StatCard label="环境" value={environmentKindLabels[health.environmentKind]} />
       </div>
-      <p className="text-sm text-slate-500">
+      <p className="text-sm text-muted-foreground">
         {health.pythonVersion} · {health.pythonExecutable}
       </p>
-      {health.outdatedMessage && health.outdatedStatus === "Failed" ? <p className="text-sm font-medium text-red-700">{displayMessage(health.outdatedMessage)}</p> : null}
+      {health.outdatedMessage && health.outdatedStatus === "Failed" ? <p className="text-sm font-medium text-destructive">{displayMessage(health.outdatedMessage)}</p> : null}
     </div>
   );
 }
@@ -304,21 +311,25 @@ function FilterBar<T extends string>({
   onSelect: (filter: T) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2 border-y border-slate-100 px-4 py-3">
+    <ToggleGroup
+      className="flex flex-wrap justify-start border-y px-4 py-3"
+      onValueChange={(value) => {
+        if (value) onSelect(value as T);
+      }}
+      type="single"
+      value={active}
+      variant="outline"
+    >
       {filters.map((filter) => (
-        <button
-          className={cx(
-            "rounded-full border border-slate-300 px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50",
-            filter === active && "border-teal-700 bg-teal-50 text-teal-800",
-          )}
+        <ToggleGroupItem
           key={filter}
-          onClick={() => onSelect(filter)}
-          type="button"
+          size="sm"
+          value={filter}
         >
           {labels[filter]}
-        </button>
+        </ToggleGroupItem>
       ))}
-    </div>
+    </ToggleGroup>
   );
 }
 
