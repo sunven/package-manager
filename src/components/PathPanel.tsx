@@ -55,6 +55,7 @@ function PathCard({
   path: PathInfo;
 }) {
   const size = path.size;
+  const sizeValue = size.status === "Ready" ? (size.human ?? "0 B") : null;
   const detail =
     size.status === "Pending" ? (
       <span>等待占用扫描</span>
@@ -73,7 +74,10 @@ function PathCard({
           <p className="truncate text-sm font-bold text-slate-800">{pathLabel(path.label)}</p>
           <p className="mt-1 text-xs font-medium text-slate-500">{pathKindLabels[path.kind]}</p>
         </div>
-        <StatusBadge status={size.status} className="mt-0.5" />
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          {sizeValue ? <strong className="text-sm font-extrabold leading-5 text-slate-900">{sizeValue}</strong> : null}
+          <StatusBadge status={size.status} />
+        </div>
       </div>
       <code className="mt-3 block overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-slate-50 px-2 py-1.5 text-xs text-slate-600">{path.path}</code>
       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">{detail}</div>
