@@ -2,11 +2,13 @@ import { Copy, ExternalLink } from "lucide-react";
 import { pathKindLabels } from "../constants";
 import type { HomebrewMaintenance, ManagerSnapshot, PathInfo } from "../types";
 import { displayMessage, pathLabel, trimTail } from "../utils/format";
-import { EmptyState, IconButton, Panel, PanelHead, StatusBadge, TextButton } from "./ui";
+import { EmptyState, IconButton, StatusBadge, TextButton } from "./ui";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 
 const npmInlinePathKinds: PathInfo["kind"][] = ["Cache", "NpxCache"];
-const hiddenPathKinds: PathInfo["kind"][] = ["GlobalModules"];
+const pnpmInlinePathKinds: PathInfo["kind"][] = ["Store"];
+const yarnInlinePathKinds: PathInfo["kind"][] = ["Cache"];
+const hiddenPathKinds: PathInfo["kind"][] = ["GlobalModules", "GlobalDir"];
 
 export function PathPanel({
   manager,
@@ -25,47 +27,52 @@ export function PathPanel({
   pendingHomebrewCleanup: boolean;
   scanning: boolean;
 }) {
+  if (!manager) {
+    return (
+      <div className="flex flex-col gap-3">
+        <EmptyState message={scanning ? "正在扫描路径..." : "尚未扫描"} />
+      </div>
+    );
+  }
+
   const { inlinePaths, stackedPaths } = splitPaths(manager);
-  const showCommandsInInlineCard = Boolean(inlinePaths.length && manager?.commands.length);
+  const showCommandsInInlineCard = Boolean(inlinePaths.length && manager.commands.length);
 
   return (
-    <Panel>
-      <PanelHead eyebrow="路径" title="缓存 / 存储" />
-      <div className="flex flex-col gap-3 p-4">
-        {!manager ? (
-          <EmptyState message={scanning ? "正在扫描路径..." : "尚未扫描"} />
-        ) : (
-          <>
-            {manager.id === "Homebrew" ? (
-              <HomebrewCleanupCard maintenance={manager.homebrew} onCopyCleanupCommand={onCopyCleanupCommand} pending={pendingHomebrewCleanup} />
-            ) : null}
-            {inlinePaths.length || stackedPaths.length ? (
-              <>
-                {inlinePaths.length ? (
-                  <InlinePathCard commands={showCommandsInInlineCard ? manager.commands : []} onCopyCommand={onCopyCommand} onCopyPath={onCopyPath} onOpenPath={onOpenPath} paths={inlinePaths} />
-                ) : null}
-                {stackedPaths.map((path) => <PathCard key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />)}
-              </>
-            ) : (
-              <EmptyState message="未解析到缓存或存储路径" />
-            )}
-            {showCommandsInInlineCard ? null : <CommandList manager={manager} onCopyCommand={onCopyCommand} />}
-          </>
-        )}
-      </div>
-    </Panel>
+    <div className="flex flex-col gap-3">
+      {manager.id === "Homebrew" ? (
+        <HomebrewCleanupCard maintenance={manager.homebrew} onCopyCleanupCommand={onCopyCleanupCommand} pending={pendingHomebrewCleanup} />
+      ) : null}
+      {inlinePaths.length || stackedPaths.length ? (
+        <>
+          {inlinePaths.length ? (
+            <InlinePathCard commands={showCommandsInInlineCard ? manager.commands : []} onCopyCommand={onCopyCommand} onCopyPath={onCopyPath} onOpenPath={onOpenPath} paths={inlinePaths} />
+          ) : null}
+          {stackedPaths.map((path) => <PathCard key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />)}
+        </>
+      ) : (
+        <EmptyState message="未解析到缓存或存储路径" />
+      )}
+      {showCommandsInInlineCard ? null : <CommandList manager={manager} onCopyCommand={onCopyCommand} />}
+    </div>
   );
 }
 
-function splitPaths(manager: ManagerSnapshot | null) {
-  if (!manager || manager.id !== "Npm") {
-    return { inlinePaths: [], stackedPaths: manager?.paths.filter((path) => !hiddenPathKinds.includes(path.kind)) ?? [] };
+function splitPaths(manager: ManagerSnapshot | null): { inlinePaths: PathInfo[]; stackedPaths: PathInfo[] } {
+  if (!manager) {
+    return { inlinePaths: [], stackedPaths: [] };
   }
 
-  const inlinePaths = npmInlinePathKinds
+  const inlinePathKinds = manager.id === "Npm" ? npmInlinePathKinds : manager.id === "Pnpm" ? pnpmInlinePathKinds : manager.id === "Yarn" ? yarnInlinePathKinds : [];
+
+  if (!inlinePathKinds.length) {
+    return { inlinePaths: [], stackedPaths: manager.paths.filter((path) => !hiddenPathKinds.includes(path.kind)) };
+  }
+
+  const inlinePaths = inlinePathKinds
     .map((kind) => manager.paths.find((path) => path.kind === kind))
     .filter((path): path is PathInfo => Boolean(path));
-  const stackedPaths = manager.paths.filter((path) => !npmInlinePathKinds.includes(path.kind) && !hiddenPathKinds.includes(path.kind));
+  const stackedPaths = manager.paths.filter((path) => !inlinePathKinds.includes(path.kind) && !hiddenPathKinds.includes(path.kind));
 
   return { inlinePaths, stackedPaths };
 }
@@ -83,8 +90,12 @@ function InlinePathCard({
   onOpenPath: (path: string) => void;
   paths: PathInfo[];
 }) {
+  const itemCount = paths.length + (commands.length ? 1 : 0);
+  const gridClassName =
+    itemCount >= 3 ? "grid grid-cols-3 gap-3" : itemCount === 2 ? "grid grid-cols-2 gap-3" : "grid grid-cols-1 gap-2";
+
   return (
-    <div className={commands.length ? "grid grid-cols-3 gap-3" : "grid grid-cols-2 gap-2"}>
+    <div className={gridClassName}>
       {paths.map((path) => (
         <InlinePathCell key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />
       ))}

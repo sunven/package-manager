@@ -10,7 +10,7 @@ import type {
   PipEnvironmentHealth,
   PipFilter,
 } from "../types";
-import { displayMessage } from "../utils/format";
+import { displayMessage, pathLabel } from "../utils/format";
 import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, type IndexedPackage } from "../utils/filters";
 import { cx } from "../utils/classNames";
 import { EmptyState, IconButton, SignalBadge, StatCard, StatusBadge } from "./ui";
@@ -97,7 +97,7 @@ export function PackageTable(props: PackageTableProps) {
     );
   }
 
-  const globalModulesPath = manager.paths.find((path) => path.kind === "GlobalModules") ?? null;
+  const globalModulesPath = manager.paths.find((path) => path.kind === "GlobalModules" || path.kind === "GlobalDir") ?? null;
 
   if (!manager.packages.length) {
     return (
@@ -158,16 +158,17 @@ function GlobalModulesBar({
   if (!path) return null;
 
   const sizeValue = path.size.status === "Ready" ? (path.size.human ?? "0 B") : null;
+  const label = pathLabel(path.label);
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2 border-b px-4 py-3">
-      <span className="shrink-0 text-sm font-medium text-foreground">全局模块</span>
+      <span className="shrink-0 text-sm font-medium text-foreground">{label}</span>
       {sizeValue ? <span className="shrink-0 text-sm text-muted-foreground">{sizeValue}</span> : <StatusBadge status={path.size.status} />}
       <code className="min-w-48 flex-1 truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{path.path}</code>
-      <IconButton label="复制全局模块路径" onClick={() => onCopyPath(path.path)}>
+      <IconButton label={`复制${label}路径`} onClick={() => onCopyPath(path.path)}>
         <Copy />
       </IconButton>
-      <IconButton disabled={path.size.status === "Missing"} label="打开全局模块路径" onClick={() => onOpenPath(path.path)}>
+      <IconButton disabled={path.size.status === "Missing"} label={`打开${label}路径`} onClick={() => onOpenPath(path.path)}>
         <ExternalLink />
       </IconButton>
     </div>

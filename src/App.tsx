@@ -1,14 +1,12 @@
 import { useEffect } from "react";
-import { managerLabels } from "./constants";
 import { usePackageManagers } from "./hooks/usePackageManagers";
-import { FailurePanel } from "./components/FailurePanel";
 import { ManagerTabs } from "./components/ManagerTabs";
 import { MessageBanner } from "./components/MessageBanner";
 import { Overview } from "./components/Overview";
 import { PackageTable } from "./components/PackageTable";
 import { PathPanel } from "./components/PathPanel";
 import { Shell } from "./components/Shell";
-import { Panel, PanelHead, StatusBadge } from "./components/ui";
+import { Panel } from "./components/ui";
 
 export function App() {
   const state = usePackageManagers();
@@ -36,13 +34,8 @@ export function App() {
         selectedManager={selectedManager}
       />
 
-      <main className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(330px,0.75fr)] xl:items-start">
+      <main className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(330px,0.75fr)] xl:items-start">
         <Panel className="overflow-hidden">
-          <PanelHead
-            action={<StatusBadge status={scanning ? "Scanning" : currentManager?.status ?? "Not scanned"} />}
-            eyebrow="软件包"
-            title={currentManager ? `${currentManager.label}${currentManager.version ? ` ${currentManager.version}` : ""}` : managerLabels[selectedManager]}
-          />
           <PackageTable
             manager={currentManager}
             menuOpenIndex={state.openPackageActionMenuIndex}
@@ -74,7 +67,6 @@ export function App() {
             pendingHomebrewCleanup={state.pendingHomebrewCleanup}
             scanning={scanning}
           />
-          <FailurePanel manager={currentManager} scanning={scanning} />
         </aside>
       </main>
     </Shell>

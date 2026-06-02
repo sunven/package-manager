@@ -1,7 +1,6 @@
 import type {
   AsyncStatus,
   DisplayStatus,
-  FailureKind,
   HomebrewFilter,
   ManagerId,
   MavenFilter,
@@ -96,14 +95,6 @@ export const environmentKindLabels: Record<PipEnvironmentHealth["environmentKind
   User: "用户环境",
   VirtualEnv: "虚拟环境",
   Unknown: "未知环境",
-};
-
-export const failureKindLabels: Record<FailureKind, string> = {
-  MissingBinary: "命令缺失",
-  CommandFailed: "命令失败",
-  ParseFailure: "解析失败",
-  PermissionDenied: "无权限",
-  Timeout: "超时",
 };
 
 export const asyncStatusLabels: Record<AsyncStatus, string> = {
