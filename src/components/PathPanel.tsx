@@ -5,6 +5,9 @@ import { displayMessage, pathLabel, trimTail } from "../utils/format";
 import { EmptyState, IconButton, Panel, PanelHead, StatusBadge, TextButton } from "./ui";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 
+const npmInlinePathKinds: PathInfo["kind"][] = ["Cache", "NpxCache"];
+const hiddenPathKinds: PathInfo["kind"][] = ["GlobalModules"];
+
 export function PathPanel({
   manager,
   onCopyCleanupCommand,
@@ -22,6 +25,9 @@ export function PathPanel({
   pendingHomebrewCleanup: boolean;
   scanning: boolean;
 }) {
+  const { inlinePaths, stackedPaths } = splitPaths(manager);
+  const showCommandsInInlineCard = Boolean(inlinePaths.length && manager?.commands.length);
+
   return (
     <Panel>
       <PanelHead eyebrow="路径" title="缓存 / 存储" />
@@ -33,16 +39,104 @@ export function PathPanel({
             {manager.id === "Homebrew" ? (
               <HomebrewCleanupCard maintenance={manager.homebrew} onCopyCleanupCommand={onCopyCleanupCommand} pending={pendingHomebrewCleanup} />
             ) : null}
-            {manager.paths.length ? (
-              manager.paths.map((path) => <PathCard key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />)
+            {inlinePaths.length || stackedPaths.length ? (
+              <>
+                {inlinePaths.length ? (
+                  <InlinePathCard commands={showCommandsInInlineCard ? manager.commands : []} onCopyCommand={onCopyCommand} onCopyPath={onCopyPath} onOpenPath={onOpenPath} paths={inlinePaths} />
+                ) : null}
+                {stackedPaths.map((path) => <PathCard key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />)}
+              </>
             ) : (
               <EmptyState message="未解析到缓存或存储路径" />
             )}
-            <CommandList manager={manager} onCopyCommand={onCopyCommand} />
+            {showCommandsInInlineCard ? null : <CommandList manager={manager} onCopyCommand={onCopyCommand} />}
           </>
         )}
       </div>
     </Panel>
+  );
+}
+
+function splitPaths(manager: ManagerSnapshot | null) {
+  if (!manager || manager.id !== "Npm") {
+    return { inlinePaths: [], stackedPaths: manager?.paths.filter((path) => !hiddenPathKinds.includes(path.kind)) ?? [] };
+  }
+
+  const inlinePaths = npmInlinePathKinds
+    .map((kind) => manager.paths.find((path) => path.kind === kind))
+    .filter((path): path is PathInfo => Boolean(path));
+  const stackedPaths = manager.paths.filter((path) => !npmInlinePathKinds.includes(path.kind) && !hiddenPathKinds.includes(path.kind));
+
+  return { inlinePaths, stackedPaths };
+}
+
+function InlinePathCard({
+  commands,
+  onCopyCommand,
+  onCopyPath,
+  onOpenPath,
+  paths,
+}: {
+  commands: ManagerSnapshot["commands"];
+  onCopyCommand: (payload: string) => void;
+  onCopyPath: (path: string) => void;
+  onOpenPath: (path: string) => void;
+  paths: PathInfo[];
+}) {
+  return (
+    <div className={commands.length ? "grid grid-cols-3 gap-3" : "grid grid-cols-2 gap-2"}>
+      {paths.map((path) => (
+        <InlinePathCell key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />
+      ))}
+      {commands.length ? (
+        <div className="flex min-w-0 flex-col gap-2 rounded-md border bg-background p-2">
+          {commands.map((command, index) => (
+            <CommandChip command={command} index={index} key={`${command.preview}-${index}`} onCopyCommand={onCopyCommand} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function InlinePathCell({
+  className = "min-w-0",
+  onCopyPath,
+  onOpenPath,
+  path,
+}: {
+  className?: string;
+  onCopyPath: (path: string) => void;
+  onOpenPath: (path: string) => void;
+  path: PathInfo;
+}) {
+  const size = path.size;
+  const sizeValue = size.status === "Ready" ? (size.human ?? "0 B") : null;
+  const detail = size.status === "Pending" ? "等待占用扫描" : `${size.files} 文件`;
+
+  return (
+    <div className={`${className} rounded-md border bg-background p-2`}>
+      <div className="flex min-h-10 items-start justify-between gap-1">
+        <div className="min-w-0">
+          <p className="truncate text-xs font-medium text-foreground">{pathLabel(path.label)}</p>
+        </div>
+        <StatusBadge className="shrink-0 px-1.5 text-[10px]" status={size.status} />
+      </div>
+      <div className="mt-2 min-h-8">
+        {sizeValue ? <strong className="block truncate text-sm font-medium leading-5">{sizeValue}</strong> : null}
+        <p className="truncate text-[11px] text-muted-foreground">{detail}</p>
+      </div>
+      <code className="mt-2 block truncate rounded-md bg-muted px-1.5 py-1 text-[11px] text-muted-foreground">{path.path}</code>
+      {size.message ? <p className="mt-1 truncate text-[11px] text-muted-foreground">{displayMessage(size.message)}</p> : null}
+      <div className="mt-2 flex gap-1">
+        <IconButton className="size-8" label={`复制 ${pathLabel(path.label)}路径`} onClick={() => onCopyPath(path.path)}>
+          <Copy />
+        </IconButton>
+        <IconButton className="size-8" disabled={size.status === "Missing"} label={`打开 ${pathLabel(path.label)}路径`} onClick={() => onOpenPath(path.path)}>
+          <ExternalLink />
+        </IconButton>
+      </div>
+    </div>
   );
 }
 
@@ -171,18 +265,31 @@ function CommandList({
         <CardTitle className="text-sm">扫描命令</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
-        {manager.commands.map((command, index) => {
-          const payload = JSON.stringify({ preview: command.preview, envelope: command }, null, 2);
-          return (
-            <div className="flex items-center gap-2" key={`${command.preview}-${index}`}>
-              <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{command.preview}</code>
-              <IconButton label="复制命令详情" onClick={() => onCopyCommand(payload)}>
-                <Copy />
-              </IconButton>
-            </div>
-          );
-        })}
+        {manager.commands.map((command, index) => (
+          <CommandChip command={command} index={index} key={`${command.preview}-${index}`} onCopyCommand={onCopyCommand} />
+        ))}
       </CardContent>
     </Card>
+  );
+}
+
+function CommandChip({
+  command,
+  index,
+  onCopyCommand,
+}: {
+  command: ManagerSnapshot["commands"][number];
+  index: number;
+  onCopyCommand: (payload: string) => void;
+}) {
+  const payload = JSON.stringify({ preview: command.preview, envelope: command }, null, 2);
+
+  return (
+    <div className="flex items-center gap-2">
+      <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{command.preview}</code>
+      <IconButton label={`复制第 ${index + 1} 条扫描命令`} onClick={() => onCopyCommand(payload)}>
+        <Copy />
+      </IconButton>
+    </div>
   );
 }

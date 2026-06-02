@@ -46,10 +46,12 @@ export function App() {
           <PackageTable
             manager={currentManager}
             menuOpenIndex={state.openPackageActionMenuIndex}
+            onCopyPath={(path) => void actions.copyPath(path)}
             onCopyPackage={(index) => void actions.copyPackage(index)}
             onCopyPackageAction={(index, actionIndex) => void actions.copyPackageAction(index, actionIndex)}
             onHomebrewFilter={actions.setHomebrewFilter}
             onMavenFilter={actions.setMavenFilter}
+            onOpenPath={(path) => void actions.openPath(path)}
             onOpenPackage={(index) => void actions.openPackage(index)}
             onPipFilter={actions.setPipFilter}
             onSelectPackage={actions.selectPackage}

@@ -1,3 +1,4 @@
+import { Copy, ExternalLink } from "lucide-react";
 import { environmentKindLabels, homebrewFilterLabels, mavenFilterLabels, packageKindLabels, pipFilterLabels, signalLabels } from "../constants";
 import type {
   HomebrewFilter,
@@ -12,7 +13,7 @@ import type {
 import { displayMessage } from "../utils/format";
 import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, type IndexedPackage } from "../utils/filters";
 import { cx } from "../utils/classNames";
-import { EmptyState, SignalBadge, StatCard } from "./ui";
+import { EmptyState, IconButton, SignalBadge, StatCard, StatusBadge } from "./ui";
 import { PackageActions } from "./PackageActions";
 import { Badge } from "../../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
@@ -26,6 +27,8 @@ interface PackageTableProps {
   onHomebrewFilter: (filter: HomebrewFilter) => void;
   onMavenFilter: (filter: MavenFilter) => void;
   onOpenPackage: (index: number) => void;
+  onCopyPath: (path: string) => void;
+  onOpenPath: (path: string) => void;
   onPipFilter: (filter: PipFilter) => void;
   onSelectPackage: (index: number) => void;
   onToggleActions: (index: number) => void;
@@ -94,42 +97,80 @@ export function PackageTable(props: PackageTableProps) {
     );
   }
 
+  const globalModulesPath = manager.paths.find((path) => path.kind === "GlobalModules") ?? null;
+
   if (!manager.packages.length) {
-    return <EmptyState message="未找到全局软件包" />;
+    return (
+      <>
+        <GlobalModulesBar onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
+        <EmptyState message="未找到全局软件包" />
+      </>
+    );
   }
 
   return (
-    <TableShell heading={["名称", "版本", "来源", "路径", "操作"]}>
-      {indexedPackages(manager).map(({ pkg, index }) => (
-        <TableRow
-          className={cx(
-            "cursor-pointer",
-            index === props.selectedPackageIndex && "bg-muted",
-          )}
-          key={`${pkg.name}-${pkg.version}-${index}`}
-          onClick={() => props.onSelectPackage(index)}
-          onKeyDown={(event) => selectRowWithKeyboard(event, () => props.onSelectPackage(index))}
-          role="button"
-          tabIndex={0}
-        >
-          <TableCell className="min-w-45 max-w-70 truncate font-medium">{pkg.name}</TableCell>
-          <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
-          <TableCell className="max-w-52 truncate text-muted-foreground">{shortenPath(pkg.source)}</TableCell>
-          <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ?? "无"}</TableCell>
-          <TableCell className="w-24 text-right">
-            <PackageActions
-              index={index}
-              menuOpen={props.menuOpenIndex === index}
-              onCopyPackage={props.onCopyPackage}
-              onCopyPackageAction={props.onCopyPackageAction}
-              onOpenPackage={props.onOpenPackage}
-              onToggle={props.onToggleActions}
-              pkg={pkg}
-            />
-          </TableCell>
-        </TableRow>
-      ))}
-    </TableShell>
+    <>
+      <GlobalModulesBar onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
+      <TableShell heading={["名称", "版本", "来源", "路径", "操作"]}>
+        {indexedPackages(manager).map(({ pkg, index }) => (
+          <TableRow
+            className={cx(
+              "cursor-pointer",
+              index === props.selectedPackageIndex && "bg-muted",
+            )}
+            key={`${pkg.name}-${pkg.version}-${index}`}
+            onClick={() => props.onSelectPackage(index)}
+            onKeyDown={(event) => selectRowWithKeyboard(event, () => props.onSelectPackage(index))}
+            role="button"
+            tabIndex={0}
+          >
+            <TableCell className="min-w-45 max-w-70 truncate font-medium">{pkg.name}</TableCell>
+            <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
+            <TableCell className="max-w-52 truncate text-muted-foreground">{shortenPath(pkg.source)}</TableCell>
+            <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ?? "无"}</TableCell>
+            <TableCell className="w-24 text-right">
+              <PackageActions
+                index={index}
+                menuOpen={props.menuOpenIndex === index}
+                onCopyPackage={props.onCopyPackage}
+                onCopyPackageAction={props.onCopyPackageAction}
+                onOpenPackage={props.onOpenPackage}
+                onToggle={props.onToggleActions}
+                pkg={pkg}
+              />
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableShell>
+    </>
+  );
+}
+
+function GlobalModulesBar({
+  onCopyPath,
+  onOpenPath,
+  path,
+}: {
+  onCopyPath: (path: string) => void;
+  onOpenPath: (path: string) => void;
+  path: ManagerSnapshot["paths"][number] | null;
+}) {
+  if (!path) return null;
+
+  const sizeValue = path.size.status === "Ready" ? (path.size.human ?? "0 B") : null;
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2 border-b px-4 py-3">
+      <span className="shrink-0 text-sm font-medium text-foreground">全局模块</span>
+      {sizeValue ? <span className="shrink-0 text-sm text-muted-foreground">{sizeValue}</span> : <StatusBadge status={path.size.status} />}
+      <code className="min-w-48 flex-1 truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{path.path}</code>
+      <IconButton label="复制全局模块路径" onClick={() => onCopyPath(path.path)}>
+        <Copy />
+      </IconButton>
+      <IconButton disabled={path.size.status === "Missing"} label="打开全局模块路径" onClick={() => onOpenPath(path.path)}>
+        <ExternalLink />
+      </IconButton>
+    </div>
   );
 }
 
