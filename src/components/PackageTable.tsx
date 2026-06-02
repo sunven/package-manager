@@ -2,7 +2,6 @@ import { Copy, ExternalLink } from "lucide-react";
 import { environmentKindLabels, homebrewFilterLabels, mavenFilterLabels, packageKindLabels, pipFilterLabels, signalLabels } from "../constants";
 import type {
   HomebrewFilter,
-  HomebrewMaintenance,
   ManagerSnapshot,
   MavenFilter,
   MavenRepositoryHealth,
@@ -49,9 +48,9 @@ export function PackageTable(props: PackageTableProps) {
     const packages = filteredHomebrewPackages(manager, props.selectedHomebrewFilter);
     return (
       <>
-        <HomebrewSummary maintenance={manager.homebrew} />
         <FilterBar
           active={props.selectedHomebrewFilter}
+          counts={homebrewFilterCounts(manager)}
           filters={["All", "Formulae", "Casks", "Outdated", "Leaves"]}
           labels={homebrewFilterLabels}
           onSelect={props.onHomebrewFilter}
@@ -282,22 +281,6 @@ function renderPackageSignals(pkg: PackageRow) {
   ));
 }
 
-function HomebrewSummary({ maintenance }: { maintenance: HomebrewMaintenance | null }) {
-  if (!maintenance) return null;
-  const cleanup = maintenance.cleanup;
-  const cleanupValue = cleanup.status === "Ready" ? cleanup.reclaimedHuman ?? "就绪" : cleanup.status === "Pending" ? "等待中" : "失败";
-
-  return (
-    <div className="grid grid-cols-2 gap-2.5 p-4 md:grid-cols-5">
-      <StatCard label="配方包" value={String(maintenance.formulaCount)} />
-      <StatCard label="应用包" value={String(maintenance.caskCount)} />
-      <StatCard label="可更新" value={String(maintenance.outdatedCount)} />
-      <StatCard label="叶子包" value={String(maintenance.leafCount)} />
-      <StatCard label="清理" value={cleanupValue} />
-    </div>
-  );
-}
-
 function MavenSummary({ health }: { health: MavenRepositoryHealth | null }) {
   if (!health) return null;
   const scanStatus = health.repositoryScanStatus.partial ? "部分可用" : "就绪";
@@ -343,11 +326,13 @@ function PipSummary({ health }: { health: PipEnvironmentHealth | null }) {
 
 function FilterBar<T extends string>({
   active,
+  counts,
   filters,
   labels,
   onSelect,
 }: {
   active: T;
+  counts?: Partial<Record<T, number | string>>;
   filters: T[];
   labels: Record<T, string>;
   onSelect: (filter: T) => void;
@@ -362,17 +347,35 @@ function FilterBar<T extends string>({
       value={active}
       variant="outline"
     >
-      {filters.map((filter) => (
-        <ToggleGroupItem
-          key={filter}
-          size="sm"
-          value={filter}
-        >
-          {labels[filter]}
-        </ToggleGroupItem>
-      ))}
+      {filters.map((filter) => {
+        const count = counts?.[filter];
+
+        return (
+          <ToggleGroupItem
+            key={filter}
+            size="sm"
+            value={filter}
+          >
+            {labels[filter]}
+            {count !== undefined ? <Badge variant="secondary">{count}</Badge> : null}
+          </ToggleGroupItem>
+        );
+      })}
     </ToggleGroup>
   );
+}
+
+function homebrewFilterCounts(manager: ManagerSnapshot): Partial<Record<HomebrewFilter, number>> {
+  const maintenance = manager.homebrew;
+  if (!maintenance) return { All: manager.packages.length };
+
+  return {
+    All: manager.packages.length,
+    Formulae: maintenance.formulaCount,
+    Casks: maintenance.caskCount,
+    Outdated: maintenance.outdatedCount,
+    Leaves: maintenance.leafCount,
+  };
 }
 
 function shortenPath(value: string) {
