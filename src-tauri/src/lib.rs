@@ -93,6 +93,7 @@ struct PathInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 enum PathKind {
     Cache,
+    NpxCache,
     Store,
     GlobalModules,
     GlobalDir,
@@ -370,9 +371,13 @@ fn scan_npm() -> ManagerSnapshot {
     }
 
     if let Some(path) = command_stdout("npm", &["config", "get", "cache"], 5, &mut snapshot) {
+        let npx_path = npx_cache_path(&path);
         snapshot
             .paths
             .push(path_info("Cache", PathKind::Cache, path));
+        snapshot
+            .paths
+            .push(path_info("npx cache", PathKind::NpxCache, npx_path));
     }
 
     if let Some(path) = command_stdout("npm", &["root", "-g"], 5, &mut snapshot) {
@@ -2369,6 +2374,10 @@ fn path_info(label: &str, kind: PathKind, path: String) -> PathInfo {
     }
 }
 
+fn npx_cache_path(cache_path: &str) -> String {
+    Path::new(cache_path).join("_npx").display().to_string()
+}
+
 fn pending_disk_usage() -> DiskUsage {
     DiskUsage {
         status: DiskUsageStatus::Pending,
@@ -2608,6 +2617,11 @@ mod tests {
         assert_eq!(packages[1].name, "zeta");
         assert_eq!(packages[1].version, "2.0.0");
         assert_eq!(packages[1].path.as_deref(), Some("/tmp/zeta"));
+    }
+
+    #[test]
+    fn npx_cache_path_uses_npm_cache_subdirectory() {
+        assert_eq!(npx_cache_path("/tmp/npm-cache"), "/tmp/npm-cache/_npx");
     }
 
     #[test]

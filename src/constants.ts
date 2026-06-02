@@ -39,6 +39,7 @@ export const statusLabels: Record<DisplayStatus, string> = {
 
 export const pathKindLabels: Record<PathKind, string> = {
   Cache: "缓存",
+  NpxCache: "npx 缓存",
   Store: "存储",
   GlobalModules: "全局模块",
   GlobalDir: "全局目录",

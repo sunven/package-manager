@@ -9,6 +9,7 @@ export function pathLabel(label: string) {
   const pathLabels: Record<string, string> = {
     Cache: "缓存",
     "Cache folder": "缓存文件夹",
+    "npx cache": "npx 缓存",
     Store: "存储",
     "Global modules": "全局模块",
     "Global dir": "全局目录",

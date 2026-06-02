@@ -3,6 +3,7 @@ export type ManagerStatus = "Ready" | "Missing" | "Unsupported" | "Partial" | "F
 export type DiskUsageStatus = "Pending" | "Ready" | "Missing" | "PermissionDenied" | "Error";
 export type PathKind =
   | "Cache"
+  | "NpxCache"
   | "Store"
   | "GlobalModules"
   | "GlobalDir"
