@@ -13,6 +13,11 @@ export function pathLabel(label: string) {
     Store: "存储",
     "Global modules": "全局模块",
     "Global dir": "全局目录",
+    "Cargo bin": "Cargo 二进制目录",
+    "Cargo registry cache": "Cargo registry 缓存",
+    "Cargo registry source": "Cargo registry 源码",
+    "Cargo git cache": "Cargo git 缓存",
+    "Cargo git checkouts": "Cargo git checkouts",
     Prefix: "安装前缀",
     Cellar: "软件目录",
     Caskroom: "应用目录",
@@ -53,6 +58,8 @@ export function displayMessage(message: string) {
     .replace("pip cache info failed", "pip 缓存信息获取失败")
     .replace("pip inspect failed", "pip 检查失败")
     .replace("pip outdated failed", "pip 可更新包扫描失败")
+    .replace("Cargo version probe failed", "Cargo 版本检测失败")
+    .replace("Cargo installed binary crate list failed", "Cargo 已安装二进制 crate 列表获取失败")
     .replace("Homebrew version probe failed", "Homebrew 版本检测失败")
     .replace("Homebrew formula list failed", "Homebrew 配方包列表获取失败")
     .replace("Homebrew cask list failed", "Homebrew 应用包列表获取失败")
@@ -73,7 +80,17 @@ export function displayMessage(message: string) {
 }
 
 export function countedSizePath(kind: PathKind) {
-  return kind === "Cache" || kind === "Store" || kind === "Cellar" || kind === "Caskroom" || kind === "LocalRepository";
+  return (
+    kind === "Cache" ||
+    kind === "Store" ||
+    kind === "Cellar" ||
+    kind === "Caskroom" ||
+    kind === "LocalRepository" ||
+    kind === "CargoRegistryCache" ||
+    kind === "CargoRegistrySource" ||
+    kind === "CargoGitCache" ||
+    kind === "CargoGitCheckouts"
+  );
 }
 
 export function actionLabel(action: CommandEnvelope) {
@@ -84,6 +101,8 @@ export function actionLabel(action: CommandEnvelope) {
   if (command.includes("pip show")) return "复制查看命令";
   if (command.includes("pip install --upgrade")) return "复制升级命令";
   if (command.includes("pip uninstall")) return "复制卸载命令";
+  if (command.includes("cargo install")) return "复制安装命令";
+  if (command.includes("cargo uninstall")) return "复制卸载命令";
   if (firstArg === "upgrade" && secondArg === "--cask") return "复制应用包升级命令";
   if (firstArg === "upgrade") return "复制升级命令";
   if (firstArg === "uses") return "复制反向依赖命令";

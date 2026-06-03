@@ -36,6 +36,7 @@ const initialCounters: NumberByManager = {
   Homebrew: 0,
   Maven: 0,
   Pip: 0,
+  Cargo: 0,
 };
 
 export interface PackageManagerActions {

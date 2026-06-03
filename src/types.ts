@@ -1,4 +1,4 @@
-export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Homebrew" | "Maven" | "Pip";
+export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Homebrew" | "Maven" | "Pip" | "Cargo";
 export type ManagerStatus = "Ready" | "Missing" | "Unsupported" | "Partial" | "Failed";
 export type DiskUsageStatus = "Pending" | "Ready" | "Missing" | "PermissionDenied" | "Error";
 export type PathKind =
@@ -7,6 +7,11 @@ export type PathKind =
   | "Store"
   | "GlobalModules"
   | "GlobalDir"
+  | "CargoBin"
+  | "CargoRegistryCache"
+  | "CargoRegistrySource"
+  | "CargoGitCache"
+  | "CargoGitCheckouts"
   | "Prefix"
   | "Cellar"
   | "Caskroom"

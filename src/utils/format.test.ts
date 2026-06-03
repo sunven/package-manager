@@ -10,4 +10,17 @@ describe("path formatting", () => {
     expect(countedSizePath("Cache")).toBe(true);
     expect(countedSizePath("NpxCache")).toBe(false);
   });
+
+  it("labels cargo paths", () => {
+    expect(pathLabel("Cargo registry cache")).toBe("Cargo registry 缓存");
+    expect(pathLabel("Cargo git checkouts")).toBe("Cargo git checkouts");
+  });
+
+  it("counts cargo cache paths without counting cargo bin twice", () => {
+    expect(countedSizePath("CargoBin")).toBe(false);
+    expect(countedSizePath("CargoRegistryCache")).toBe(true);
+    expect(countedSizePath("CargoRegistrySource")).toBe(true);
+    expect(countedSizePath("CargoGitCache")).toBe(true);
+    expect(countedSizePath("CargoGitCheckouts")).toBe(true);
+  });
 });

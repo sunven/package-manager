@@ -1,12 +1,12 @@
 # Package Manager Control Center
 
-一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、Homebrew、Maven 和 pip 的包、缓存/仓库占用情况，以及 Homebrew、Maven、pip 的维护信号。
+一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、Homebrew、Maven、pip 和 Cargo 的包、缓存/仓库占用情况，以及 Homebrew、Maven、pip 的维护信号。
 
 当前 v1 目标是 **read-only + safe actions**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；不直接执行卸载、清缓存、批量删除等破坏性操作。
 
 ## 功能
 
-- 扫描 npm、pnpm、Yarn、Homebrew、Maven、pip。
+- 扫描 npm、pnpm、Yarn、Homebrew、Maven、pip、Cargo。
 - 查看全局安装的包名、版本、包路径。
 - 查看 cache / store / global modules 等路径。
 - 统计 cache / store 总占用空间。
@@ -16,9 +16,11 @@
 - Homebrew 支持 formula/cask 清单、outdated、leaves、cleanup dry-run、prefix/cache/cellar 路径。
 - Maven 支持本地仓库路径、artifact/version 统计、重复版本、snapshot 信号和 repository 级空间统计。
 - pip 支持当前 Python interpreter 的 installed/outdated package、editable/direct-url/user-site 信号、cache/site-packages 路径。
+- Cargo 支持 `cargo install --list` 的已安装二进制 crate、Cargo bin、registry cache/source、git cache/checkouts 路径。
 - 复制路径、复制扫描命令、复制包名版本。
 - 复制 Homebrew 维护命令，如 `brew upgrade <formula>`、`brew upgrade --cask <cask>`、`brew cleanup --dry-run`。
 - 复制 Maven/pip 维护命令，如 `mvn dependency:tree -Dincludes=...`、`python3 -m pip show <pkg>`、`python3 -m pip install --upgrade <pkg>`。
+- 复制 Cargo 维护命令，如 `cargo install <crate>`、`cargo uninstall <crate>`。
 - 打开 cache / store / package 目录。
 - 展示扫描失败、缺少二进制、权限问题、命令超时等诊断信息。
 
@@ -38,6 +40,8 @@
 - Maven v1 是本地仓库健康检查，不是全局 Java 包管理器。
 - pip v1 只扫描当前 Python interpreter，不递归发现全机器所有 virtualenv。
 - pip outdated 单独后台加载；离线或 index 超时时不影响 installed package 展示。
+- Cargo v1 只扫描 `cargo install --list` 暴露的已安装二进制 crate 和 Cargo Home 路径，不递归发现全机器所有 Rust 项目依赖。
+- Cargo v1 不管理 rustup toolchain。
 
 ## 开发环境
 
@@ -135,6 +139,9 @@ python3 -m pip cache dir
 python3 -m pip cache info
 python3 -m pip inspect --local
 python3 -m pip list --outdated --format=json
+
+cargo --version
+cargo install --list
 ```
 
 如果命令缺失、失败、输出无法解析或超时，界面会显示诊断信息。
@@ -144,6 +151,8 @@ Homebrew 扫描会禁用 auto-update，避免只读扫描触发 Homebrew 更新�
 Maven 扫描只运行 `mvn --version` 做检测；本地仓库路径优先从 `~/.m2/settings.xml` 和 Maven home 的 `conf/settings.xml` 读取顶层 `localRepository`，不会运行可能下载插件的 `mvn help:evaluate`。扫描本地仓库时有时间、version 目录数、返回行数上限，超限会显示 partial 状态。
 
 pip 扫描优先使用 `python3 -m pip`，回退到 `python -m pip`。`pip list --outdated` 可能访问 index，因此不阻塞首屏；pip tab 先显示 installed/cache/inspect 信息，再单独合并 outdated 信号。
+
+Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME` 优先来自环境变量，未设置时回退到 `~/.cargo`。Cargo tab 会展示 `bin`、`registry/cache`、`registry/src`、`git/db`、`git/checkouts` 路径；不会运行可能访问网络或修改磁盘的 `cargo search`、`cargo update`、`cargo install`、`cargo uninstall`、`cargo cache`。
 
 ## 空间统计
 
@@ -178,6 +187,7 @@ pip 扫描优先使用 `python3 -m pip`，回退到 `python -m pip`。`pip list 
 - 自动执行 Homebrew upgrade、cleanup、uninstall。
 - 自动执行 Maven purge/get/tree 命令。
 - 自动执行 pip uninstall、upgrade、cache purge。
+- 自动执行 Cargo install、uninstall、update、search、cache 命令。
 
 以后如果加入执行能力，应优先做“生成命令并复制”，再考虑带确认弹窗、操作日志和 dry-run 的直接执行。
 
@@ -227,12 +237,15 @@ pnpm test
 - Maven 本地仓库 coordinate、重复版本、snapshot 统计
 - pip list/outdated/inspect 解析和 enrichment
 - pip outdated 前端 hydration token 防旧结果写回
+- Cargo install-list 解析、Cargo Home 推导、Cargo Missing/Ready 状态
+- Cargo registry/git 路径计数规则和前端标签
 
 ## 后续候选
 
 - 复制 `npm uninstall -g <pkg>` / `pnpm remove -g <pkg>` / `yarn global remove <pkg>` 命令。
 - 复制 cache clean 命令，但不直接执行。
 - Homebrew services / doctor / Brewfile。
+- Rust project dependency discovery / rustup toolchain inventory。
 - 增加操作日志。
 - 增加搜索和排序。
 - 增加 README 截图。

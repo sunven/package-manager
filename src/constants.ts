@@ -11,7 +11,7 @@ import type {
   PipFilter,
 } from "./types";
 
-export const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Homebrew", "Maven", "Pip"];
+export const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Homebrew", "Maven", "Pip", "Cargo"];
 
 export const managerLabels: Record<ManagerId, string> = {
   Npm: "npm",
@@ -20,6 +20,7 @@ export const managerLabels: Record<ManagerId, string> = {
   Homebrew: "Homebrew",
   Maven: "Maven",
   Pip: "pip",
+  Cargo: "Cargo",
 };
 
 export const statusLabels: Record<DisplayStatus, string> = {
@@ -42,6 +43,11 @@ export const pathKindLabels: Record<PathKind, string> = {
   Store: "存储",
   GlobalModules: "全局模块",
   GlobalDir: "全局目录",
+  CargoBin: "Cargo 二进制目录",
+  CargoRegistryCache: "Cargo registry 缓存",
+  CargoRegistrySource: "Cargo registry 源码",
+  CargoGitCache: "Cargo git 缓存",
+  CargoGitCheckouts: "Cargo git checkouts",
   Prefix: "安装前缀",
   Cellar: "软件目录",
   Caskroom: "应用目录",

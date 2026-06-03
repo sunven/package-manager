@@ -102,7 +102,7 @@ export function PackageTable(props: PackageTableProps) {
     return (
       <>
         <GlobalModulesBar onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
-        <EmptyState message="未找到全局软件包" />
+        <EmptyState message={manager.id === "Cargo" ? "未找到通过 cargo install 安装的二进制 crate" : "未找到全局软件包"} />
       </>
     );
   }
