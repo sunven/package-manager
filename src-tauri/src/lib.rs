@@ -43,6 +43,7 @@ struct CommandFailure {
 #[derive(Debug, Clone, Serialize)]
 enum FailureKind {
     MissingBinary,
+    MissingPath,
     CommandFailed,
     ParseFailure,
     PermissionDenied,
@@ -97,6 +98,8 @@ enum PathKind {
     Store,
     GlobalModules,
     GlobalDir,
+    NvmDir,
+    NvmNodeVersions,
     CargoBin,
     CargoRegistryCache,
     CargoRegistrySource,
@@ -252,11 +255,12 @@ enum AsyncStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 enum ManagerId {
     Npm,
     Pnpm,
     Yarn,
+    Nvm,
     Homebrew,
     Maven,
     Pip,
@@ -324,6 +328,7 @@ fn scan_single_manager(manager: ManagerId) -> ManagerSnapshot {
         ManagerId::Npm => scan_npm(),
         ManagerId::Pnpm => scan_pnpm(),
         ManagerId::Yarn => scan_yarn(),
+        ManagerId::Nvm => scan_nvm(),
         ManagerId::Homebrew => scan_homebrew(),
         ManagerId::Maven => scan_maven(),
         ManagerId::Pip => scan_pip(),
@@ -549,6 +554,123 @@ fn scan_yarn_modern(snapshot: &mut ManagerSnapshot) {
             .paths
             .push(path_info("Cache folder", PathKind::Cache, path));
     }
+}
+
+fn scan_nvm() -> ManagerSnapshot {
+    scan_nvm_with_dir(resolve_nvm_dir_from_env())
+}
+
+fn scan_nvm_with_dir(nvm_dir: PathBuf) -> ManagerSnapshot {
+    let mut snapshot = empty_snapshot(ManagerId::Nvm, "nvm");
+    let node_versions_dir = nvm_dir.join("versions/node");
+
+    snapshot.paths.push(path_info(
+        "NVM dir",
+        PathKind::NvmDir,
+        nvm_dir.display().to_string(),
+    ));
+
+    if !nvm_dir.is_dir() {
+        snapshot.failures.push(CommandFailure {
+            kind: FailureKind::MissingPath,
+            message: format!("nvm directory was not found at {}", nvm_dir.display()),
+            command: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+        return finish(snapshot);
+    }
+
+    snapshot.paths.push(path_info(
+        "Node versions",
+        PathKind::NvmNodeVersions,
+        node_versions_dir.display().to_string(),
+    ));
+
+    snapshot.packages = scan_nvm_node_versions(&node_versions_dir);
+    finish(snapshot)
+}
+
+fn resolve_nvm_dir_from_env() -> PathBuf {
+    let nvm_dir = env::var("NVM_DIR").ok();
+    resolve_nvm_dir(nvm_dir.as_deref(), home_dir().as_deref())
+}
+
+fn resolve_nvm_dir(nvm_dir: Option<&str>, home: Option<&Path>) -> PathBuf {
+    if let Some(value) = nvm_dir.map(str::trim).filter(|value| !value.is_empty()) {
+        return expand_tilde(value, home);
+    }
+
+    home.map(|home| home.join(".nvm"))
+        .unwrap_or_else(|| PathBuf::from(".nvm"))
+}
+
+fn scan_nvm_node_versions(node_versions_dir: &Path) -> Vec<PackageRow> {
+    let entries = match fs::read_dir(node_versions_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut packages = entries
+        .flatten()
+        .filter_map(|entry| {
+            let file_type = entry.file_type().ok()?;
+            if !file_type.is_dir() {
+                return None;
+            }
+
+            let name = entry.file_name().to_string_lossy().to_string();
+            let version = parse_nvm_node_version_dir(&name)?;
+            let mut row = package_row(
+                "node".to_string(),
+                version.clone(),
+                Some(entry.path().display().to_string()),
+                "nvm versions directory",
+                PackageKind::Generic,
+            );
+            attach_nvm_actions(&mut row, &version);
+            Some(row)
+        })
+        .collect::<Vec<_>>();
+
+    packages.sort_by(|a, b| compare_semver_desc(&a.version, &b.version));
+    packages
+}
+
+fn parse_nvm_node_version_dir(name: &str) -> Option<String> {
+    let version = name.strip_prefix('v')?;
+    if version.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        Some(version.to_string())
+    } else {
+        None
+    }
+}
+
+fn compare_semver_desc(left: &str, right: &str) -> std::cmp::Ordering {
+    semver_sort_key(right)
+        .cmp(&semver_sort_key(left))
+        .then_with(|| right.cmp(left))
+}
+
+fn semver_sort_key(version: &str) -> (u64, u64, u64) {
+    let mut parts = version.split('.');
+    (
+        parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
+        parts.next().and_then(|part| part.parse().ok()).unwrap_or(0),
+        parts
+            .next()
+            .and_then(|part| part.split('-').next())
+            .and_then(|part| part.parse().ok())
+            .unwrap_or(0),
+    )
+}
+
+fn attach_nvm_actions(row: &mut PackageRow, version: &str) {
+    row.actions.push(envelope_owned(
+        "nvm",
+        vec!["use".to_string(), version.to_string()],
+        0,
+    ));
 }
 
 fn scan_homebrew() -> ManagerSnapshot {
@@ -2722,10 +2844,12 @@ fn finish(mut snapshot: ManagerSnapshot) -> ManagerSnapshot {
     }
 
     if snapshot.version.is_none()
-        && snapshot
-            .failures
-            .iter()
-            .any(|failure| matches!(failure.kind, FailureKind::MissingBinary))
+        && snapshot.failures.iter().any(|failure| {
+            matches!(
+                failure.kind,
+                FailureKind::MissingBinary | FailureKind::MissingPath
+            )
+        })
     {
         snapshot.status = ManagerStatus::Missing;
     } else if !snapshot.packages.is_empty() || !snapshot.paths.is_empty() {
@@ -2824,6 +2948,64 @@ mod tests {
     #[test]
     fn npx_cache_path_uses_npm_cache_subdirectory() {
         assert_eq!(npx_cache_path("/tmp/npm-cache"), "/tmp/npm-cache/_npx");
+    }
+
+    #[test]
+    fn resolve_nvm_dir_uses_env_or_home_fallback() {
+        assert_eq!(
+            resolve_nvm_dir(Some("~/node/nvm"), Some(Path::new("/Users/sunven"))),
+            PathBuf::from("/Users/sunven/node/nvm")
+        );
+        assert_eq!(
+            resolve_nvm_dir(None, Some(Path::new("/Users/sunven"))),
+            PathBuf::from("/Users/sunven/.nvm")
+        );
+        assert_eq!(resolve_nvm_dir(None, None), PathBuf::from(".nvm"));
+    }
+
+    #[test]
+    fn scan_nvm_reads_installed_node_versions_from_nvm_dir() {
+        let root = temp_dir("nvm");
+        let _guard = TempDirGuard(root.clone());
+        fs::create_dir_all(root.join("versions/node/v20.11.1/bin")).expect("create node version");
+        fs::create_dir_all(root.join("versions/node/v18.19.0/bin")).expect("create node version");
+        fs::create_dir_all(root.join("versions/node/not-a-version")).expect("create ignored dir");
+
+        let snapshot = scan_nvm_with_dir(root.clone());
+
+        assert_eq!(snapshot.status, ManagerStatus::Ready);
+        assert_eq!(snapshot.id, ManagerId::Nvm);
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|path| path.kind == PathKind::NvmDir && path.path == root.display().to_string()));
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|path| path.kind == PathKind::NvmNodeVersions));
+        assert_eq!(snapshot.packages.len(), 2);
+        assert_eq!(snapshot.packages[0].name, "node");
+        assert_eq!(snapshot.packages[0].version, "20.11.1");
+        assert_eq!(snapshot.packages[1].version, "18.19.0");
+        assert!(snapshot.packages[0]
+            .actions
+            .iter()
+            .any(|action| action.preview == "nvm use 20.11.1"));
+    }
+
+    #[test]
+    fn scan_nvm_reports_missing_when_nvm_dir_does_not_exist() {
+        let root = temp_dir("missing-nvm");
+        fs::remove_dir_all(&root).expect("remove temp dir");
+
+        let snapshot = scan_nvm_with_dir(root);
+
+        assert_eq!(snapshot.status, ManagerStatus::Missing);
+        assert!(snapshot.packages.is_empty());
+        assert!(matches!(
+            snapshot.failures[0].kind,
+            FailureKind::MissingPath
+        ));
     }
 
     #[test]

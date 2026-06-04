@@ -27,6 +27,7 @@ describe("Tauri capabilities", () => {
       expect.arrayContaining([
         { path: "$HOME/.local/**" },
         { path: "$HOME/.m2/**" },
+        { path: "$HOME/.nvm/**" },
         { path: "/opt/homebrew/**" },
         { path: "/usr/local/**" },
       ]),

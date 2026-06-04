@@ -9,7 +9,7 @@ import type {
   PipEnvironmentHealth,
   PipFilter,
 } from "../types";
-import { displayMessage, pathLabel } from "../utils/format";
+import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel } from "../utils/format";
 import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, type IndexedPackage } from "../utils/filters";
 import { cx } from "../utils/classNames";
 import { EmptyState, IconButton, SignalBadge, StatCard, StatusBadge } from "./ui";
@@ -19,6 +19,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 
 interface PackageTableProps {
+  homeDirectory: string | null;
   manager: ManagerSnapshot | null;
   menuOpenIndex: number | null;
   onCopyPackage: (index: number) => void;
@@ -39,7 +40,7 @@ interface PackageTableProps {
 }
 
 export function PackageTable(props: PackageTableProps) {
-  const { manager, scanning } = props;
+  const { homeDirectory, manager, scanning } = props;
   if (!manager) {
     return <EmptyState message={scanning ? "正在扫描软件包..." : "尚未扫描"} />;
   }
@@ -64,7 +65,7 @@ export function PackageTable(props: PackageTableProps) {
     const packages = filteredMavenPackages(manager, props.selectedMavenFilter);
     return (
       <>
-        <MavenSummary health={manager.maven} />
+        <MavenSummary health={manager.maven} homeDirectory={homeDirectory} />
         <FilterBar active={props.selectedMavenFilter} filters={["All", "Duplicates", "Snapshots"]} labels={mavenFilterLabels} onSelect={props.onMavenFilter} />
         <SpecializedTable emptyMessage="没有匹配当前筛选条件的 Maven 构件" heading={["坐标", "版本", "信号", "路径", "操作"]} packages={packages} {...props} />
       </>
@@ -75,7 +76,7 @@ export function PackageTable(props: PackageTableProps) {
     const packages = filteredPipPackages(manager, props.selectedPipFilter);
     return (
       <>
-        <PipSummary health={manager.pip} />
+        <PipSummary health={manager.pip} homeDirectory={homeDirectory} />
         <FilterBar
           active={props.selectedPipFilter}
           filters={["All", "Outdated", "Editable", "UserSite", "DirectUrl"]}
@@ -91,7 +92,7 @@ export function PackageTable(props: PackageTableProps) {
     return (
       <div className="px-5 py-8">
         <p className="font-medium text-foreground">Yarn 现代版本不提供全局软件包列表。</p>
-        <p className="mt-2 text-sm text-muted-foreground">{displayMessage(manager.unsupportedReason ?? "当前状态不支持扫描")}</p>
+        <p className="mt-2 text-sm text-muted-foreground">{formatHomePathsInText(displayMessage(manager.unsupportedReason ?? "当前状态不支持扫描"), homeDirectory)}</p>
       </div>
     );
   }
@@ -101,16 +102,20 @@ export function PackageTable(props: PackageTableProps) {
   if (!manager.packages.length) {
     return (
       <>
-        <GlobalModulesBar onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
+        <GlobalModulesBar homeDirectory={homeDirectory} onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
         <EmptyState message={manager.id === "Cargo" ? "未找到通过 cargo install 安装的二进制 crate" : "未找到全局软件包"} />
       </>
     );
   }
 
+  const showSourceColumn = manager.id !== "Npm";
+  const heading = showSourceColumn ? ["名称", "版本", "来源", "路径", "操作"] : ["名称", "版本", "路径", "操作"];
+  const packageNameClassName = manager.id === "Npm" ? "min-w-24 max-w-35 truncate font-medium" : "min-w-45 max-w-70 truncate font-medium";
+
   return (
     <>
-      <GlobalModulesBar onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
-      <TableShell heading={["名称", "版本", "来源", "路径", "操作"]}>
+      <GlobalModulesBar homeDirectory={homeDirectory} onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
+      <TableShell heading={heading}>
         {indexedPackages(manager).map(({ pkg, index }) => (
           <TableRow
             className={cx(
@@ -123,10 +128,10 @@ export function PackageTable(props: PackageTableProps) {
             role="button"
             tabIndex={0}
           >
-            <TableCell className="min-w-45 max-w-70 truncate font-medium">{pkg.name}</TableCell>
+            <TableCell className={packageNameClassName}>{pkg.name}</TableCell>
             <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
-            <TableCell className="max-w-52 truncate text-muted-foreground">{shortenPath(pkg.source)}</TableCell>
-            <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ?? "无"}</TableCell>
+            {showSourceColumn ? <TableCell className="max-w-52 truncate text-muted-foreground">{shortenPath(formatHomePathsInText(pkg.source, homeDirectory))}</TableCell> : null}
+            <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ? formatHomePath(pkg.path, homeDirectory) : "无"}</TableCell>
             <TableCell className="w-24 text-right">
               <PackageActions
                 index={index}
@@ -146,10 +151,12 @@ export function PackageTable(props: PackageTableProps) {
 }
 
 function GlobalModulesBar({
+  homeDirectory,
   onCopyPath,
   onOpenPath,
   path,
 }: {
+  homeDirectory: string | null;
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
   path: ManagerSnapshot["paths"][number] | null;
@@ -163,7 +170,7 @@ function GlobalModulesBar({
     <div className="flex min-w-0 flex-wrap items-center gap-2 border-b px-4 py-3">
       <span className="shrink-0 text-sm font-medium text-foreground">{label}</span>
       {sizeValue ? <span className="shrink-0 text-sm text-muted-foreground">{sizeValue}</span> : <StatusBadge status={path.size.status} />}
-      <code className="min-w-48 flex-1 truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{path.path}</code>
+      <code className="min-w-48 flex-1 truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
       <IconButton label={`复制${label}路径`} onClick={() => onCopyPath(path.path)}>
         <Copy />
       </IconButton>
@@ -185,6 +192,7 @@ function SpecializedTable({
   onToggleActions,
   packages,
   selectedPackageIndex,
+  homeDirectory,
 }: PackageTableProps & {
   emptyMessage: string;
   heading: string[];
@@ -213,7 +221,7 @@ function SpecializedTable({
           <TableCell>
             <span className="flex min-w-0 flex-wrap gap-1.5">{renderPackageSignals(pkg)}</span>
           </TableCell>
-          <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ?? "无"}</TableCell>
+          <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ? formatHomePath(pkg.path, homeDirectory) : "无"}</TableCell>
           <TableCell className="w-24 text-right">
             <PackageActions
               index={index}
@@ -281,7 +289,7 @@ function renderPackageSignals(pkg: PackageRow) {
   ));
 }
 
-function MavenSummary({ health }: { health: MavenRepositoryHealth | null }) {
+function MavenSummary({ health, homeDirectory }: { health: MavenRepositoryHealth | null; homeDirectory: string | null }) {
   if (!health) return null;
   const scanStatus = health.repositoryScanStatus.partial ? "部分可用" : "就绪";
 
@@ -294,16 +302,17 @@ function MavenSummary({ health }: { health: MavenRepositoryHealth | null }) {
         <StatCard label="多版本" value={String(health.duplicateArtifactCount)} />
         <StatCard label="扫描" value={scanStatus} />
       </div>
+      <p className="text-sm text-muted-foreground">{formatHomePath(health.localRepository, homeDirectory)}</p>
       {health.repositoryScanStatus.message ? (
         <p className="text-sm text-muted-foreground">
-          {displayMessage(health.repositoryScanStatus.message)} · 已扫描 {health.repositoryScanStatus.scannedVersionDirs} 个版本目录 · 跳过 {health.repositoryScanStatus.skipped} 项
+          {formatHomePathsInText(displayMessage(health.repositoryScanStatus.message), homeDirectory)} · 已扫描 {health.repositoryScanStatus.scannedVersionDirs} 个版本目录 · 跳过 {health.repositoryScanStatus.skipped} 项
         </p>
       ) : null}
     </div>
   );
 }
 
-function PipSummary({ health }: { health: PipEnvironmentHealth | null }) {
+function PipSummary({ health, homeDirectory }: { health: PipEnvironmentHealth | null; homeDirectory: string | null }) {
   if (!health) return null;
   const outdatedValue = health.outdatedStatus === "Ready" ? String(health.outdatedCount) : health.outdatedStatus === "Pending" ? "等待中" : "失败";
 
@@ -317,9 +326,9 @@ function PipSummary({ health }: { health: PipEnvironmentHealth | null }) {
         <StatCard label="环境" value={environmentKindLabels[health.environmentKind]} />
       </div>
       <p className="text-sm text-muted-foreground">
-        {health.pythonVersion} · {health.pythonExecutable}
+        {health.pythonVersion} · {formatHomePath(health.pythonExecutable, homeDirectory)}
       </p>
-      {health.outdatedMessage && health.outdatedStatus === "Failed" ? <p className="text-sm font-medium text-destructive">{displayMessage(health.outdatedMessage)}</p> : null}
+      {health.outdatedMessage && health.outdatedStatus === "Failed" ? <p className="text-sm font-medium text-destructive">{formatHomePathsInText(displayMessage(health.outdatedMessage), homeDirectory)}</p> : null}
     </div>
   );
 }

@@ -20,7 +20,7 @@ export function ManagerTabs({
       onValueChange={(value) => onSelect(value as ManagerId)}
       value={selectedManager}
     >
-      <TabsList className="grid h-auto w-full grid-cols-7 gap-2 bg-transparent p-0">
+      <TabsList className="grid h-auto w-full grid-cols-8 gap-2 bg-transparent p-0">
         {managerOrder.map((managerId) => {
           const manager = managerSnapshots[managerId];
           const managerName = manager?.label ?? managerLabel(managerId);

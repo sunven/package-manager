@@ -30,7 +30,7 @@ export function App() {
       selectedManager={selectedManager}
       totalBytes={state.overview.totalBytes}
     >
-      <MessageBanner message={state.uiMessage} />
+      <MessageBanner homeDirectory={state.homeDirectory} message={state.uiMessage} />
       <ManagerTabs
         managerSnapshots={state.managerSnapshots}
         onSelect={actions.selectManager}
@@ -41,6 +41,7 @@ export function App() {
       <main className="mt-5 grid gap-4">
         <Panel className="overflow-hidden">
           <PackageTable
+            homeDirectory={state.homeDirectory}
             manager={currentManager}
             menuOpenIndex={state.openPackageActionMenuIndex}
             onCopyPath={(path) => void actions.copyPath(path)}
@@ -63,6 +64,7 @@ export function App() {
 
         <aside className="grid gap-4">
           <PathPanel
+            homeDirectory={state.homeDirectory}
             manager={currentManager}
             onCopyCleanupCommand={() => void actions.copyCleanupCommand()}
             onCopyCommand={(payload) => void actions.copyCommand(payload)}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { homeDir } from "@tauri-apps/api/path";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { applyPipOutdatedPreview, shouldApplyHydrationResult } from "../state";
@@ -22,6 +23,7 @@ import {
   countedSizePath,
   errorToString,
   formatBytes,
+  formatHomePathsInText,
   managerLabel,
   sizeScanError,
 } from "../utils/format";
@@ -33,6 +35,7 @@ const initialCounters: NumberByManager = {
   Npm: 0,
   Pnpm: 0,
   Yarn: 0,
+  Nvm: 0,
   Homebrew: 0,
   Maven: 0,
   Pip: 0,
@@ -71,6 +74,7 @@ export function usePackageManagers() {
   const [pendingSizeScansByManager, setPendingSizeScansByManager] = useState<NumberByManager>(initialCounters);
   const [pendingHomebrewCleanup, setPendingHomebrewCleanup] = useState(false);
   const [pendingPipOutdated, setPendingPipOutdated] = useState(false);
+  const [homeDirectory, setHomeDirectory] = useState<string | null>(null);
   const [uiMessage, setUiMessage] = useState<UiMessage | null>(null);
 
   const selectedManagerRef = useRef(selectedManager);
@@ -122,9 +126,10 @@ export function usePackageManagers() {
     if (selectedManager === "Homebrew" && pendingHomebrewCleanup) parts.push("正在加载清理预演...");
     if (selectedManager === "Pip" && pendingPipOutdated) parts.push("正在检查 pip 可更新包...");
     if (scanDurationMs !== undefined) parts.push(`扫描耗时 ${scanDurationMs} 毫秒`);
-    if (lastCopied) parts.push(`已复制 ${lastCopied}`);
+    if (lastCopied) parts.push(`已复制 ${formatHomePathsInText(lastCopied, homeDirectory)}`);
     return parts.join(" · ");
   }, [
+    homeDirectory,
     lastCopied,
     pendingHomebrewCleanup,
     pendingPipOutdated,
@@ -345,6 +350,20 @@ export function usePackageManagers() {
     return () => cancelAnimationFrame(frame);
   }, [refresh]);
 
+  useEffect(() => {
+    let active = true;
+    void homeDir()
+      .then((path) => {
+        if (active) setHomeDirectory(path);
+      })
+      .catch(() => {
+        if (active) setHomeDirectory(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const packageAt = useCallback(
     (index: number): PackageRow | null => {
       const manager = managerSnapshotsRef.current[selectedManagerRef.current];
@@ -505,6 +524,7 @@ export function usePackageManagers() {
   return {
     actions,
     currentManager,
+    homeDirectory,
     managerSnapshots,
     openPackageActionMenuIndex,
     overview,

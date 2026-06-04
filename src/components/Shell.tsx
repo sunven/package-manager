@@ -24,7 +24,7 @@ export function Shell({
         <div className="min-w-0">
           <h1 className="text-3xl font-medium leading-9">包管理器控制中心</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            查看 npm、pnpm、Yarn Classic、Homebrew、Maven、pip 和 Cargo 的本机包、缓存/仓库位置和维护信号。所有危险操作只复制命令，不直接执行。
+            查看 npm、pnpm、Yarn Classic、nvm、Homebrew、Maven、pip 和 Cargo 的本机包、缓存/仓库位置和维护信号。所有危险操作只复制命令，不直接执行。
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">

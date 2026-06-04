@@ -1,18 +1,19 @@
 # Package Manager Control Center
 
-一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、Homebrew、Maven、pip 和 Cargo 的包、缓存/仓库占用情况，以及 Homebrew、Maven、pip 的维护信号。
+一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip 和 Cargo 的包、缓存/仓库占用情况，以及 Homebrew、Maven、pip 的维护信号。
 
 当前 v1 目标是 **read-only + safe actions**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；不直接执行卸载、清缓存、批量删除等破坏性操作。
 
 ## 功能
 
-- 扫描 npm、pnpm、Yarn、Homebrew、Maven、pip、Cargo。
+- 扫描 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo。
 - 查看全局安装的包名、版本、包路径。
 - 查看 cache / store / global modules 等路径。
 - 统计 cache / store 总占用空间。
 - pnpm store/global modules 使用 hardlink 去重统计，避免重复计算同一物理文件。
 - Yarn Classic 支持全局包列表。
 - Yarn modern 标记为 unsupported，只展示可解析的缓存信息。
+- nvm 支持从 `NVM_DIR` 或 `~/.nvm` 读取已安装 Node 版本、nvm 根目录和 Node versions 目录。
 - Homebrew 支持 formula/cask 清单、outdated、leaves、cleanup dry-run、prefix/cache/cellar 路径。
 - Maven 支持本地仓库路径、artifact/version 统计、重复版本、snapshot 信号和 repository 级空间统计。
 - pip 支持当前 Python interpreter 的 installed/outdated package、editable/direct-url/user-site 信号、cache/site-packages 路径。
@@ -21,6 +22,7 @@
 - 复制 Homebrew 维护命令，如 `brew upgrade <formula>`、`brew upgrade --cask <cask>`、`brew cleanup --dry-run`。
 - 复制 Maven/pip 维护命令，如 `mvn dependency:tree -Dincludes=...`、`python3 -m pip show <pkg>`、`python3 -m pip install --upgrade <pkg>`。
 - 复制 Cargo 维护命令，如 `cargo install <crate>`、`cargo uninstall <crate>`。
+- 复制 nvm 切换命令，如 `nvm use <version>`。
 - 打开 cache / store / package 目录。
 - 展示扫描失败、缺少二进制、权限问题、命令超时等诊断信息。
 
@@ -36,6 +38,7 @@
   - 不直接执行 `brew upgrade`
   - 不做批量删除
 - Yarn 2+ 没有 npm/pnpm/Yarn Classic 等价的全局包列表，因此不伪装出一个全局列表。
+- nvm 是 Node 版本管理器，v1 只展示已安装的 Node runtime 版本，不把每个 Node 版本里的 npm 全局包混入 nvm tab。
 - Homebrew leaves 只标记为 review candidate，不等于“安全删除”。
 - Maven v1 是本地仓库健康检查，不是全局 Java 包管理器。
 - pip v1 只扫描当前 Python interpreter，不递归发现全机器所有 virtualenv。
@@ -119,6 +122,10 @@ yarn cache dir
 yarn global dir
 yarn config get cacheFolder
 
+nvm:
+read $NVM_DIR or ~/.nvm
+scan versions/node/v*
+
 brew --version
 brew list --formula --versions
 brew list --cask --versions
@@ -147,6 +154,8 @@ cargo install --list
 如果命令缺失、失败、输出无法解析或超时，界面会显示诊断信息。
 
 Homebrew 扫描会禁用 auto-update，避免只读扫描触发 Homebrew 更新。`brew cleanup --dry-run` 不阻塞首屏扫描；Homebrew tab 先展示已安装、outdated、leaves 和路径，再单独加载 cleanup dry-run 预览。
+
+nvm 扫描不运行 `nvm` 命令，因为 nvm 通常是 shell function，不是可直接 spawn 的二进制；后端只读取 `NVM_DIR` 或 `~/.nvm` 下的 `versions/node/v*` 目录，并为每个 Node 版本提供复制 `nvm use <version>` 的命令。
 
 Maven 扫描只运行 `mvn --version` 做检测；本地仓库路径优先从 `~/.m2/settings.xml` 和 Maven home 的 `conf/settings.xml` 读取顶层 `localRepository`，不会运行可能下载插件的 `mvn help:evaluate`。扫描本地仓库时有时间、version 目录数、返回行数上限，超限会显示 partial 状态。
 
@@ -184,6 +193,7 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 - 自动清理 cache/store。
 - 自动卸载全局包。
 - 自动修改 npm/pnpm/yarn 配置。
+- 自动执行 `nvm install`、`nvm use`、`nvm uninstall`。
 - 自动执行 Homebrew upgrade、cleanup、uninstall。
 - 自动执行 Maven purge/get/tree 命令。
 - 自动执行 pip uninstall、upgrade、cache purge。
@@ -239,6 +249,7 @@ pnpm test
 - pip outdated 前端 hydration token 防旧结果写回
 - Cargo install-list 解析、Cargo Home 推导、Cargo Missing/Ready 状态
 - Cargo registry/git 路径计数规则和前端标签
+- nvm 目录推导、Node 版本目录解析、缺失目录状态和前端标签
 
 ## 后续候选
 

@@ -1,4 +1,4 @@
-export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Homebrew" | "Maven" | "Pip" | "Cargo";
+export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Nvm" | "Homebrew" | "Maven" | "Pip" | "Cargo";
 export type ManagerStatus = "Ready" | "Missing" | "Unsupported" | "Partial" | "Failed";
 export type DiskUsageStatus = "Pending" | "Ready" | "Missing" | "PermissionDenied" | "Error";
 export type PathKind =
@@ -7,6 +7,8 @@ export type PathKind =
   | "Store"
   | "GlobalModules"
   | "GlobalDir"
+  | "NvmDir"
+  | "NvmNodeVersions"
   | "CargoBin"
   | "CargoRegistryCache"
   | "CargoRegistrySource"
@@ -24,7 +26,7 @@ export type AsyncStatus = "Pending" | "Ready" | "Failed";
 export type HomebrewFilter = "All" | "Formulae" | "Casks" | "Outdated" | "Leaves";
 export type MavenFilter = "All" | "Duplicates" | "Snapshots";
 export type PipFilter = "All" | "Outdated" | "Editable" | "UserSite" | "DirectUrl";
-export type FailureKind = "MissingBinary" | "CommandFailed" | "ParseFailure" | "PermissionDenied" | "Timeout";
+export type FailureKind = "MissingBinary" | "MissingPath" | "CommandFailed" | "ParseFailure" | "PermissionDenied" | "Timeout";
 
 export interface CommandEnvelope {
   program: string;

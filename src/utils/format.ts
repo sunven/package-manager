@@ -13,6 +13,8 @@ export function pathLabel(label: string) {
     Store: "存储",
     "Global modules": "全局模块",
     "Global dir": "全局目录",
+    "NVM dir": "nvm 目录",
+    "Node versions": "Node 版本目录",
     "Cargo bin": "Cargo 二进制目录",
     "Cargo registry cache": "Cargo registry 缓存",
     "Cargo registry source": "Cargo registry 源码",
@@ -49,6 +51,7 @@ export function displayMessage(message: string) {
     .replace("pnpm global package list failed", "pnpm 全局软件包列表获取失败")
     .replace("Yarn version probe failed", "Yarn 版本检测失败")
     .replace("Yarn global package list failed", "Yarn 全局软件包列表获取失败")
+    .replace("nvm directory was not found at", "未找到 nvm 目录：")
     .replace("Maven version probe failed", "Maven 版本检测失败")
     .replace("Python version probe failed", "Python 版本检测失败")
     .replace("Python executable probe failed", "Python 可执行文件检测失败")
@@ -86,6 +89,7 @@ export function countedSizePath(kind: PathKind) {
     kind === "Cellar" ||
     kind === "Caskroom" ||
     kind === "LocalRepository" ||
+    kind === "NvmDir" ||
     kind === "CargoRegistryCache" ||
     kind === "CargoRegistrySource" ||
     kind === "CargoGitCache" ||
@@ -103,6 +107,7 @@ export function actionLabel(action: CommandEnvelope) {
   if (command.includes("pip uninstall")) return "复制卸载命令";
   if (command.includes("cargo install")) return "复制安装命令";
   if (command.includes("cargo uninstall")) return "复制卸载命令";
+  if (command.includes("nvm use")) return "复制切换版本命令";
   if (firstArg === "upgrade" && secondArg === "--cask") return "复制应用包升级命令";
   if (firstArg === "upgrade") return "复制升级命令";
   if (firstArg === "uses") return "复制反向依赖命令";
@@ -114,6 +119,54 @@ export function shorten(value: string) {
   const parts = value.split("/");
   if (parts.length <= 4) return value;
   return `${parts.slice(0, 2).join("/")}/.../${parts.slice(-2).join("/")}`;
+}
+
+export function formatHomePath(value: string, homeDirectory: string | null) {
+  const home = normalizeHomeDirectory(homeDirectory);
+  if (!home) return value;
+  if (value === home) return "~";
+  if (value.startsWith(`${home}/`)) return `~${value.slice(home.length)}`;
+  return value;
+}
+
+export function formatHomePathsInText(value: string, homeDirectory: string | null) {
+  const home = normalizeHomeDirectory(homeDirectory);
+  if (!home || !value.includes(home)) return value;
+
+  let output = "";
+  let start = 0;
+  while (start < value.length) {
+    const index = value.indexOf(home, start);
+    if (index === -1) {
+      output += value.slice(start);
+      break;
+    }
+
+    const next = value[index + home.length];
+    const previous = index > 0 ? value[index - 1] : undefined;
+    output += value.slice(start, index);
+    if (isHomePathStartBoundary(previous) && isHomePathEndBoundary(next)) {
+      output += "~";
+      start = index + home.length;
+    } else {
+      output += home;
+      start = index + home.length;
+    }
+  }
+  return output;
+}
+
+function normalizeHomeDirectory(homeDirectory: string | null) {
+  if (!homeDirectory || homeDirectory === "/") return null;
+  return homeDirectory.endsWith("/") ? homeDirectory.slice(0, -1) : homeDirectory;
+}
+
+function isHomePathStartBoundary(previous: string | undefined) {
+  return previous === undefined || !/[A-Za-z0-9._/-]/.test(previous);
+}
+
+function isHomePathEndBoundary(next: string | undefined) {
+  return next === undefined || next === "/" || !/[A-Za-z0-9._-]/.test(next);
 }
 
 export function formatBytes(bytes: number) {
