@@ -26,18 +26,22 @@ export function ManagerTabs({
           const managerName = manager?.label ?? managerLabel(managerId);
           const scanning = scanningManagers.has(managerId);
           const status = scanning ? "Scanning" : manager?.status ?? "Not scanned";
+          const version = manager?.version ?? " ";
           return (
             <TabsTrigger
-              className="min-h-12 min-w-0 justify-between gap-2 rounded-sm bg-background px-2 shadow-sm ring-1 ring-border transition-all hover:bg-accent hover:text-accent-foreground hover:ring-ring active:translate-y-px data-active:shadow-md data-active:ring-2 data-active:ring-primary data-active:text-foreground"
+              className="min-h-11 min-w-0 flex-col items-stretch justify-center gap-0.5 rounded-sm bg-background px-2 py-1 text-left shadow-sm ring-1 ring-border transition-all hover:bg-accent hover:text-accent-foreground hover:ring-ring active:translate-y-px data-active:shadow-md data-active:ring-2 data-active:ring-primary data-active:text-foreground"
               key={managerId}
               value={managerId}
             >
-              <span className="min-w-0 truncate font-medium">
-                {manager?.version ? `${managerName} ${manager.version}` : managerName}
+              <span className="flex min-w-0 items-center justify-between gap-1.5 text-xs leading-4">
+                <span className="min-w-0 truncate font-medium">{managerName}</span>
+                <Badge className="shrink-0 px-1.5 text-[10px] leading-3" variant={status === "Failed" || status === "Missing" ? "destructive" : status === "Ready" ? "default" : "secondary"}>
+                  {statusLabels[status]}
+                </Badge>
               </span>
-              <Badge className="shrink-0" variant={status === "Failed" || status === "Missing" ? "destructive" : status === "Ready" ? "default" : "secondary"}>
-                {statusLabels[status]}
-              </Badge>
+              <span className="min-w-0 truncate text-[10px] leading-3 text-muted-foreground tabular-nums" title={manager?.version ?? undefined}>
+                {version}
+              </span>
             </TabsTrigger>
           );
         })}

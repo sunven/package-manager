@@ -1,15 +1,20 @@
-import { Copy, ExternalLink } from "lucide-react";
+import { Copy, ExternalLink, Info } from "lucide-react";
 import { pathKindLabels } from "../constants";
 import type { HomebrewMaintenance, ManagerSnapshot, PathInfo } from "../types";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel, trimTail } from "../utils/format";
 import { EmptyState, IconButton, StatusBadge, TextButton } from "./ui";
+import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../components/ui/tooltip";
 
 const npmInlinePathKinds: PathInfo["kind"][] = ["Cache", "NpxCache"];
 const pnpmInlinePathKinds: PathInfo["kind"][] = ["Store"];
 const yarnInlinePathKinds: PathInfo["kind"][] = ["Cache"];
 const nvmInlinePathKinds: PathInfo["kind"][] = ["NvmDir", "NvmNodeVersions"];
 const hiddenPathKinds: PathInfo["kind"][] = ["GlobalModules", "GlobalDir"];
+const npmPathNotes: Partial<Record<PathInfo["kind"], string>> = {
+  Cache: "npm 缓存已包含 npx 缓存；总占用只统计 npm 缓存，避免重复计算。",
+};
 
 export function PathPanel({
   homeDirectory,
@@ -49,7 +54,7 @@ export function PathPanel({
       {inlinePaths.length || stackedPaths.length ? (
         <>
           {inlinePaths.length ? (
-            <InlinePathCard commands={showCommandsInInlineCard ? manager.commands : []} homeDirectory={homeDirectory} onCopyCommand={onCopyCommand} onCopyPath={onCopyPath} onOpenPath={onOpenPath} paths={inlinePaths} />
+            <InlinePathCard commands={showCommandsInInlineCard ? manager.commands : []} homeDirectory={homeDirectory} onCopyCommand={onCopyCommand} onCopyPath={onCopyPath} onOpenPath={onOpenPath} pathNotes={manager.id === "Npm" ? npmPathNotes : undefined} paths={inlinePaths} />
           ) : null}
           {stackedPaths.map((path) => <PathCard homeDirectory={homeDirectory} key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />)}
         </>
@@ -95,6 +100,7 @@ function InlinePathCard({
   onCopyCommand,
   onCopyPath,
   onOpenPath,
+  pathNotes,
   paths,
 }: {
   commands: ManagerSnapshot["commands"];
@@ -102,6 +108,7 @@ function InlinePathCard({
   onCopyCommand: (payload: string) => void;
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
+  pathNotes?: Partial<Record<PathInfo["kind"], string>>;
   paths: PathInfo[];
 }) {
   const itemCount = paths.length + (commands.length ? 1 : 0);
@@ -111,7 +118,7 @@ function InlinePathCard({
   return (
     <div className={gridClassName}>
       {paths.map((path) => (
-        <InlinePathCell homeDirectory={homeDirectory} key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />
+        <InlinePathCell homeDirectory={homeDirectory} key={`${path.kind}-${path.path}`} note={pathNotes?.[path.kind]} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />
       ))}
       {commands.length ? (
         <div className="flex min-w-0 flex-col gap-2 rounded-md border bg-background p-2">
@@ -127,12 +134,14 @@ function InlinePathCard({
 function InlinePathCell({
   className = "min-w-0",
   homeDirectory,
+  note,
   onCopyPath,
   onOpenPath,
   path,
 }: {
   className?: string;
   homeDirectory: string | null;
+  note?: string;
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
   path: PathInfo;
@@ -144,8 +153,9 @@ function InlinePathCell({
   return (
     <div className={`${className} rounded-md border bg-background p-2`}>
       <div className="flex min-h-10 items-start justify-between gap-1">
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-1">
           <p className="truncate text-xs font-medium text-foreground">{pathLabel(path.label)}</p>
+          {note ? <PathNoteTooltip label={`${pathLabel(path.label)}说明`} note={note} /> : null}
         </div>
         <StatusBadge className="shrink-0 px-1.5 text-[10px]" status={size.status} />
       </div>
@@ -164,6 +174,23 @@ function InlinePathCell({
         </IconButton>
       </div>
     </div>
+  );
+}
+
+function PathNoteTooltip({ label, note }: { label: string; note: string }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button aria-label={label} className="size-5 rounded-full text-muted-foreground hover:text-foreground" size="icon-xs" type="button" variant="ghost">
+            <Info />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent align="start">
+          {note}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
