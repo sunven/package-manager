@@ -287,7 +287,7 @@ function MavenSummary({ health }: { health: MavenRepositoryHealth | null }) {
 
   return (
     <div className="flex flex-col gap-2 p-4">
-      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
+      <div className="grid grid-cols-5 gap-2.5">
         <StatCard label="构件" value={String(health.artifactCount)} />
         <StatCard label="版本" value={String(health.versionCount)} />
         <StatCard label="快照版" value={String(health.snapshotCount)} />
@@ -309,7 +309,7 @@ function PipSummary({ health }: { health: PipEnvironmentHealth | null }) {
 
   return (
     <div className="flex flex-col gap-2 p-4">
-      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
+      <div className="grid grid-cols-5 gap-2.5">
         <StatCard label="已安装" value={String(health.installedCount)} />
         <StatCard label="可更新" value={outdatedValue} />
         <StatCard label="可编辑" value={String(health.editableCount)} />

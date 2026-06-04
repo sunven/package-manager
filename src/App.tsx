@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { ManagerTabs } from "./components/ManagerTabs";
 import { MessageBanner } from "./components/MessageBanner";
-import { Overview } from "./components/Overview";
 import { PackageTable } from "./components/PackageTable";
 import { PathPanel } from "./components/PathPanel";
 import { Shell } from "./components/Shell";
@@ -24,9 +23,14 @@ export function App() {
   }, [actions]);
 
   return (
-    <Shell onRefresh={() => void actions.refresh()} scanMeta={state.scanMeta} scanning={scanning} selectedManager={selectedManager}>
+    <Shell
+      onRefresh={() => void actions.refresh()}
+      scanMeta={state.scanMeta}
+      scanning={scanning}
+      selectedManager={selectedManager}
+      totalBytes={state.overview.totalBytes}
+    >
       <MessageBanner message={state.uiMessage} />
-      <Overview {...state.overview} />
       <ManagerTabs
         managerSnapshots={state.managerSnapshots}
         onSelect={actions.selectManager}
@@ -34,7 +38,7 @@ export function App() {
         selectedManager={selectedManager}
       />
 
-      <main className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(330px,0.75fr)] xl:items-start">
+      <main className="mt-5 grid gap-4">
         <Panel className="overflow-hidden">
           <PackageTable
             manager={currentManager}

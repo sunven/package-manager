@@ -16,6 +16,7 @@
         "title": "包管理器控制中心",
         "width": 1180,
         "height": 760,
+        "resizable": false,
         "minWidth": 960,
         "minHeight": 620
       }
