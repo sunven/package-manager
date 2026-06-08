@@ -20,6 +20,14 @@ export function pathLabel(label: string) {
     "Cargo registry source": "Cargo registry 源码",
     "Cargo git cache": "Cargo git 缓存",
     "Cargo git checkouts": "Cargo git checkouts",
+    "Docker config": "Docker 配置",
+    "Docker buildx": "Docker buildx 缓存",
+    "Docker Desktop data": "Docker Desktop 数据",
+    "Bun install": "Bun 安装目录",
+    "Bun cache": "Bun 缓存",
+    "uv tools": "uv 工具目录",
+    "uv Python installations": "uv Python 目录",
+    "uv cache": "uv 缓存",
     Prefix: "安装前缀",
     Cellar: "软件目录",
     Caskroom: "应用目录",
@@ -63,6 +71,21 @@ export function displayMessage(message: string) {
     .replace("pip outdated failed", "pip 可更新包扫描失败")
     .replace("Cargo version probe failed", "Cargo 版本检测失败")
     .replace("Cargo installed binary crate list failed", "Cargo 已安装二进制 crate 列表获取失败")
+    .replace("Docker version probe failed", "Docker 版本检测失败")
+    .replace("Docker image list failed", "Docker 镜像列表获取失败")
+    .replace("Docker container list failed", "Docker 容器列表获取失败")
+    .replace("Docker volume list failed", "Docker 卷列表获取失败")
+    .replace("Docker disk usage failed", "Docker 磁盘占用获取失败")
+    .replace("Bun version probe failed", "Bun 版本检测失败")
+    .replace("Bun cache lookup failed", "Bun 缓存目录查询失败")
+    .replace("Bun global bin lookup failed", "Bun 全局 bin 查询失败")
+    .replace("Bun global package list failed", "Bun 全局包列表获取失败")
+    .replace("uv version probe failed", "uv 版本检测失败")
+    .replace("uv tool dir lookup failed", "uv 工具目录查询失败")
+    .replace("uv python dir lookup failed", "uv Python 目录查询失败")
+    .replace("uv cache dir lookup failed", "uv 缓存目录查询失败")
+    .replace("uv tool list failed", "uv 工具列表获取失败")
+    .replace("uv Python list failed", "uv Python 列表获取失败")
     .replace("Homebrew version probe failed", "Homebrew 版本检测失败")
     .replace("Homebrew formula list failed", "Homebrew 配方包列表获取失败")
     .replace("Homebrew cask list failed", "Homebrew 应用包列表获取失败")
@@ -93,7 +116,15 @@ export function countedSizePath(kind: PathKind) {
     kind === "CargoRegistryCache" ||
     kind === "CargoRegistrySource" ||
     kind === "CargoGitCache" ||
-    kind === "CargoGitCheckouts"
+    kind === "CargoGitCheckouts" ||
+    kind === "DockerConfig" ||
+    kind === "DockerBuildx" ||
+    kind === "DockerDesktopData" ||
+    kind === "BunInstall" ||
+    kind === "BunCache" ||
+    kind === "UvTools" ||
+    kind === "UvPythonInstallations" ||
+    kind === "UvCache"
   );
 }
 
@@ -107,6 +138,20 @@ export function actionLabel(action: CommandEnvelope) {
   if (command.includes("pip uninstall")) return "复制卸载命令";
   if (command.includes("cargo install")) return "复制安装命令";
   if (command.includes("cargo uninstall")) return "复制卸载命令";
+  if (command.includes("image inspect")) return "复制镜像详情命令";
+  if (command.includes("image rm")) return "复制删除镜像命令";
+  if (command.includes("container inspect")) return "复制容器详情命令";
+  if (command.includes("container rm")) return "复制删除容器命令";
+  if (command.includes("volume inspect")) return "复制卷详情命令";
+  if (command.includes("volume rm")) return "复制删除卷命令";
+  if (command.includes("pm view")) return "复制查看命令";
+  if (command.includes("remove --global")) return "复制移除全局包命令";
+  if (command.includes("pm cache rm")) return "复制清理缓存命令";
+  if (command.includes("tool run")) return "复制运行工具命令";
+  if (command.includes("tool uninstall")) return "复制卸载工具命令";
+  if (command.includes("python install")) return "复制安装 Python 命令";
+  if (command.includes("cache prune")) return "复制缓存精简命令";
+  if (command.includes("cache clean")) return "复制清空缓存命令";
   if (command.includes("nvm use")) return "复制切换版本命令";
   if (firstArg === "upgrade" && secondArg === "--cask") return "复制应用包升级命令";
   if (firstArg === "upgrade") return "复制升级命令";

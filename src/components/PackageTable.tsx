@@ -6,6 +6,7 @@ import type {
   MavenFilter,
   MavenRepositoryHealth,
   PackageRow,
+  DockerResourceHealth,
   PipEnvironmentHealth,
   PipFilter,
 } from "../types";
@@ -35,7 +36,7 @@ interface PackageTableProps {
   scanning: boolean;
   selectedHomebrewFilter: HomebrewFilter;
   selectedMavenFilter: MavenFilter;
-  selectedPackageIndex: number;
+  selectedPackageIndex: number | null;
   selectedPipFilter: PipFilter;
 }
 
@@ -84,6 +85,15 @@ export function PackageTable(props: PackageTableProps) {
           onSelect={props.onPipFilter}
         />
         <SpecializedTable emptyMessage="没有匹配当前筛选条件的 pip 软件包" heading={["名称", "版本", "信号", "位置", "操作"]} packages={packages} {...props} />
+      </>
+    );
+  }
+
+  if (manager.id === "Docker") {
+    return (
+      <>
+        <DockerSummary health={manager.docker} />
+        <SpecializedTable emptyMessage="未找到 Docker 镜像、容器或卷" heading={["名称", "状态 / 大小", "信号", "位置", "操作"]} packages={indexedPackages(manager)} {...props} />
       </>
     );
   }
@@ -256,10 +266,12 @@ function TableShell({
     <div className="min-w-[760px]">
       <Table>
         <TableHeader>
-          <TableRow>
-          {heading.map((item) => (
-              <TableHead className={item === "操作" ? "w-24 text-right" : undefined} key={item}>{item}</TableHead>
-          ))}
+          <TableRow className="bg-muted/40 hover:bg-muted/40">
+            {heading.map((item) => (
+              <TableHead className={cx("font-semibold", item === "操作" && "w-24 text-right")} key={item}>
+                {item}
+              </TableHead>
+            ))}
           </TableRow>
         </TableHeader>
         <TableBody>{children}</TableBody>
@@ -329,6 +341,32 @@ function PipSummary({ health, homeDirectory }: { health: PipEnvironmentHealth | 
         {health.pythonVersion} · {formatHomePath(health.pythonExecutable, homeDirectory)}
       </p>
       {health.outdatedMessage && health.outdatedStatus === "Failed" ? <p className="text-sm font-medium text-destructive">{formatHomePathsInText(displayMessage(health.outdatedMessage), homeDirectory)}</p> : null}
+    </div>
+  );
+}
+
+function DockerSummary({ health }: { health: DockerResourceHealth | null }) {
+  if (!health) return null;
+  const diskRows = health.diskUsage.slice(0, 4);
+
+  return (
+    <div className="flex flex-col gap-2 p-4">
+      <div className="grid grid-cols-5 gap-2.5">
+        <StatCard label="镜像" value={String(health.imageCount)} />
+        <StatCard label="容器" value={String(health.containerCount)} />
+        <StatCard label="运行中" value={String(health.runningContainerCount)} />
+        <StatCard label="卷" value={String(health.volumeCount)} />
+        <StatCard label="清理信号" value={String(health.danglingImageCount + health.unusedImageCount)} />
+      </div>
+      {diskRows.length ? (
+        <div className="grid grid-cols-4 gap-2.5">
+          {diskRows.map((row) => (
+            <StatCard key={row.resourceType} label={row.resourceType} value={row.reclaimable || row.size} />
+          ))}
+        </div>
+      ) : health.diskUsageStatus === "Failed" ? (
+        <p className="text-sm font-medium text-destructive">{displayMessage(health.diskUsageMessage ?? "Docker disk usage failed")}</p>
+      ) : null}
     </div>
   );
 }

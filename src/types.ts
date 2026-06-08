@@ -1,4 +1,4 @@
-export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Nvm" | "Homebrew" | "Maven" | "Pip" | "Cargo";
+export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Nvm" | "Homebrew" | "Maven" | "Pip" | "Cargo" | "Docker" | "Bun" | "Uv";
 export type ManagerStatus = "Ready" | "Missing" | "Unsupported" | "Partial" | "Failed";
 export type DiskUsageStatus = "Pending" | "Ready" | "Missing" | "PermissionDenied" | "Error";
 export type PathKind =
@@ -14,14 +14,44 @@ export type PathKind =
   | "CargoRegistrySource"
   | "CargoGitCache"
   | "CargoGitCheckouts"
+  | "DockerConfig"
+  | "DockerBuildx"
+  | "DockerDesktopData"
+  | "BunInstall"
+  | "BunCache"
+  | "UvTools"
+  | "UvPythonInstallations"
+  | "UvCache"
   | "Prefix"
   | "Cellar"
   | "Caskroom"
   | "LocalRepository"
   | "SitePackages"
   | "UserSite";
-export type PackageKind = "Generic" | "Formula" | "Cask" | "MavenArtifact" | "PythonDistribution";
-export type PackageSignal = "Outdated" | "Leaf" | "DuplicateVersions" | "Snapshot" | "Editable" | "UserSite" | "DirectUrl";
+export type PackageKind =
+  | "Generic"
+  | "Formula"
+  | "Cask"
+  | "MavenArtifact"
+  | "PythonDistribution"
+  | "DockerImage"
+  | "DockerContainer"
+  | "DockerVolume"
+  | "BunPackage"
+  | "UvTool"
+  | "UvPython";
+export type PackageSignal =
+  | "Outdated"
+  | "Leaf"
+  | "DuplicateVersions"
+  | "Snapshot"
+  | "Editable"
+  | "UserSite"
+  | "DirectUrl"
+  | "Dangling"
+  | "Unused"
+  | "Running"
+  | "Stopped";
 export type AsyncStatus = "Pending" | "Ready" | "Failed";
 export type HomebrewFilter = "All" | "Formulae" | "Casks" | "Outdated" | "Leaves";
 export type MavenFilter = "All" | "Duplicates" | "Snapshots";
@@ -83,6 +113,7 @@ export interface ManagerSnapshot {
   homebrew: HomebrewMaintenance | null;
   maven: MavenRepositoryHealth | null;
   pip: PipEnvironmentHealth | null;
+  docker: DockerResourceHealth | null;
 }
 
 export interface HomebrewMaintenance {
@@ -156,6 +187,26 @@ export interface PipOutdatedPreview {
   outdated: string[];
   message: string | null;
   failure: CommandFailure | null;
+}
+
+export interface DockerResourceHealth {
+  imageCount: number;
+  containerCount: number;
+  runningContainerCount: number;
+  volumeCount: number;
+  danglingImageCount: number;
+  unusedImageCount: number;
+  diskUsage: DockerDiskUsageRow[];
+  diskUsageStatus: AsyncStatus;
+  diskUsageMessage: string | null;
+}
+
+export interface DockerDiskUsageRow {
+  resourceType: string;
+  totalCount: string;
+  activeCount: string;
+  size: string;
+  reclaimable: string;
 }
 
 export interface ManagerScanSnapshot {

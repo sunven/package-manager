@@ -40,6 +40,9 @@ const initialCounters: NumberByManager = {
   Maven: 0,
   Pip: 0,
   Cargo: 0,
+  Docker: 0,
+  Bun: 0,
+  Uv: 0,
 };
 
 export interface PackageManagerActions {
@@ -64,7 +67,7 @@ export function usePackageManagers() {
   const [managerSnapshots, setManagerSnapshots] = useState<ManagerMap>({});
   const [scanDurationMsByManager, setScanDurationMsByManager] = useState<Partial<NumberByManager>>({});
   const [selectedManager, setSelectedManager] = useState<ManagerId>("Npm");
-  const [selectedPackageIndex, setSelectedPackageIndex] = useState(0);
+  const [selectedPackageIndex, setSelectedPackageIndex] = useState<number | null>(null);
   const [openPackageActionMenuIndex, setOpenPackageActionMenuIndex] = useState<number | null>(null);
   const [selectedHomebrewFilter, setSelectedHomebrewFilter] = useState<HomebrewFilter>("All");
   const [selectedMavenFilter, setSelectedMavenFilter] = useState<MavenFilter>("All");
@@ -319,8 +322,12 @@ export function usePackageManagers() {
         managerSnapshotsRef.current = { ...managerSnapshotsRef.current, [result.manager.id]: result.manager };
         setManagerSnapshots(managerSnapshotsRef.current);
         setScanDurationMsByManager((current) => ({ ...current, [result.manager.id]: result.scanDurationMs }));
-        if (result.manager.id === selectedManagerRef.current && selectedPackageIndexRef.current >= result.manager.packages.length) {
-          setSelectedPackageIndex(0);
+        if (
+          result.manager.id === selectedManagerRef.current &&
+          selectedPackageIndexRef.current !== null &&
+          selectedPackageIndexRef.current >= result.manager.packages.length
+        ) {
+          setSelectedPackageIndex(null);
         }
 
         const pathToken = sizeScanTokensRef.current[result.manager.id];
@@ -376,7 +383,7 @@ export function usePackageManagers() {
   const selectManager = useCallback(
     (managerId: ManagerId) => {
       setSelectedManager(managerId);
-      setSelectedPackageIndex(0);
+      setSelectedPackageIndex(null);
       setOpenPackageActionMenuIndex(null);
       if (!managerSnapshotsRef.current[managerId] && !scanningManagersRef.current.has(managerId)) {
         void refresh(managerId);
@@ -506,17 +513,17 @@ export function usePackageManagers() {
     openPackage,
     setHomebrewFilter: (filter) => {
       setSelectedHomebrewFilter(filter);
-      setSelectedPackageIndex(0);
+      setSelectedPackageIndex(null);
       setOpenPackageActionMenuIndex(null);
     },
     setMavenFilter: (filter) => {
       setSelectedMavenFilter(filter);
-      setSelectedPackageIndex(0);
+      setSelectedPackageIndex(null);
       setOpenPackageActionMenuIndex(null);
     },
     setPipFilter: (filter) => {
       setSelectedPipFilter(filter);
-      setSelectedPackageIndex(0);
+      setSelectedPackageIndex(null);
       setOpenPackageActionMenuIndex(null);
     },
   };

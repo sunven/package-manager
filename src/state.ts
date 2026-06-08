@@ -1,5 +1,4 @@
-export type PackageSignal = "Outdated" | "Leaf" | "DuplicateVersions" | "Snapshot" | "Editable" | "UserSite" | "DirectUrl";
-export type AsyncStatus = "Pending" | "Ready" | "Failed";
+import type { AsyncStatus, PackageSignal } from "./types";
 
 export interface PackageRowLike {
   name: string;

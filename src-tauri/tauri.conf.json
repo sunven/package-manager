@@ -5,7 +5,7 @@
   "identifier": "com.sunven.package-manager-control-center",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:14201",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },

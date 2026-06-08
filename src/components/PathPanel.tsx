@@ -11,6 +11,9 @@ const npmInlinePathKinds: PathInfo["kind"][] = ["Cache", "NpxCache"];
 const pnpmInlinePathKinds: PathInfo["kind"][] = ["Store"];
 const yarnInlinePathKinds: PathInfo["kind"][] = ["Cache"];
 const nvmInlinePathKinds: PathInfo["kind"][] = ["NvmDir", "NvmNodeVersions"];
+const dockerInlinePathKinds: PathInfo["kind"][] = ["DockerConfig", "DockerBuildx", "DockerDesktopData"];
+const bunInlinePathKinds: PathInfo["kind"][] = ["BunInstall", "BunCache"];
+const uvInlinePathKinds: PathInfo["kind"][] = ["UvTools", "UvPythonInstallations", "UvCache"];
 const hiddenPathKinds: PathInfo["kind"][] = ["GlobalModules", "GlobalDir"];
 const npmPathNotes: Partial<Record<PathInfo["kind"], string>> = {
   Cache: "npm 缓存已包含 npx 缓存；总占用只统计 npm 缓存，避免重复计算。",
@@ -44,7 +47,8 @@ export function PathPanel({
   }
 
   const { inlinePaths, stackedPaths } = splitPaths(manager);
-  const showCommandsInInlineCard = Boolean(inlinePaths.length && manager.commands.length);
+  const showCommands = manager.id !== "Docker" && manager.id !== "Uv";
+  const showCommandsInInlineCard = Boolean(showCommands && inlinePaths.length && manager.commands.length);
 
   return (
     <div className="flex flex-col gap-3">
@@ -61,7 +65,7 @@ export function PathPanel({
       ) : (
         <EmptyState message="未解析到缓存或存储路径" />
       )}
-      {showCommandsInInlineCard ? null : <CommandList homeDirectory={homeDirectory} manager={manager} onCopyCommand={onCopyCommand} />}
+      {showCommands && !showCommandsInInlineCard ? <CommandList homeDirectory={homeDirectory} manager={manager} onCopyCommand={onCopyCommand} /> : null}
     </div>
   );
 }
@@ -80,7 +84,13 @@ function splitPaths(manager: ManagerSnapshot | null): { inlinePaths: PathInfo[];
           ? yarnInlinePathKinds
           : manager.id === "Nvm"
             ? nvmInlinePathKinds
-            : [];
+            : manager.id === "Docker"
+              ? dockerInlinePathKinds
+              : manager.id === "Bun"
+                ? bunInlinePathKinds
+                : manager.id === "Uv"
+                  ? uvInlinePathKinds
+                  : [];
 
   if (!inlinePathKinds.length) {
     return { inlinePaths: [], stackedPaths: manager.paths.filter((path) => !hiddenPathKinds.includes(path.kind)) };

@@ -11,7 +11,7 @@ import type {
   PipFilter,
 } from "./types";
 
-export const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Nvm", "Homebrew", "Maven", "Pip", "Cargo"];
+export const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Nvm", "Homebrew", "Maven", "Pip", "Cargo", "Docker", "Bun", "Uv"];
 
 export const managerLabels: Record<ManagerId, string> = {
   Npm: "npm",
@@ -22,6 +22,9 @@ export const managerLabels: Record<ManagerId, string> = {
   Maven: "Maven",
   Pip: "pip",
   Cargo: "Cargo",
+  Docker: "Docker",
+  Bun: "Bun",
+  Uv: "uv",
 };
 
 export const statusLabels: Record<DisplayStatus, string> = {
@@ -51,6 +54,14 @@ export const pathKindLabels: Record<PathKind, string> = {
   CargoRegistrySource: "Cargo registry 源码",
   CargoGitCache: "Cargo git 缓存",
   CargoGitCheckouts: "Cargo git checkouts",
+  DockerConfig: "Docker 配置",
+  DockerBuildx: "Docker buildx 缓存",
+  DockerDesktopData: "Docker Desktop 数据",
+  BunInstall: "Bun 安装目录",
+  BunCache: "Bun 缓存",
+  UvTools: "uv 工具目录",
+  UvPythonInstallations: "uv Python 目录",
+  UvCache: "uv 缓存",
   Prefix: "安装前缀",
   Cellar: "软件目录",
   Caskroom: "应用目录",
@@ -65,6 +76,12 @@ export const packageKindLabels: Record<PackageKind, string> = {
   Cask: "应用包",
   MavenArtifact: "Maven 构件",
   PythonDistribution: "Python 包",
+  DockerImage: "Docker 镜像",
+  DockerContainer: "Docker 容器",
+  DockerVolume: "Docker 卷",
+  BunPackage: "Bun 全局包",
+  UvTool: "uv 工具",
+  UvPython: "uv Python",
 };
 
 export const signalLabels: Record<PackageSignal, string> = {
@@ -75,6 +92,10 @@ export const signalLabels: Record<PackageSignal, string> = {
   Editable: "可编辑安装",
   UserSite: "用户目录",
   DirectUrl: "直接链接",
+  Dangling: "悬空",
+  Unused: "未使用",
+  Running: "运行中",
+  Stopped: "已停止",
 };
 
 export const homebrewFilterLabels: Record<HomebrewFilter, string> = {
