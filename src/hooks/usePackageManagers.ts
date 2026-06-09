@@ -3,16 +3,31 @@ import { invoke } from "@tauri-apps/api/core";
 import { homeDir } from "@tauri-apps/api/path";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { applyPipOutdatedPreview, shouldApplyHydrationResult } from "../state";
+import { toast } from "sonner";
+import {
+  applyPipOutdatedPreview,
+  cancelMaintenanceConfirmation,
+  completeMaintenanceOperation,
+  failMaintenanceOperation,
+  finishMaintenanceOperation,
+  requestNpmCacheClean,
+  requestNpmPackageUninstall,
+  shouldApplyHydrationResult,
+  startConfirmedMaintenanceOperation,
+  type MaintenanceUiState,
+  type NpmMaintenanceRequest,
+} from "../state";
 import { managerOrder } from "../constants";
 import type {
   DiskUsage,
   HomebrewCleanupPreview,
   HomebrewFilter,
+  MaintenanceRunPreview,
   ManagerId,
   ManagerScanSnapshot,
   ManagerSnapshot,
   MavenFilter,
+  NpmMaintenanceOperation,
   PackageRow,
   PipFilter,
   PipOutdatedPreview,
@@ -26,6 +41,7 @@ import {
   formatHomePathsInText,
   managerLabel,
   sizeScanError,
+  trimTail,
 } from "../utils/format";
 
 type ManagerMap = Partial<Record<ManagerId, ManagerSnapshot>>;
@@ -55,6 +71,10 @@ export interface PackageManagerActions {
   openPath: (path: string) => Promise<void>;
   copyCommand: (payload: string) => Promise<void>;
   copyCleanupCommand: () => Promise<void>;
+  requestPackageUninstall: (index: number) => void;
+  requestCacheClean: () => void;
+  cancelMaintenance: () => void;
+  confirmMaintenance: () => Promise<void>;
   copyPackageAction: (index: number, actionIndex: number) => Promise<void>;
   copyPackage: (index: number) => Promise<void>;
   openPackage: (index: number) => Promise<void>;
@@ -77,6 +97,10 @@ export function usePackageManagers() {
   const [pendingSizeScansByManager, setPendingSizeScansByManager] = useState<NumberByManager>(initialCounters);
   const [pendingHomebrewCleanup, setPendingHomebrewCleanup] = useState(false);
   const [pendingPipOutdated, setPendingPipOutdated] = useState(false);
+  const [maintenanceState, setMaintenanceState] = useState<MaintenanceUiState>({
+    confirmation: null,
+    pending: null,
+  });
   const [homeDirectory, setHomeDirectory] = useState<string | null>(null);
   const [uiMessage, setUiMessage] = useState<UiMessage | null>(null);
 
@@ -87,6 +111,7 @@ export function usePackageManagers() {
   const sizeScanTokensRef = useRef<NumberByManager>({ ...initialCounters });
   const homebrewCleanupTokenRef = useRef(0);
   const pipOutdatedTokenRef = useRef(0);
+  const maintenanceStateRef = useRef(maintenanceState);
 
   useEffect(() => {
     selectedManagerRef.current = selectedManager;
@@ -103,6 +128,10 @@ export function usePackageManagers() {
   useEffect(() => {
     scanningManagersRef.current = scanningManagers;
   }, [scanningManagers]);
+
+  useEffect(() => {
+    maintenanceStateRef.current = maintenanceState;
+  }, [maintenanceState]);
 
   const currentManager = managerSnapshots[selectedManager] ?? null;
 
@@ -175,6 +204,14 @@ export function usePackageManagers() {
 
   const clearMessage = useCallback(() => {
     setUiMessage(null);
+  }, []);
+
+  const updateMaintenanceState = useCallback((updater: (state: MaintenanceUiState) => MaintenanceUiState) => {
+    setMaintenanceState((current) => {
+      const next = updater(current);
+      maintenanceStateRef.current = next;
+      return next;
+    });
   }, []);
 
   const markCopied = useCallback(
@@ -498,6 +535,58 @@ export function usePackageManagers() {
     [clearMessage, packageAt, showError],
   );
 
+  const requestPackageUninstall = useCallback(
+    (index: number) => {
+      if (selectedManagerRef.current !== "Npm") return;
+      const pkg = packageAt(index);
+      if (!pkg) return;
+      setOpenPackageActionMenuIndex(null);
+      updateMaintenanceState((state) => requestNpmPackageUninstall(state, index, pkg.name));
+    },
+    [packageAt, updateMaintenanceState],
+  );
+
+  const requestCacheCleanAction = useCallback(() => {
+    if (selectedManagerRef.current !== "Npm") return;
+    updateMaintenanceState(requestNpmCacheClean);
+  }, [updateMaintenanceState]);
+
+  const cancelMaintenance = useCallback(() => {
+    updateMaintenanceState(cancelMaintenanceConfirmation);
+  }, [updateMaintenanceState]);
+
+  const confirmMaintenance = useCallback(async () => {
+    const request = maintenanceStateRef.current.confirmation;
+    if (!request || maintenanceStateRef.current.pending) return;
+
+    const started = startConfirmedMaintenanceOperation(maintenanceStateRef.current);
+    maintenanceStateRef.current = started;
+    setMaintenanceState(started);
+
+    try {
+      const preview = await invoke<MaintenanceRunPreview>("run_npm_maintenance", {
+        operation: npmMaintenanceOperation(request),
+      });
+      if (preview.status !== "Ready") {
+        throw new Error(maintenanceFailureMessage(preview));
+      }
+
+      await refresh("Npm");
+      updateMaintenanceState(completeMaintenanceOperation);
+      toast.success(maintenanceSuccessTitle(request), {
+        description: preview.command.preview,
+      });
+    } catch (error) {
+      const message = errorToString(error);
+      updateMaintenanceState((state) => failMaintenanceOperation(state, message));
+      toast.error(maintenanceFailureTitle(request), {
+        description: message,
+      });
+    } finally {
+      updateMaintenanceState((state) => state.pending ? finishMaintenanceOperation(state) : state);
+    }
+  }, [refresh, updateMaintenanceState]);
+
   const actions: PackageManagerActions = {
     refresh,
     selectManager,
@@ -508,6 +597,10 @@ export function usePackageManagers() {
     openPath: openPathValue,
     copyCommand,
     copyCleanupCommand,
+    requestPackageUninstall,
+    requestCacheClean: requestCacheCleanAction,
+    cancelMaintenance,
+    confirmMaintenance,
     copyPackageAction,
     copyPackage,
     openPackage,
@@ -537,6 +630,9 @@ export function usePackageManagers() {
     overview,
     pendingHomebrewCleanup,
     pendingPipOutdated,
+    maintenanceConfirmation: maintenanceState.confirmation,
+    maintenancePending: maintenanceState.pending,
+    maintenanceResult: maintenanceState.result ?? null,
     pendingSizeScansByManager,
     scanMeta: renderMeta,
     scanningManagers,
@@ -547,4 +643,24 @@ export function usePackageManagers() {
     selectedPipFilter,
     uiMessage,
   };
+}
+
+function npmMaintenanceOperation(request: NpmMaintenanceRequest): NpmMaintenanceOperation {
+  if (request.kind === "cleanCache") return { kind: "cleanCache" };
+  return {
+    kind: "uninstallGlobalPackage",
+    packageName: request.packageName,
+  };
+}
+
+function maintenanceSuccessTitle(request: NpmMaintenanceRequest) {
+  return request.kind === "cleanCache" ? "npm 缓存已清理" : "npm 全局包已卸载";
+}
+
+function maintenanceFailureTitle(request: NpmMaintenanceRequest) {
+  return request.kind === "cleanCache" ? "npm 缓存清理失败" : "npm 全局包卸载失败";
+}
+
+function maintenanceFailureMessage(preview: MaintenanceRunPreview) {
+  return trimTail(preview.stderr || preview.stdout || preview.message || "npm maintenance failed");
 }

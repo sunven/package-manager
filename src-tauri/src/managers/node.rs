@@ -337,6 +337,115 @@ pub(super) fn attach_nvm_actions(row: &mut PackageRow, version: &str) {
     ));
 }
 
+pub(crate) fn run_npm_maintenance_with_runner<F>(
+    operation: NpmMaintenanceOperation,
+    runner: &F,
+) -> MaintenanceRunPreview
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    run_npm_maintenance_with_runner_and_cache_cleaner(operation, runner, &remove_dir_all_if_exists)
+}
+
+pub(crate) fn run_npm_maintenance_with_runner_and_cache_cleaner<F, C>(
+    operation: NpmMaintenanceOperation,
+    runner: &F,
+    cache_cleaner: &C,
+) -> MaintenanceRunPreview
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+    C: Fn(&Path) -> Result<(), String>,
+{
+    let cleans_cache = matches!(operation, NpmMaintenanceOperation::CleanCache);
+    let args = match operation {
+        NpmMaintenanceOperation::UninstallGlobalPackage { package_name } => {
+            vec!["uninstall".to_string(), "-g".to_string(), package_name]
+        }
+        NpmMaintenanceOperation::CleanCache => {
+            vec![
+                "cache".to_string(),
+                "clean".to_string(),
+                "--force".to_string(),
+            ]
+        }
+    };
+    let command = envelope_owned("npm", args.clone(), 30_000);
+    let npx_cache = if cleans_cache {
+        npm_cache_path_for_clean(runner)
+    } else {
+        None
+    };
+
+    match runner("npm", &args, Duration::from_secs(30)) {
+        Ok(run) if run.exit_code == Some(0) => {
+            if let Some(path) = npx_cache.as_ref() {
+                if let Err(message) = cache_cleaner(path) {
+                    let failure = CommandFailure {
+                        kind: FailureKind::CommandFailed,
+                        message: message.clone(),
+                        command: Some(command.clone()),
+                        stdout: run.stdout,
+                        stderr: run.stderr,
+                    };
+                    return MaintenanceRunPreview {
+                        status: AsyncStatus::Failed,
+                        command,
+                        stdout: failure.stdout.clone(),
+                        stderr: failure.stderr.clone(),
+                        message: Some(message),
+                        failure: Some(failure),
+                    };
+                }
+            }
+            MaintenanceRunPreview {
+                status: AsyncStatus::Ready,
+                command,
+                stdout: run.stdout,
+                stderr: run.stderr,
+                message: None,
+                failure: None,
+            }
+        }
+        Ok(run) => {
+            let failure = command_failure(FailureKind::CommandFailed, "npm maintenance failed", run);
+            MaintenanceRunPreview {
+                status: AsyncStatus::Failed,
+                command,
+                stdout: failure.stdout.clone(),
+                stderr: failure.stderr.clone(),
+                message: Some(failure.message.clone()),
+                failure: Some(failure),
+            }
+        }
+        Err(failure) => MaintenanceRunPreview {
+            status: AsyncStatus::Failed,
+            command,
+            stdout: failure.stdout.clone(),
+            stderr: failure.stderr.clone(),
+            message: Some(failure.message.clone()),
+            failure: Some(failure),
+        },
+    }
+}
+
+fn npm_cache_path_for_clean<F>(runner: &F) -> Option<PathBuf>
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let args = vec!["config".to_string(), "get".to_string(), "cache".to_string()];
+    match runner("npm", &args, Duration::from_secs(5)) {
+        Ok(run) if run.exit_code == Some(0) => Some(PathBuf::from(npx_cache_path(run.stdout.trim()))),
+        _ => None,
+    }
+}
+
+pub(crate) fn remove_dir_all_if_exists(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(path).map_err(|err| format!("Could not remove {}: {err}", path.display()))
+}
+
 pub(super) fn parse_npm_packages(stdout: &str) -> Result<Vec<PackageRow>, String> {
     let value: Value = serde_json::from_str(stdout).map_err(|err| err.to_string())?;
     let Some(dependencies) = value.get("dependencies").and_then(Value::as_object) else {

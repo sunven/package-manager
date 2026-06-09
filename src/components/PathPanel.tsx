@@ -1,6 +1,7 @@
-import { Copy, ExternalLink, Info } from "lucide-react";
+import { Copy, ExternalLink, Info, Trash2 } from "lucide-react";
 import { pathKindLabels } from "../constants";
 import type { HomebrewMaintenance, ManagerSnapshot, PathInfo } from "../types";
+import type { NpmMaintenanceRequest } from "../state";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel, trimTail } from "../utils/format";
 import { EmptyState, IconButton, StatusBadge, TextButton } from "./ui";
 import { Button } from "../../components/ui/button";
@@ -24,7 +25,9 @@ export function PathPanel({
   manager,
   onCopyCleanupCommand,
   onCopyPath,
+  onRequestCacheClean,
   onOpenPath,
+  pendingMaintenance,
   pendingHomebrewCleanup,
   scanning,
 }: {
@@ -32,7 +35,9 @@ export function PathPanel({
   manager: ManagerSnapshot | null;
   onCopyCleanupCommand: () => void;
   onCopyPath: (path: string) => void;
+  onRequestCacheClean: () => void;
   onOpenPath: (path: string) => void;
+  pendingMaintenance: NpmMaintenanceRequest | null;
   pendingHomebrewCleanup: boolean;
   scanning: boolean;
 }) {
@@ -54,7 +59,16 @@ export function PathPanel({
       {inlinePaths.length || stackedPaths.length ? (
         <>
           {inlinePaths.length ? (
-            <InlinePathCard homeDirectory={homeDirectory} onCopyPath={onCopyPath} onOpenPath={onOpenPath} pathNotes={manager.id === "Npm" ? npmPathNotes : undefined} paths={inlinePaths} />
+            <InlinePathCard
+              homeDirectory={homeDirectory}
+              managerId={manager.id}
+              onCopyPath={onCopyPath}
+              onOpenPath={onOpenPath}
+              onRequestCacheClean={onRequestCacheClean}
+              pathNotes={manager.id === "Npm" ? npmPathNotes : undefined}
+              paths={inlinePaths}
+              pendingMaintenance={pendingMaintenance}
+            />
           ) : null}
           {stackedPaths.map((path) => <PathCard homeDirectory={homeDirectory} key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />)}
         </>
@@ -101,16 +115,22 @@ function splitPaths(manager: ManagerSnapshot | null): { inlinePaths: PathInfo[];
 
 function InlinePathCard({
   homeDirectory,
+  managerId,
   onCopyPath,
   onOpenPath,
+  onRequestCacheClean,
   pathNotes,
   paths,
+  pendingMaintenance,
 }: {
   homeDirectory: string | null;
+  managerId: ManagerSnapshot["id"];
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
+  onRequestCacheClean: () => void;
   pathNotes?: Partial<Record<PathInfo["kind"], string>>;
   paths: PathInfo[];
+  pendingMaintenance: NpmMaintenanceRequest | null;
 }) {
   const itemCount = paths.length;
   const gridClassName =
@@ -119,7 +139,17 @@ function InlinePathCard({
   return (
     <div className={gridClassName}>
       {paths.map((path) => (
-        <InlinePathCell homeDirectory={homeDirectory} key={`${path.kind}-${path.path}`} note={pathNotes?.[path.kind]} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />
+        <InlinePathCell
+          homeDirectory={homeDirectory}
+          key={`${path.kind}-${path.path}`}
+          managerId={managerId}
+          note={pathNotes?.[path.kind]}
+          onCopyPath={onCopyPath}
+          onOpenPath={onOpenPath}
+          onRequestCacheClean={onRequestCacheClean}
+          path={path}
+          pendingMaintenance={pendingMaintenance}
+        />
       ))}
     </div>
   );
@@ -128,21 +158,29 @@ function InlinePathCard({
 function InlinePathCell({
   className = "min-w-0",
   homeDirectory,
+  managerId,
   note,
   onCopyPath,
   onOpenPath,
+  onRequestCacheClean,
   path,
+  pendingMaintenance,
 }: {
   className?: string;
   homeDirectory: string | null;
+  managerId: ManagerSnapshot["id"];
   note?: string;
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
+  onRequestCacheClean: () => void;
   path: PathInfo;
+  pendingMaintenance: NpmMaintenanceRequest | null;
 }) {
   const size = path.size;
   const sizeValue = size.status === "Ready" ? (size.human ?? "0 B") : null;
   const detail = size.status === "Pending" ? "等待占用扫描" : `${size.files} 文件`;
+  const canCleanNpmCache = managerId === "Npm" && path.kind === "Cache";
+  const pendingCacheClean = pendingMaintenance?.kind === "cleanCache";
 
   return (
     <div className={`${className} rounded-md border bg-background p-2`}>
@@ -165,6 +203,11 @@ function InlinePathCell({
         <IconButton className="size-6 shrink-0" disabled={size.status === "Missing"} label={`打开 ${pathLabel(path.label)}路径`} onClick={() => onOpenPath(path.path)}>
           <ExternalLink />
         </IconButton>
+        {canCleanNpmCache ? (
+          <IconButton className="size-6 shrink-0" disabled={pendingCacheClean} label="清理 npm 缓存" onClick={onRequestCacheClean}>
+            <Trash2 />
+          </IconButton>
+        ) : null}
       </div>
       {size.message ? <p className="mt-1 truncate text-[11px] text-muted-foreground">{formatHomePathsInText(displayMessage(size.message), homeDirectory)}</p> : null}
     </div>

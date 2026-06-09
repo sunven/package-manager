@@ -6,10 +6,12 @@ mod types;
 use crate::command::{run_command, run_command_owned};
 use crate::disk_usage::disk_usage;
 use crate::managers::{
-    hydrate_homebrew_cleanup_with_runner, hydrate_pip_outdated_with_runner, scan_manager_snapshot,
+    hydrate_homebrew_cleanup_with_runner, hydrate_pip_outdated_with_runner,
+    run_npm_maintenance_with_runner, scan_manager_snapshot,
 };
 use crate::types::{
-    DiskUsage, HomebrewCleanupPreview, ManagerId, ManagerScanSnapshot, PipOutdatedPreview,
+    DiskUsage, HomebrewCleanupPreview, MaintenanceRunPreview, ManagerId, ManagerScanSnapshot,
+    NpmMaintenanceOperation, PipOutdatedPreview,
 };
 use std::path::Path;
 
@@ -43,6 +45,17 @@ async fn hydrate_pip_outdated(python_executable: String) -> Result<PipOutdatedPr
     .map_err(|err| format!("pip outdated hydration failed: {err}"))
 }
 
+#[tauri::command]
+async fn run_npm_maintenance(
+    operation: NpmMaintenanceOperation,
+) -> Result<MaintenanceRunPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_npm_maintenance_with_runner(operation, &run_command_owned)
+    })
+    .await
+    .map_err(|err| format!("npm maintenance failed: {err}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -52,7 +65,8 @@ pub fn run() {
             scan_manager,
             measure_path_size,
             hydrate_homebrew_cleanup,
-            hydrate_pip_outdated
+            hydrate_pip_outdated,
+            run_npm_maintenance
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

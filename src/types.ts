@@ -189,6 +189,24 @@ export interface PipOutdatedPreview {
   failure: CommandFailure | null;
 }
 
+export type NpmMaintenanceOperation =
+  | {
+      kind: "uninstallGlobalPackage";
+      packageName: string;
+    }
+  | {
+      kind: "cleanCache";
+    };
+
+export interface MaintenanceRunPreview {
+  status: AsyncStatus;
+  command: CommandEnvelope;
+  stdout: string;
+  stderr: string;
+  message: string | null;
+  failure: CommandFailure | null;
+}
+
 export interface DockerResourceHealth {
   imageCount: number;
   containerCount: number;

@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub(crate) use homebrew::hydrate_homebrew_cleanup_with_runner;
+pub(crate) use node::run_npm_maintenance_with_runner;
 pub(crate) use pip::hydrate_pip_outdated_with_runner;
 
 #[cfg(test)]
@@ -358,6 +359,137 @@ info "alpha@1.0.0" has binaries:
 
         assert_eq!(name, "@scope/tool");
         assert_eq!(version, "2.0.0");
+    }
+
+    #[test]
+    fn run_npm_maintenance_uninstalls_scoped_package_with_structured_args() {
+        let result = run_npm_maintenance_with_runner(
+            NpmMaintenanceOperation::UninstallGlobalPackage {
+                package_name: "@scope/tool".to_string(),
+            },
+            &|program, args, timeout| {
+                assert_eq!(program, "npm");
+                assert_eq!(
+                    args,
+                    &[
+                        "uninstall".to_string(),
+                        "-g".to_string(),
+                        "@scope/tool".to_string()
+                    ]
+                );
+                Ok(fake_run(
+                    program,
+                    &["uninstall", "-g", "@scope/tool"],
+                    timeout,
+                    "removed 1 package",
+                ))
+            },
+        );
+
+        assert_eq!(result.status, AsyncStatus::Ready);
+        assert_eq!(result.command.preview, "npm uninstall -g @scope/tool");
+    }
+
+    #[test]
+    fn npm_maintenance_operation_accepts_frontend_camel_case_payload() {
+        let operation: NpmMaintenanceOperation = serde_json::from_str(
+            r#"{"kind":"uninstallGlobalPackage","packageName":"@scope/tool"}"#,
+        )
+        .expect("deserialize frontend payload");
+
+        match operation {
+            NpmMaintenanceOperation::UninstallGlobalPackage { package_name } => {
+                assert_eq!(package_name, "@scope/tool");
+            }
+            NpmMaintenanceOperation::CleanCache => panic!("expected uninstall operation"),
+        }
+    }
+
+    #[test]
+    fn run_npm_maintenance_cleans_cache_with_force() {
+        let result = run_npm_maintenance_with_runner(
+            NpmMaintenanceOperation::CleanCache,
+            &|program, args, timeout| match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                ["config", "get", "cache"] => Ok(fake_run(
+                    program,
+                    &["config", "get", "cache"],
+                    timeout,
+                    "/tmp/npm-cache\n",
+                )),
+                ["cache", "clean", "--force"] => Ok(fake_run(
+                    program,
+                    &["cache", "clean", "--force"],
+                    timeout,
+                    "npm cache cleaned",
+                )),
+                other => panic!("unexpected npm args: {other:?}"),
+            },
+        );
+
+        assert_eq!(result.status, AsyncStatus::Ready);
+        assert_eq!(result.command.preview, "npm cache clean --force");
+    }
+
+    #[test]
+    fn run_npm_maintenance_removes_npx_cache_after_cleaning_npm_cache() {
+        let root = temp_dir("npm-cache");
+        let _guard = TempDirGuard(root.clone());
+        let npx = root.join("_npx");
+        fs::create_dir_all(&npx).expect("create npx cache");
+        write_file(&npx.join("tool/package.json"), b"{}");
+
+        let result = run_npm_maintenance_with_runner_and_cache_cleaner(
+            NpmMaintenanceOperation::CleanCache,
+            &|program, args, timeout| match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                ["config", "get", "cache"] => Ok(fake_run(
+                    program,
+                    &["config", "get", "cache"],
+                    timeout,
+                    &format!("{}\n", root.display()),
+                )),
+                ["cache", "clean", "--force"] => Ok(fake_run(
+                    program,
+                    &["cache", "clean", "--force"],
+                    timeout,
+                    "npm cache cleaned",
+                )),
+                other => panic!("unexpected npm args: {other:?}"),
+            },
+            &remove_dir_all_if_exists,
+        );
+
+        assert_eq!(result.status, AsyncStatus::Ready);
+        assert!(!npx.exists());
+    }
+
+    #[test]
+    fn run_npm_maintenance_reports_failed_uninstall() {
+        let result = run_npm_maintenance_with_runner(
+            NpmMaintenanceOperation::UninstallGlobalPackage {
+                package_name: "missing-tool".to_string(),
+            },
+            &|program, args, timeout| {
+                assert_eq!(program, "npm");
+                assert_eq!(
+                    args,
+                    &[
+                        "uninstall".to_string(),
+                        "-g".to_string(),
+                        "missing-tool".to_string()
+                    ]
+                );
+                Ok(fake_failed_run(
+                    "npm",
+                    &["uninstall", "-g", "missing-tool"],
+                    timeout,
+                    "not installed",
+                ))
+            },
+        );
+
+        assert_eq!(result.status, AsyncStatus::Failed);
+        assert_eq!(result.stderr, "not installed");
+        assert!(result.failure.is_some());
     }
 
     #[test]

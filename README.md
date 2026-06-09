@@ -2,7 +2,7 @@
 
 一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip 和 Cargo 的包、缓存/仓库占用情况，以及 Homebrew、Maven、pip 的维护信号。
 
-当前 v1 目标是 **read-only + safe actions**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；不直接执行卸载、清缓存、批量删除等破坏性操作。
+当前 v1 目标是 **read-only + safe actions**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；npm 支持确认后执行 allowlisted 的全局包卸载和缓存清理，其余管理器不直接执行卸载、清缓存、批量删除等破坏性操作。
 
 ## 功能
 
@@ -23,6 +23,7 @@
 - 复制 Maven/pip 维护命令，如 `mvn dependency:tree -Dincludes=...`、`python3 -m pip show <pkg>`、`python3 -m pip install --upgrade <pkg>`。
 - 复制 Cargo 维护命令，如 `cargo install <crate>`、`cargo uninstall <crate>`。
 - 复制 nvm 切换命令，如 `nvm use <version>`。
+- 确认后执行 npm 维护操作：`npm uninstall -g <pkg>`、`npm cache clean --force`。
 - 打开 cache / store / package 目录。
 - 展示扫描失败、缺少二进制、权限问题、命令超时等诊断信息。
 
@@ -31,7 +32,8 @@
 - 主要面向 macOS 自用。
 - 不做后台自动刷新。启动时扫描一次，之后手动刷新。
 - 不做 per-package size，只展示 manager/path 级别总大小。
-- 不直接执行危险操作：
+- npm 只允许确认后执行两类维护操作：卸载指定全局包、清理 npm cache。
+- 其他管理器不直接执行危险操作：
   - 不直接 uninstall 全局包
   - 不直接 clean cache/store
   - 不直接执行 `brew cleanup`
@@ -111,6 +113,10 @@ npm ls -g --depth=0 --json
 npm config get cache
 npm root -g
 
+npm maintenance actions:
+npm uninstall -g <pkg>
+npm cache clean --force
+
 pnpm --version
 pnpm list -g --depth=0 --json
 pnpm store path
@@ -186,12 +192,13 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 - 读取本机路径元数据并统计大小。
 - 复制文本到剪贴板。
 - 用系统 opener 打开本机目录。
+- 确认后执行 allowlisted npm 维护命令：`npm uninstall -g <pkg>`、`npm cache clean --force`。
 
 当前不允许的行为：
 
 - 自动删除文件。
-- 自动清理 cache/store。
-- 自动卸载全局包。
+- 自动清理非 npm cache/store。
+- 自动卸载非 npm 全局包。
 - 自动修改 npm/pnpm/yarn 配置。
 - 自动执行 `nvm install`、`nvm use`、`nvm uninstall`。
 - 自动执行 Homebrew upgrade、cleanup、uninstall。
@@ -199,7 +206,7 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 - 自动执行 pip uninstall、upgrade、cache purge。
 - 自动执行 Cargo install、uninstall、update、search、cache 命令。
 
-以后如果加入执行能力，应优先做“生成命令并复制”，再考虑带确认弹窗、操作日志和 dry-run 的直接执行。
+以后如果为其他管理器加入执行能力，应优先做“生成命令并复制”，再考虑带确认、操作日志和 dry-run 的直接执行。
 
 ## 项目结构
 
@@ -234,6 +241,7 @@ pnpm test
 
 - npm 无 dependencies 时返回空列表
 - npm 正常解析和排序
+- npm allowlisted 维护命令的结构化执行、scoped package 卸载和失败反馈
 - pnpm array 输出解析
 - Yarn Classic JSON tree 输出解析
 - Yarn Classic human fallback
@@ -253,8 +261,7 @@ pnpm test
 
 ## 后续候选
 
-- 复制 `npm uninstall -g <pkg>` / `pnpm remove -g <pkg>` / `yarn global remove <pkg>` 命令。
-- 复制 cache clean 命令，但不直接执行。
+- 为 pnpm/Yarn/Bun/uv 等管理器补齐带确认的维护操作。
 - Homebrew services / doctor / Brewfile。
 - Rust project dependency discovery / rustup toolchain inventory。
 - 增加操作日志。

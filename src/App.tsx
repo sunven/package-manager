@@ -1,11 +1,13 @@
 import { useEffect } from "react";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { ManagerTabs } from "./components/ManagerTabs";
+import { MaintenanceConfirmationBanner } from "./components/MaintenanceConfirmationBanner";
 import { MessageBanner } from "./components/MessageBanner";
 import { PackageTable } from "./components/PackageTable";
 import { PathPanel } from "./components/PathPanel";
 import { Shell } from "./components/Shell";
 import { Panel } from "./components/ui";
+import { Toaster } from "../components/ui/sonner";
 
 export function App() {
   const state = usePackageManagers();
@@ -31,6 +33,13 @@ export function App() {
       totalBytes={state.overview.totalBytes}
     >
       <MessageBanner homeDirectory={state.homeDirectory} message={state.uiMessage} />
+      <MaintenanceConfirmationBanner
+        confirmation={state.maintenanceConfirmation}
+        onCancel={actions.cancelMaintenance}
+        onConfirm={() => void actions.confirmMaintenance()}
+        pending={state.maintenancePending}
+        result={state.maintenanceResult}
+      />
       <ManagerTabs
         managerSnapshots={state.managerSnapshots}
         onSelect={actions.selectManager}
@@ -52,8 +61,10 @@ export function App() {
             onOpenPath={(path) => void actions.openPath(path)}
             onOpenPackage={(index) => void actions.openPackage(index)}
             onPipFilter={actions.setPipFilter}
+            onRequestPackageUninstall={actions.requestPackageUninstall}
             onSelectPackage={actions.selectPackage}
             onToggleActions={actions.togglePackageActions}
+            pendingMaintenance={state.maintenancePending}
             scanning={scanning}
             selectedHomebrewFilter={state.selectedHomebrewFilter}
             selectedMavenFilter={state.selectedMavenFilter}
@@ -68,12 +79,15 @@ export function App() {
             manager={currentManager}
             onCopyCleanupCommand={() => void actions.copyCleanupCommand()}
             onCopyPath={(path) => void actions.copyPath(path)}
+            onRequestCacheClean={actions.requestCacheClean}
             onOpenPath={(path) => void actions.openPath(path)}
+            pendingMaintenance={state.maintenancePending}
             pendingHomebrewCleanup={state.pendingHomebrewCleanup}
             scanning={scanning}
           />
         </aside>
       </main>
+      <Toaster />
     </Shell>
   );
 }

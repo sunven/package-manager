@@ -256,6 +256,27 @@ pub(crate) struct PipOutdatedPreview {
     pub(crate) failure: Option<CommandFailure>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum NpmMaintenanceOperation {
+    UninstallGlobalPackage {
+        #[serde(rename = "packageName")]
+        package_name: String,
+    },
+    CleanCache,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MaintenanceRunPreview {
+    pub(crate) status: AsyncStatus,
+    pub(crate) command: CommandEnvelope,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) message: Option<String>,
+    pub(crate) failure: Option<CommandFailure>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DockerResourceHealth {
