@@ -67,7 +67,6 @@ export function App() {
             homeDirectory={state.homeDirectory}
             manager={currentManager}
             onCopyCleanupCommand={() => void actions.copyCleanupCommand()}
-            onCopyCommand={(payload) => void actions.copyCommand(payload)}
             onCopyPath={(path) => void actions.copyPath(path)}
             onOpenPath={(path) => void actions.openPath(path)}
             pendingHomebrewCleanup={state.pendingHomebrewCleanup}

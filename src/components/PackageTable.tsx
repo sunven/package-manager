@@ -180,11 +180,11 @@ function GlobalModulesBar({
     <div className="flex min-w-0 flex-wrap items-center gap-2 border-b px-4 py-3">
       <span className="shrink-0 text-sm font-medium text-foreground">{label}</span>
       {sizeValue ? <span className="shrink-0 text-sm text-muted-foreground">{sizeValue}</span> : <StatusBadge status={path.size.status} />}
-      <code className="min-w-48 flex-1 truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
-      <IconButton label={`复制${label}路径`} onClick={() => onCopyPath(path.path)}>
+      <code className="h-6 min-w-48 flex-1 truncate rounded-md bg-muted px-2 text-xs leading-6 text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
+      <IconButton className="size-6" label={`复制${label}路径`} onClick={() => onCopyPath(path.path)}>
         <Copy />
       </IconButton>
-      <IconButton disabled={path.size.status === "Missing"} label={`打开${label}路径`} onClick={() => onOpenPath(path.path)}>
+      <IconButton className="size-6" disabled={path.size.status === "Missing"} label={`打开${label}路径`} onClick={() => onOpenPath(path.path)}>
         <ExternalLink />
       </IconButton>
     </div>
