@@ -39,7 +39,7 @@ export function PackageActions({
   pendingUninstall: boolean;
   pkg: PackageRow;
 }) {
-  if (managerId === "Npm") {
+  if (managerId === "Npm" || managerId === "Pnpm") {
     return (
       <TooltipProvider>
         <div className="flex justify-end gap-1">

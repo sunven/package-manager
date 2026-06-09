@@ -198,6 +198,15 @@ export type NpmMaintenanceOperation =
       kind: "cleanCache";
     };
 
+export type PnpmMaintenanceOperation =
+  | {
+      kind: "uninstallGlobalPackage";
+      packageName: string;
+    }
+  | {
+      kind: "storePrune";
+    };
+
 export interface MaintenanceRunPreview {
   status: AsyncStatus;
   command: CommandEnvelope;

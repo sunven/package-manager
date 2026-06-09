@@ -266,6 +266,16 @@ pub(crate) enum NpmMaintenanceOperation {
     CleanCache,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum PnpmMaintenanceOperation {
+    UninstallGlobalPackage {
+        #[serde(rename = "packageName")]
+        package_name: String,
+    },
+    StorePrune,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MaintenanceRunPreview {

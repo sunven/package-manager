@@ -1,4 +1,4 @@
-import type { AsyncStatus, PackageSignal } from "./types";
+import type { AsyncStatus, ManagerId, PackageSignal } from "./types";
 
 export interface PackageRowLike {
   name: string;
@@ -22,19 +22,33 @@ export interface PipSnapshotLike {
   pip: PipHealthLike | null;
 }
 
-export type NpmMaintenanceRequest =
+export type MaintenanceRequest =
   | {
       kind: "uninstallGlobalPackage";
+      managerId: "Npm";
+      packageIndex: number;
+      packageName: string;
+    }
+  | {
+      kind: "uninstallGlobalPackage";
+      managerId: "Pnpm";
       packageIndex: number;
       packageName: string;
     }
   | {
       kind: "cleanCache";
+      managerId: "Npm";
+    }
+  | {
+      kind: "storePrune";
+      managerId: "Pnpm";
     };
 
+export type NpmMaintenanceRequest = Extract<MaintenanceRequest, { managerId: "Npm" }>;
+
 export interface MaintenanceUiState {
-  confirmation: NpmMaintenanceRequest | null;
-  pending: NpmMaintenanceRequest | null;
+  confirmation: MaintenanceRequest | null;
+  pending: MaintenanceRequest | null;
   result?: MaintenanceResult | null;
 }
 
@@ -73,11 +87,21 @@ export function requestNpmPackageUninstall(
   packageIndex: number,
   packageName: string,
 ): MaintenanceUiState {
+  return requestPackageUninstall(state, "Npm", packageIndex, packageName);
+}
+
+export function requestPackageUninstall(
+  state: MaintenanceUiState,
+  managerId: Extract<ManagerId, "Npm" | "Pnpm">,
+  packageIndex: number,
+  packageName: string,
+): MaintenanceUiState {
   if (state.pending) return state;
   return {
     ...state,
     confirmation: {
       kind: "uninstallGlobalPackage",
+      managerId,
       packageIndex,
       packageName,
     },
@@ -89,7 +113,16 @@ export function requestNpmCacheClean(state: MaintenanceUiState): MaintenanceUiSt
   if (state.pending) return state;
   return {
     ...state,
-    confirmation: { kind: "cleanCache" },
+    confirmation: { kind: "cleanCache", managerId: "Npm" },
+    result: null,
+  };
+}
+
+export function requestPnpmStorePrune(state: MaintenanceUiState): MaintenanceUiState {
+  if (state.pending) return state;
+  return {
+    ...state,
+    confirmation: { kind: "storePrune", managerId: "Pnpm" },
     result: null,
   };
 }

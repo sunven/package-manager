@@ -1,7 +1,7 @@
 import { Copy, ExternalLink, Info, Trash2 } from "lucide-react";
 import { pathKindLabels } from "../constants";
 import type { HomebrewMaintenance, ManagerSnapshot, PathInfo } from "../types";
-import type { NpmMaintenanceRequest } from "../state";
+import type { MaintenanceRequest } from "../state";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel, trimTail } from "../utils/format";
 import { EmptyState, IconButton, StatusBadge, TextButton } from "./ui";
 import { Button } from "../../components/ui/button";
@@ -26,6 +26,7 @@ export function PathPanel({
   onCopyCleanupCommand,
   onCopyPath,
   onRequestCacheClean,
+  onRequestStorePrune,
   onOpenPath,
   pendingMaintenance,
   pendingHomebrewCleanup,
@@ -36,8 +37,9 @@ export function PathPanel({
   onCopyCleanupCommand: () => void;
   onCopyPath: (path: string) => void;
   onRequestCacheClean: () => void;
+  onRequestStorePrune: () => void;
   onOpenPath: (path: string) => void;
-  pendingMaintenance: NpmMaintenanceRequest | null;
+  pendingMaintenance: MaintenanceRequest | null;
   pendingHomebrewCleanup: boolean;
   scanning: boolean;
 }) {
@@ -65,6 +67,7 @@ export function PathPanel({
               onCopyPath={onCopyPath}
               onOpenPath={onOpenPath}
               onRequestCacheClean={onRequestCacheClean}
+              onRequestStorePrune={onRequestStorePrune}
               pathNotes={manager.id === "Npm" ? npmPathNotes : undefined}
               paths={inlinePaths}
               pendingMaintenance={pendingMaintenance}
@@ -119,6 +122,7 @@ function InlinePathCard({
   onCopyPath,
   onOpenPath,
   onRequestCacheClean,
+  onRequestStorePrune,
   pathNotes,
   paths,
   pendingMaintenance,
@@ -128,9 +132,10 @@ function InlinePathCard({
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
   onRequestCacheClean: () => void;
+  onRequestStorePrune: () => void;
   pathNotes?: Partial<Record<PathInfo["kind"], string>>;
   paths: PathInfo[];
-  pendingMaintenance: NpmMaintenanceRequest | null;
+  pendingMaintenance: MaintenanceRequest | null;
 }) {
   const itemCount = paths.length;
   const gridClassName =
@@ -147,6 +152,7 @@ function InlinePathCard({
           onCopyPath={onCopyPath}
           onOpenPath={onOpenPath}
           onRequestCacheClean={onRequestCacheClean}
+          onRequestStorePrune={onRequestStorePrune}
           path={path}
           pendingMaintenance={pendingMaintenance}
         />
@@ -163,6 +169,7 @@ function InlinePathCell({
   onCopyPath,
   onOpenPath,
   onRequestCacheClean,
+  onRequestStorePrune,
   path,
   pendingMaintenance,
 }: {
@@ -173,14 +180,17 @@ function InlinePathCell({
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
   onRequestCacheClean: () => void;
+  onRequestStorePrune: () => void;
   path: PathInfo;
-  pendingMaintenance: NpmMaintenanceRequest | null;
+  pendingMaintenance: MaintenanceRequest | null;
 }) {
   const size = path.size;
   const sizeValue = size.status === "Ready" ? (size.human ?? "0 B") : null;
   const detail = size.status === "Pending" ? "等待占用扫描" : `${size.files} 文件`;
   const canCleanNpmCache = managerId === "Npm" && path.kind === "Cache";
+  const canPrunePnpmStore = managerId === "Pnpm" && path.kind === "Store";
   const pendingCacheClean = pendingMaintenance?.kind === "cleanCache";
+  const pendingStorePrune = pendingMaintenance?.kind === "storePrune";
 
   return (
     <div className={`${className} rounded-md border bg-background p-2`}>
@@ -205,6 +215,11 @@ function InlinePathCell({
         </IconButton>
         {canCleanNpmCache ? (
           <IconButton className="size-6 shrink-0" disabled={pendingCacheClean} label="清理 npm 缓存" onClick={onRequestCacheClean}>
+            <Trash2 />
+          </IconButton>
+        ) : null}
+        {canPrunePnpmStore ? (
+          <IconButton className="size-6 shrink-0" disabled={pendingStorePrune} label="清理 pnpm store" onClick={onRequestStorePrune}>
             <Trash2 />
           </IconButton>
         ) : null}

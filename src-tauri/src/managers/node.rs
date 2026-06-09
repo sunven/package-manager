@@ -347,6 +347,54 @@ where
     run_npm_maintenance_with_runner_and_cache_cleaner(operation, runner, &remove_dir_all_if_exists)
 }
 
+pub(crate) fn run_pnpm_maintenance_with_runner<F>(
+    operation: PnpmMaintenanceOperation,
+    runner: &F,
+) -> MaintenanceRunPreview
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let args = match operation {
+        PnpmMaintenanceOperation::UninstallGlobalPackage { package_name } => {
+            vec!["remove".to_string(), "--global".to_string(), package_name]
+        }
+        PnpmMaintenanceOperation::StorePrune => {
+            vec!["store".to_string(), "prune".to_string()]
+        }
+    };
+    let command = envelope_owned("pnpm", args.clone(), 30_000);
+
+    match runner("pnpm", &args, Duration::from_secs(30)) {
+        Ok(run) if run.exit_code == Some(0) => MaintenanceRunPreview {
+            status: AsyncStatus::Ready,
+            command,
+            stdout: run.stdout,
+            stderr: run.stderr,
+            message: None,
+            failure: None,
+        },
+        Ok(run) => {
+            let failure = command_failure(FailureKind::CommandFailed, "pnpm maintenance failed", run);
+            MaintenanceRunPreview {
+                status: AsyncStatus::Failed,
+                command,
+                stdout: failure.stdout.clone(),
+                stderr: failure.stderr.clone(),
+                message: Some(failure.message.clone()),
+                failure: Some(failure),
+            }
+        }
+        Err(failure) => MaintenanceRunPreview {
+            status: AsyncStatus::Failed,
+            command,
+            stdout: failure.stdout.clone(),
+            stderr: failure.stderr.clone(),
+            message: Some(failure.message.clone()),
+            failure: Some(failure),
+        },
+    }
+}
+
 pub(crate) fn run_npm_maintenance_with_runner_and_cache_cleaner<F, C>(
     operation: NpmMaintenanceOperation,
     runner: &F,

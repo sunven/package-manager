@@ -80,6 +80,7 @@ export function App() {
             onCopyCleanupCommand={() => void actions.copyCleanupCommand()}
             onCopyPath={(path) => void actions.copyPath(path)}
             onRequestCacheClean={actions.requestCacheClean}
+            onRequestStorePrune={actions.requestStorePrune}
             onOpenPath={(path) => void actions.openPath(path)}
             pendingMaintenance={state.maintenancePending}
             pendingHomebrewCleanup={state.pendingHomebrewCleanup}

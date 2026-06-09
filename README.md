@@ -2,7 +2,7 @@
 
 一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip 和 Cargo 的包、缓存/仓库占用情况，以及 Homebrew、Maven、pip 的维护信号。
 
-当前 v1 目标是 **read-only + safe actions**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；npm 支持确认后执行 allowlisted 的全局包卸载和缓存清理，其余管理器不直接执行卸载、清缓存、批量删除等破坏性操作。
+当前 v1 目标是 **read-only + safe actions**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；npm 和 pnpm 支持确认后执行 allowlisted 的维护操作，其余管理器不直接执行卸载、清缓存、批量删除等破坏性操作。
 
 ## 功能
 
@@ -24,6 +24,7 @@
 - 复制 Cargo 维护命令，如 `cargo install <crate>`、`cargo uninstall <crate>`。
 - 复制 nvm 切换命令，如 `nvm use <version>`。
 - 确认后执行 npm 维护操作：`npm uninstall -g <pkg>`、`npm cache clean --force`。
+- 确认后执行 pnpm 维护操作：`pnpm remove --global <pkg>`、`pnpm store prune`。
 - 打开 cache / store / package 目录。
 - 展示扫描失败、缺少二进制、权限问题、命令超时等诊断信息。
 
@@ -33,6 +34,7 @@
 - 不做后台自动刷新。启动时扫描一次，之后手动刷新。
 - 不做 per-package size，只展示 manager/path 级别总大小。
 - npm 只允许确认后执行两类维护操作：卸载指定全局包、清理 npm cache。
+- pnpm 只允许确认后执行两类维护操作：卸载指定全局包、prune 不再引用的 pnpm store 内容。
 - 其他管理器不直接执行危险操作：
   - 不直接 uninstall 全局包
   - 不直接 clean cache/store
@@ -122,6 +124,10 @@ pnpm list -g --depth=0 --json
 pnpm store path
 pnpm root -g
 
+pnpm maintenance actions:
+pnpm remove --global <pkg>
+pnpm store prune
+
 yarn --version
 yarn global list --json
 yarn cache dir
@@ -193,12 +199,13 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 - 复制文本到剪贴板。
 - 用系统 opener 打开本机目录。
 - 确认后执行 allowlisted npm 维护命令：`npm uninstall -g <pkg>`、`npm cache clean --force`。
+- 确认后执行 allowlisted pnpm 维护命令：`pnpm remove --global <pkg>`、`pnpm store prune`。
 
 当前不允许的行为：
 
 - 自动删除文件。
-- 自动清理非 npm cache/store。
-- 自动卸载非 npm 全局包。
+- 自动清理非 npm/pnpm cache/store。
+- 自动卸载非 npm/pnpm 全局包。
 - 自动修改 npm/pnpm/yarn 配置。
 - 自动执行 `nvm install`、`nvm use`、`nvm uninstall`。
 - 自动执行 Homebrew upgrade、cleanup、uninstall。
@@ -243,6 +250,7 @@ pnpm test
 - npm 正常解析和排序
 - npm allowlisted 维护命令的结构化执行、scoped package 卸载和失败反馈
 - pnpm array 输出解析
+- pnpm allowlisted 维护命令的结构化执行、scoped package 卸载和 store prune
 - Yarn Classic JSON tree 输出解析
 - Yarn Classic human fallback
 - scoped package 版本拆分

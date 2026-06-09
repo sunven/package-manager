@@ -10,7 +10,7 @@ import type {
   PipEnvironmentHealth,
   PipFilter,
 } from "../types";
-import type { NpmMaintenanceRequest } from "../state";
+import type { MaintenanceRequest } from "../state";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel } from "../utils/format";
 import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, type IndexedPackage } from "../utils/filters";
 import { cx } from "../utils/classNames";
@@ -35,7 +35,7 @@ interface PackageTableProps {
   onRequestPackageUninstall: (index: number) => void;
   onSelectPackage: (index: number) => void;
   onToggleActions: (index: number) => void;
-  pendingMaintenance: NpmMaintenanceRequest | null;
+  pendingMaintenance: MaintenanceRequest | null;
   scanning: boolean;
   selectedHomebrewFilter: HomebrewFilter;
   selectedMavenFilter: MavenFilter;
@@ -121,10 +121,11 @@ export function PackageTable(props: PackageTableProps) {
     );
   }
 
-  const showSourceColumn = manager.id !== "Npm";
-  const showPathColumn = manager.id !== "Npm";
-  const heading = manager.id === "Npm" ? ["名称", "版本", "操作"] : ["名称", "版本", "来源", "路径", "操作"];
-  const packageNameClassName = manager.id === "Npm" ? "min-w-24 max-w-35 truncate font-medium" : "min-w-45 max-w-70 truncate font-medium";
+  const usesCompactTable = manager.id === "Npm" || manager.id === "Pnpm";
+  const showSourceColumn = !usesCompactTable;
+  const showPathColumn = !usesCompactTable;
+  const heading = usesCompactTable ? ["名称", "版本", "操作"] : ["名称", "版本", "来源", "路径", "操作"];
+  const packageNameClassName = usesCompactTable ? "min-w-24 max-w-35 truncate font-medium" : "min-w-45 max-w-70 truncate font-medium";
 
   return (
     <>
@@ -146,7 +147,7 @@ export function PackageTable(props: PackageTableProps) {
             <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
             {showSourceColumn ? <TableCell className="max-w-52 truncate text-muted-foreground">{shortenPath(formatHomePathsInText(pkg.source, homeDirectory))}</TableCell> : null}
             {showPathColumn ? <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ? formatHomePath(pkg.path, homeDirectory) : "无"}</TableCell> : null}
-            <TableCell className={manager.id === "Npm" ? "w-32 text-right" : "w-24 text-right"}>
+            <TableCell className={usesCompactTable ? "w-32 text-right" : "w-24 text-right"}>
               <PackageActions
                 index={index}
                 managerId={manager.id}
@@ -156,7 +157,7 @@ export function PackageTable(props: PackageTableProps) {
                 onOpenPackage={props.onOpenPackage}
                 onRequestUninstall={props.onRequestPackageUninstall}
                 onToggle={props.onToggleActions}
-                pendingUninstall={isPendingUninstall(props.pendingMaintenance, index, pkg.name)}
+                pendingUninstall={isPendingUninstall(props.pendingMaintenance, manager.id, index, pkg.name)}
                 pkg={pkg}
               />
             </TableCell>
@@ -252,7 +253,7 @@ function SpecializedTable({
               onOpenPackage={onOpenPackage}
               onRequestUninstall={onRequestPackageUninstall}
               onToggle={onToggleActions}
-              pendingUninstall={isPendingUninstall(pendingMaintenance, index, pkg.name)}
+              pendingUninstall={isPendingUninstall(pendingMaintenance, manager?.id, index, pkg.name)}
               pkg={pkg}
             />
           </TableCell>
@@ -262,8 +263,8 @@ function SpecializedTable({
   );
 }
 
-function isPendingUninstall(pending: NpmMaintenanceRequest | null, index: number, packageName: string) {
-  return pending?.kind === "uninstallGlobalPackage" && pending.packageIndex === index && pending.packageName === packageName;
+function isPendingUninstall(pending: MaintenanceRequest | null, managerId: ManagerSnapshot["id"] | undefined, index: number, packageName: string) {
+  return pending?.kind === "uninstallGlobalPackage" && pending.managerId === managerId && pending.packageIndex === index && pending.packageName === packageName;
 }
 
 function selectRowWithKeyboard(event: React.KeyboardEvent, select: () => void) {

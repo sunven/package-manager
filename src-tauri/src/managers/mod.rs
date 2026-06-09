@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub(crate) use homebrew::hydrate_homebrew_cleanup_with_runner;
-pub(crate) use node::run_npm_maintenance_with_runner;
+pub(crate) use node::{run_npm_maintenance_with_runner, run_pnpm_maintenance_with_runner};
 pub(crate) use pip::hydrate_pip_outdated_with_runner;
 
 #[cfg(test)]
@@ -490,6 +490,120 @@ info "alpha@1.0.0" has binaries:
         assert_eq!(result.status, AsyncStatus::Failed);
         assert_eq!(result.stderr, "not installed");
         assert!(result.failure.is_some());
+    }
+
+    #[test]
+    fn run_pnpm_maintenance_uninstalls_scoped_package_with_structured_args() {
+        let result = run_pnpm_maintenance_with_runner(
+            PnpmMaintenanceOperation::UninstallGlobalPackage {
+                package_name: "@scope/tool".to_string(),
+            },
+            &|program, args, timeout| {
+                assert_eq!(program, "pnpm");
+                assert_eq!(
+                    args,
+                    &[
+                        "remove".to_string(),
+                        "--global".to_string(),
+                        "@scope/tool".to_string()
+                    ]
+                );
+                Ok(fake_run(
+                    program,
+                    &["remove", "--global", "@scope/tool"],
+                    timeout,
+                    "removed 1 package",
+                ))
+            },
+        );
+
+        assert_eq!(result.status, AsyncStatus::Ready);
+        assert_eq!(result.command.preview, "pnpm remove --global @scope/tool");
+    }
+
+    #[test]
+    fn run_pnpm_maintenance_prunes_store_with_structured_args() {
+        let result = run_pnpm_maintenance_with_runner(
+            PnpmMaintenanceOperation::StorePrune,
+            &|program, args, timeout| {
+                assert_eq!(program, "pnpm");
+                assert_eq!(args, &["store".to_string(), "prune".to_string()]);
+                Ok(fake_run(program, &["store", "prune"], timeout, "Removed 2 packages"))
+            },
+        );
+
+        assert_eq!(result.status, AsyncStatus::Ready);
+        assert_eq!(result.command.preview, "pnpm store prune");
+    }
+
+    #[test]
+    fn run_pnpm_maintenance_reports_failed_uninstall() {
+        let result = run_pnpm_maintenance_with_runner(
+            PnpmMaintenanceOperation::UninstallGlobalPackage {
+                package_name: "missing-tool".to_string(),
+            },
+            &|program, args, timeout| {
+                assert_eq!(program, "pnpm");
+                assert_eq!(
+                    args,
+                    &[
+                        "remove".to_string(),
+                        "--global".to_string(),
+                        "missing-tool".to_string()
+                    ]
+                );
+                Ok(fake_failed_run(
+                    "pnpm",
+                    &["remove", "--global", "missing-tool"],
+                    timeout,
+                    "not installed",
+                ))
+            },
+        );
+
+        assert_eq!(result.status, AsyncStatus::Failed);
+        assert_eq!(result.stderr, "not installed");
+        assert!(result.failure.is_some());
+    }
+
+    #[test]
+    fn run_pnpm_maintenance_reports_failed_store_prune() {
+        let result = run_pnpm_maintenance_with_runner(
+            PnpmMaintenanceOperation::StorePrune,
+            &|program, args, timeout| {
+                assert_eq!(program, "pnpm");
+                assert_eq!(args, &["store".to_string(), "prune".to_string()]);
+                Ok(fake_failed_run(
+                    "pnpm",
+                    &["store", "prune"],
+                    timeout,
+                    "store prune failed",
+                ))
+            },
+        );
+
+        assert_eq!(result.status, AsyncStatus::Failed);
+        assert_eq!(result.stderr, "store prune failed");
+        assert!(result.failure.is_some());
+    }
+
+    #[test]
+    fn pnpm_maintenance_operation_accepts_frontend_camel_case_payload() {
+        let uninstall: PnpmMaintenanceOperation = serde_json::from_str(
+            r#"{"kind":"uninstallGlobalPackage","packageName":"@scope/tool"}"#,
+        )
+        .expect("deserialize pnpm uninstall payload");
+        let store_prune: PnpmMaintenanceOperation =
+            serde_json::from_str(r#"{"kind":"storePrune"}"#)
+                .expect("deserialize pnpm store prune payload");
+
+        match uninstall {
+            PnpmMaintenanceOperation::UninstallGlobalPackage { package_name } => {
+                assert_eq!(package_name, "@scope/tool");
+            }
+            PnpmMaintenanceOperation::StorePrune => panic!("expected uninstall operation"),
+        }
+        assert!(matches!(store_prune, PnpmMaintenanceOperation::StorePrune));
     }
 
     #[test]

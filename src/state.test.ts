@@ -5,7 +5,9 @@ import {
   completeMaintenanceOperation,
   failMaintenanceOperation,
   requestNpmCacheClean,
+  requestPnpmStorePrune,
   requestNpmPackageUninstall,
+  requestPackageUninstall,
   shouldApplyHydrationResult,
   startConfirmedMaintenanceOperation,
   type MaintenanceUiState,
@@ -73,6 +75,7 @@ describe("npm maintenance operation state", () => {
     state = requestNpmPackageUninstall(state, 0, "@scope/tool");
     expect(state.confirmation).toEqual({
       kind: "uninstallGlobalPackage",
+      managerId: "Npm",
       packageIndex: 0,
       packageName: "@scope/tool",
     });
@@ -80,11 +83,13 @@ describe("npm maintenance operation state", () => {
     state = startConfirmedMaintenanceOperation(state);
     expect(state.pending).toEqual({
       kind: "uninstallGlobalPackage",
+      managerId: "Npm",
       packageIndex: 0,
       packageName: "@scope/tool",
     });
     expect(state.confirmation).toEqual({
       kind: "uninstallGlobalPackage",
+      managerId: "Npm",
       packageIndex: 0,
       packageName: "@scope/tool",
     });
@@ -92,6 +97,7 @@ describe("npm maintenance operation state", () => {
     state = startConfirmedMaintenanceOperation(state);
     expect(state.pending).toEqual({
       kind: "uninstallGlobalPackage",
+      managerId: "Npm",
       packageIndex: 0,
       packageName: "@scope/tool",
     });
@@ -101,14 +107,14 @@ describe("npm maintenance operation state", () => {
     let state: MaintenanceUiState = { confirmation: null, pending: null };
 
     state = requestNpmCacheClean(state);
-    expect(state.confirmation).toEqual({ kind: "cleanCache" });
+    expect(state.confirmation).toEqual({ kind: "cleanCache", managerId: "Npm" });
 
     state = cancelMaintenanceConfirmation(state);
     expect(state.confirmation).toBeNull();
 
     state = requestNpmCacheClean(state);
     state = startConfirmedMaintenanceOperation(state);
-    expect(state.pending).toEqual({ kind: "cleanCache" });
+    expect(state.pending).toEqual({ kind: "cleanCache", managerId: "Npm" });
 
     state = completeMaintenanceOperation(state);
     expect(state).toEqual({
@@ -128,11 +134,64 @@ describe("npm maintenance operation state", () => {
     expect(state).toEqual({
       confirmation: {
         kind: "uninstallGlobalPackage",
+        managerId: "Npm",
         packageIndex: 1,
         packageName: "missing-tool",
       },
       pending: null,
       result: { tone: "bad", message: "not installed" },
+    });
+  });
+});
+
+describe("package manager maintenance operation state", () => {
+  it("confirms a pnpm package uninstall once and prevents duplicate starts while pending", () => {
+    let state: MaintenanceUiState = { confirmation: null, pending: null };
+
+    state = requestPackageUninstall(state, "Pnpm", 0, "@scope/tool");
+    expect(state.confirmation).toEqual({
+      kind: "uninstallGlobalPackage",
+      managerId: "Pnpm",
+      packageIndex: 0,
+      packageName: "@scope/tool",
+    });
+
+    state = startConfirmedMaintenanceOperation(state);
+    expect(state.pending).toEqual({
+      kind: "uninstallGlobalPackage",
+      managerId: "Pnpm",
+      packageIndex: 0,
+      packageName: "@scope/tool",
+    });
+
+    state = requestPackageUninstall(state, "Pnpm", 1, "other-tool");
+    expect(state.confirmation).toEqual({
+      kind: "uninstallGlobalPackage",
+      managerId: "Pnpm",
+      packageIndex: 0,
+      packageName: "@scope/tool",
+    });
+  });
+
+  it("confirms pnpm store prune and prevents replacement while pending", () => {
+    let state: MaintenanceUiState = { confirmation: null, pending: null };
+
+    state = requestPnpmStorePrune(state);
+    expect(state.confirmation).toEqual({
+      kind: "storePrune",
+      managerId: "Pnpm",
+    });
+
+    state = startConfirmedMaintenanceOperation(state);
+    state = requestPnpmStorePrune(state);
+
+    expect(state.pending).toEqual({
+      kind: "storePrune",
+      managerId: "Pnpm",
+    });
+    expect(state.confirmation).toEqual({
+      kind: "storePrune",
+      managerId: "Pnpm",
     });
   });
 });

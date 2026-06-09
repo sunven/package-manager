@@ -11,11 +11,12 @@ import {
   failMaintenanceOperation,
   finishMaintenanceOperation,
   requestNpmCacheClean,
-  requestNpmPackageUninstall,
+  requestPnpmStorePrune,
+  requestPackageUninstall as requestMaintenancePackageUninstall,
   shouldApplyHydrationResult,
   startConfirmedMaintenanceOperation,
+  type MaintenanceRequest,
   type MaintenanceUiState,
-  type NpmMaintenanceRequest,
 } from "../state";
 import { managerOrder } from "../constants";
 import type {
@@ -31,6 +32,7 @@ import type {
   PackageRow,
   PipFilter,
   PipOutdatedPreview,
+  PnpmMaintenanceOperation,
   UiMessage,
 } from "../types";
 import {
@@ -73,6 +75,7 @@ export interface PackageManagerActions {
   copyCleanupCommand: () => Promise<void>;
   requestPackageUninstall: (index: number) => void;
   requestCacheClean: () => void;
+  requestStorePrune: () => void;
   cancelMaintenance: () => void;
   confirmMaintenance: () => Promise<void>;
   copyPackageAction: (index: number, actionIndex: number) => Promise<void>;
@@ -537,11 +540,12 @@ export function usePackageManagers() {
 
   const requestPackageUninstall = useCallback(
     (index: number) => {
-      if (selectedManagerRef.current !== "Npm") return;
+      const managerId = selectedManagerRef.current;
+      if (managerId !== "Npm" && managerId !== "Pnpm") return;
       const pkg = packageAt(index);
       if (!pkg) return;
       setOpenPackageActionMenuIndex(null);
-      updateMaintenanceState((state) => requestNpmPackageUninstall(state, index, pkg.name));
+      updateMaintenanceState((state) => requestMaintenancePackageUninstall(state, managerId, index, pkg.name));
     },
     [packageAt, updateMaintenanceState],
   );
@@ -549,6 +553,11 @@ export function usePackageManagers() {
   const requestCacheCleanAction = useCallback(() => {
     if (selectedManagerRef.current !== "Npm") return;
     updateMaintenanceState(requestNpmCacheClean);
+  }, [updateMaintenanceState]);
+
+  const requestStorePruneAction = useCallback(() => {
+    if (selectedManagerRef.current !== "Pnpm") return;
+    updateMaintenanceState(requestPnpmStorePrune);
   }, [updateMaintenanceState]);
 
   const cancelMaintenance = useCallback(() => {
@@ -564,14 +573,14 @@ export function usePackageManagers() {
     setMaintenanceState(started);
 
     try {
-      const preview = await invoke<MaintenanceRunPreview>("run_npm_maintenance", {
-        operation: npmMaintenanceOperation(request),
-      });
+      const commandName = request.managerId === "Pnpm" ? "run_pnpm_maintenance" : "run_npm_maintenance";
+      const operation = request.managerId === "Pnpm" ? pnpmMaintenanceOperation(request) : npmMaintenanceOperation(request);
+      const preview = await invoke<MaintenanceRunPreview>(commandName, { operation });
       if (preview.status !== "Ready") {
         throw new Error(maintenanceFailureMessage(preview));
       }
 
-      await refresh("Npm");
+      await refresh(request.managerId);
       updateMaintenanceState(completeMaintenanceOperation);
       toast.success(maintenanceSuccessTitle(request), {
         description: preview.command.preview,
@@ -599,6 +608,7 @@ export function usePackageManagers() {
     copyCleanupCommand,
     requestPackageUninstall,
     requestCacheClean: requestCacheCleanAction,
+    requestStorePrune: requestStorePruneAction,
     cancelMaintenance,
     confirmMaintenance,
     copyPackageAction,
@@ -645,7 +655,7 @@ export function usePackageManagers() {
   };
 }
 
-function npmMaintenanceOperation(request: NpmMaintenanceRequest): NpmMaintenanceOperation {
+function npmMaintenanceOperation(request: Extract<MaintenanceRequest, { managerId: "Npm" }>): NpmMaintenanceOperation {
   if (request.kind === "cleanCache") return { kind: "cleanCache" };
   return {
     kind: "uninstallGlobalPackage",
@@ -653,12 +663,24 @@ function npmMaintenanceOperation(request: NpmMaintenanceRequest): NpmMaintenance
   };
 }
 
-function maintenanceSuccessTitle(request: NpmMaintenanceRequest) {
-  return request.kind === "cleanCache" ? "npm 缓存已清理" : "npm 全局包已卸载";
+function pnpmMaintenanceOperation(request: Extract<MaintenanceRequest, { managerId: "Pnpm" }>): PnpmMaintenanceOperation {
+  if (request.kind === "storePrune") return { kind: "storePrune" };
+  return {
+    kind: "uninstallGlobalPackage",
+    packageName: request.packageName,
+  };
 }
 
-function maintenanceFailureTitle(request: NpmMaintenanceRequest) {
-  return request.kind === "cleanCache" ? "npm 缓存清理失败" : "npm 全局包卸载失败";
+function maintenanceSuccessTitle(request: MaintenanceRequest) {
+  if (request.kind === "cleanCache") return "npm 缓存已清理";
+  if (request.kind === "storePrune") return "pnpm store 已清理";
+  return request.managerId === "Pnpm" ? "pnpm 全局包已卸载" : "npm 全局包已卸载";
+}
+
+function maintenanceFailureTitle(request: MaintenanceRequest) {
+  if (request.kind === "cleanCache") return "npm 缓存清理失败";
+  if (request.kind === "storePrune") return "pnpm store 清理失败";
+  return request.managerId === "Pnpm" ? "pnpm 全局包卸载失败" : "npm 全局包卸载失败";
 }
 
 function maintenanceFailureMessage(preview: MaintenanceRunPreview) {
