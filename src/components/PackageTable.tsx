@@ -121,7 +121,7 @@ export function PackageTable(props: PackageTableProps) {
     );
   }
 
-  const usesCompactTable = manager.id === "Npm" || manager.id === "Pnpm";
+  const usesCompactTable = manager.id === "Npm" || manager.id === "Pnpm" || manager.id === "Nvm";
   const showSourceColumn = !usesCompactTable;
   const showPathColumn = !usesCompactTable;
   const heading = usesCompactTable ? ["名称", "版本", "操作"] : ["名称", "版本", "来源", "路径", "操作"];
@@ -143,7 +143,12 @@ export function PackageTable(props: PackageTableProps) {
             role="button"
             tabIndex={0}
           >
-            <TableCell className={packageNameClassName}>{pkg.name}</TableCell>
+            <TableCell className={packageNameClassName}>
+              <span className="inline-flex min-w-0 items-center gap-1.5">
+                <span className="truncate">{pkg.name}</span>
+                {usesCompactTable ? renderPackageSignals(pkg) : null}
+              </span>
+            </TableCell>
             <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
             {showSourceColumn ? <TableCell className="max-w-52 truncate text-muted-foreground">{shortenPath(formatHomePathsInText(pkg.source, homeDirectory))}</TableCell> : null}
             {showPathColumn ? <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ? formatHomePath(pkg.path, homeDirectory) : "无"}</TableCell> : null}
@@ -310,7 +315,7 @@ function PackageName({ pkg }: { pkg: PackageRow }) {
 }
 
 function renderPackageSignals(pkg: PackageRow) {
-  if (!pkg.signals.length) return <SignalBadge tone="neutral">当前版本</SignalBadge>;
+  if (!pkg.signals.length) return null;
 
   return pkg.signals.map((signal) => (
     <SignalBadge key={signal} tone={signal === "Outdated" || signal === "DuplicateVersions" ? "warn" : "partial"}>

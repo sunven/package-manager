@@ -85,6 +85,7 @@ export const packageKindLabels: Record<PackageKind, string> = {
 };
 
 export const signalLabels: Record<PackageSignal, string> = {
+  Current: "当前版本",
   Outdated: "可更新",
   Leaf: "叶子包",
   DuplicateVersions: "多版本",

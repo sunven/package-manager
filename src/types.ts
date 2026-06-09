@@ -41,6 +41,7 @@ export type PackageKind =
   | "UvTool"
   | "UvPython";
 export type PackageSignal =
+  | "Current"
   | "Outdated"
   | "Leaf"
   | "DuplicateVersions"

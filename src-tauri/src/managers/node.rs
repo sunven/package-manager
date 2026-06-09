@@ -225,6 +225,10 @@ pub(super) fn scan_nvm() -> ManagerSnapshot {
 }
 
 pub(super) fn scan_nvm_with_dir(nvm_dir: PathBuf) -> ManagerSnapshot {
+    scan_nvm_with_context(nvm_dir, env::var("NVM_BIN").ok())
+}
+
+pub(super) fn scan_nvm_with_context(nvm_dir: PathBuf, nvm_bin: Option<String>) -> ManagerSnapshot {
     let mut snapshot = empty_snapshot(ManagerId::Nvm, "nvm");
     let node_versions_dir = nvm_dir.join("versions/node");
 
@@ -251,7 +255,8 @@ pub(super) fn scan_nvm_with_dir(nvm_dir: PathBuf) -> ManagerSnapshot {
         node_versions_dir.display().to_string(),
     ));
 
-    snapshot.packages = scan_nvm_node_versions(&node_versions_dir);
+    let current_version = current_nvm_node_version(&nvm_dir, nvm_bin.as_deref());
+    snapshot.packages = scan_nvm_node_versions(&node_versions_dir, current_version.as_deref());
     finish(snapshot)
 }
 
@@ -269,7 +274,10 @@ pub(super) fn resolve_nvm_dir(nvm_dir: Option<&str>, home: Option<&Path>) -> Pat
         .unwrap_or_else(|| PathBuf::from(".nvm"))
 }
 
-pub(super) fn scan_nvm_node_versions(node_versions_dir: &Path) -> Vec<PackageRow> {
+pub(super) fn scan_nvm_node_versions(
+    node_versions_dir: &Path,
+    current_version: Option<&str>,
+) -> Vec<PackageRow> {
     let entries = match fs::read_dir(node_versions_dir) {
         Ok(entries) => entries,
         Err(_) => return Vec::new(),
@@ -292,6 +300,9 @@ pub(super) fn scan_nvm_node_versions(node_versions_dir: &Path) -> Vec<PackageRow
                 "nvm versions directory",
                 PackageKind::Generic,
             );
+            if current_version == Some(version.as_str()) {
+                push_signal(&mut row, PackageSignal::Current);
+            }
             attach_nvm_actions(&mut row, &version);
             Some(row)
         })
@@ -299,6 +310,37 @@ pub(super) fn scan_nvm_node_versions(node_versions_dir: &Path) -> Vec<PackageRow
 
     packages.sort_by(|a, b| compare_semver_desc(&a.version, &b.version));
     packages
+}
+
+pub(super) fn current_nvm_node_version(nvm_dir: &Path, nvm_bin: Option<&str>) -> Option<String> {
+    nvm_bin
+        .and_then(current_nvm_node_version_from_bin)
+        .or_else(|| current_nvm_node_version_from_symlink(nvm_dir))
+}
+
+pub(super) fn current_nvm_node_version_from_symlink(nvm_dir: &Path) -> Option<String> {
+    let target = fs::read_link(nvm_dir.join("current")).ok()?;
+    target
+        .file_name()
+        .and_then(|name| parse_nvm_node_version_dir(&name.to_string_lossy()))
+}
+
+pub(super) fn current_nvm_node_version_from_bin(path: &str) -> Option<String> {
+    let mut components = Path::new(path)
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>();
+
+    if components
+        .last()
+        .is_some_and(|component| component == "bin")
+    {
+        components.pop();
+    }
+
+    components
+        .last()
+        .and_then(|name| parse_nvm_node_version_dir(name))
 }
 
 pub(super) fn parse_nvm_node_version_dir(name: &str) -> Option<String> {

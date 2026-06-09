@@ -68,6 +68,7 @@ pub(crate) enum PackageKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(crate) enum PackageSignal {
+    Current,
     Outdated,
     Leaf,
     DuplicateVersions,

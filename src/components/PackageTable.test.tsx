@@ -5,10 +5,10 @@ import type { ManagerSnapshot } from "../types";
 
 const noop = () => {};
 
-function packageManager(id: "Npm" | "Pnpm"): ManagerSnapshot {
+function packageManager(id: "Npm" | "Pnpm" | "Nvm", signals: ManagerSnapshot["packages"][number]["signals"] = []): ManagerSnapshot {
   return {
     id,
-    label: id === "Npm" ? "npm" : "pnpm",
+    label: id === "Npm" ? "npm" : id === "Pnpm" ? "pnpm" : "nvm",
     status: "Ready",
     version: "10.0.0",
     packages: [
@@ -18,7 +18,7 @@ function packageManager(id: "Npm" | "Pnpm"): ManagerSnapshot {
         path: "/Users/sunven/.local/share/pnpm/global/5/node_modules/@scope/tool",
         source: "global",
         kind: "Generic",
-        signals: [],
+        signals,
         actions: [],
       },
     ],
@@ -75,5 +75,22 @@ describe("PackageTable", () => {
     const html = renderPackageTable(packageManager("Pnpm"));
 
     expect(html).toContain("卸载全局包");
+  });
+
+  it("shows nvm packages with compact table columns", () => {
+    const html = renderPackageTable(packageManager("Nvm"));
+
+    expect(html).toContain("名称");
+    expect(html).toContain("版本");
+    expect(html).toContain("操作");
+    expect(html).not.toContain(">来源</th>");
+    expect(html).not.toContain(">路径</th>");
+    expect(html).not.toContain("当前版本");
+  });
+
+  it("marks the current nvm node version", () => {
+    const html = renderPackageTable(packageManager("Nvm", ["Current"]));
+
+    expect(html).toContain("当前版本");
   });
 });

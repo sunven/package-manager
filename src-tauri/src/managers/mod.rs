@@ -256,7 +256,7 @@ mod tests {
         fs::create_dir_all(root.join("versions/node/v18.19.0/bin")).expect("create node version");
         fs::create_dir_all(root.join("versions/node/not-a-version")).expect("create ignored dir");
 
-        let snapshot = scan_nvm_with_dir(root.clone());
+        let snapshot = scan_nvm_with_context(root.clone(), None);
 
         assert_eq!(snapshot.status, ManagerStatus::Ready);
         assert_eq!(snapshot.id, ManagerId::Nvm);
@@ -276,6 +276,47 @@ mod tests {
             .actions
             .iter()
             .any(|action| action.preview == "nvm use 20.11.1"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_nvm_marks_current_node_version() {
+        let root = temp_dir("nvm-current");
+        let _guard = TempDirGuard(root.clone());
+        fs::create_dir_all(root.join("versions/node/v20.11.1/bin")).expect("create node version");
+        fs::create_dir_all(root.join("versions/node/v18.19.0/bin")).expect("create node version");
+        symlink_dir(root.join("versions/node/v18.19.0"), root.join("current"));
+
+        let snapshot = scan_nvm_with_context(root, None);
+        let current = snapshot
+            .packages
+            .iter()
+            .find(|package| package.version == "18.19.0")
+            .expect("current package");
+
+        assert!(current.signals.contains(&PackageSignal::Current));
+    }
+
+    #[test]
+    fn scan_nvm_marks_current_node_version_from_nvm_bin() {
+        let root = temp_dir("nvm-current-bin");
+        let _guard = TempDirGuard(root.clone());
+        fs::create_dir_all(root.join("versions/node/v20.11.1/bin")).expect("create node version");
+        fs::create_dir_all(root.join("versions/node/v18.19.0/bin")).expect("create node version");
+        let nvm_bin = root
+            .join("versions/node/v20.11.1/bin")
+            .display()
+            .to_string();
+
+        let snapshot = scan_nvm_with_context(root, Some(nvm_bin));
+
+        assert!(snapshot
+            .packages
+            .iter()
+            .find(|package| package.version == "20.11.1")
+            .expect("current package")
+            .signals
+            .contains(&PackageSignal::Current));
     }
 
     #[test]
@@ -1469,6 +1510,11 @@ info "alpha@1.0.0" has binaries:
         }
         let mut file = fs::File::create(path).expect("create file");
         file.write_all(contents).expect("write file");
+    }
+
+    #[cfg(unix)]
+    fn symlink_dir(target: PathBuf, link: PathBuf) {
+        std::os::unix::fs::symlink(target, link).expect("create symlink");
     }
 
     fn fake_run(program: &str, args: &[&str], timeout: Duration, stdout: &str) -> CommandRun {
