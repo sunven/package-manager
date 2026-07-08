@@ -1,20 +1,24 @@
-import { managerOrder, statusLabels } from "../constants";
+import { statusLabels } from "../constants";
 import type { DisplayStatus } from "../types";
 import type { ManagerId, ManagerSnapshot } from "../types";
 import { managerLabel } from "../utils/format";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 
 export function ManagerTabs({
+  managerIds,
   managerSnapshots,
   onSelect,
   scanningManagers,
   selectedManager,
 }: {
+  managerIds: ManagerId[];
   managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
   onSelect: (managerId: ManagerId) => void;
   scanningManagers: Set<ManagerId>;
   selectedManager: ManagerId;
 }) {
+  const columnCount = Math.max(managerIds.length, 1);
+
   return (
     <Tabs
       onValueChange={(value) => onSelect(value as ManagerId)}
@@ -22,8 +26,14 @@ export function ManagerTabs({
       value={selectedManager}
     >
       <div className="overflow-x-auto overflow-y-hidden">
-        <TabsList className="grid h-auto min-w-[1100px] grid-cols-11 gap-2 bg-transparent p-0">
-          {managerOrder.map((managerId) => {
+        <TabsList
+          className="grid h-auto gap-2 bg-transparent p-0"
+          style={{
+            gridTemplateColumns: `repeat(${columnCount}, minmax(92px, 1fr))`,
+            minWidth: `${columnCount * 100}px`,
+          }}
+        >
+          {managerIds.map((managerId) => {
             const manager = managerSnapshots[managerId];
             const managerName = manager?.label ?? managerLabel(managerId);
             const scanning = scanningManagers.has(managerId);

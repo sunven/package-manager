@@ -19,6 +19,7 @@ import {
   type MaintenanceUiState,
 } from "../state";
 import { managerOrder } from "../constants";
+import { readEnabledManagers, writeEnabledManagers } from "../managerSettings";
 import type {
   DiskUsage,
   HomebrewCleanupPreview,
@@ -66,6 +67,7 @@ const initialCounters: NumberByManager = {
 export interface PackageManagerActions {
   refresh: (managerId?: ManagerId) => Promise<void>;
   selectManager: (managerId: ManagerId) => void;
+  setManagerEnabled: (managerId: ManagerId, enabled: boolean) => void;
   selectPackage: (index: number) => void;
   togglePackageActions: (index: number) => void;
   closePackageActions: () => void;
@@ -87,9 +89,10 @@ export interface PackageManagerActions {
 }
 
 export function usePackageManagers() {
+  const [enabledManagers, setEnabledManagers] = useState<ManagerId[]>(readEnabledManagers);
   const [managerSnapshots, setManagerSnapshots] = useState<ManagerMap>({});
   const [scanDurationMsByManager, setScanDurationMsByManager] = useState<Partial<NumberByManager>>({});
-  const [selectedManager, setSelectedManager] = useState<ManagerId>("Npm");
+  const [selectedManager, setSelectedManager] = useState<ManagerId>(() => readEnabledManagers()[0] ?? "Npm");
   const [selectedPackageIndex, setSelectedPackageIndex] = useState<number | null>(null);
   const [openPackageActionMenuIndex, setOpenPackageActionMenuIndex] = useState<number | null>(null);
   const [selectedHomebrewFilter, setSelectedHomebrewFilter] = useState<HomebrewFilter>("All");
@@ -109,6 +112,7 @@ export function usePackageManagers() {
 
   const selectedManagerRef = useRef(selectedManager);
   const selectedPackageIndexRef = useRef(selectedPackageIndex);
+  const enabledManagersRef = useRef(enabledManagers);
   const managerSnapshotsRef = useRef(managerSnapshots);
   const scanningManagersRef = useRef(scanningManagers);
   const sizeScanTokensRef = useRef<NumberByManager>({ ...initialCounters });
@@ -119,6 +123,10 @@ export function usePackageManagers() {
   useEffect(() => {
     selectedManagerRef.current = selectedManager;
   }, [selectedManager]);
+
+  useEffect(() => {
+    enabledManagersRef.current = enabledManagers;
+  }, [enabledManagers]);
 
   useEffect(() => {
     selectedPackageIndexRef.current = selectedPackageIndex;
@@ -175,7 +183,7 @@ export function usePackageManagers() {
   ]);
 
   const overview = useMemo(() => {
-    const managers = managerOrder.flatMap((managerId) => {
+    const managers = enabledManagers.flatMap((managerId) => {
       const manager = managerSnapshots[managerId];
       return manager ? [manager] : [];
     });
@@ -189,13 +197,13 @@ export function usePackageManagers() {
     }, 0);
 
     return {
-      managerCount: `${managers.length}/${managerOrder.length}`,
+      managerCount: `${managers.length}/${enabledManagers.length}`,
       readyManagers: String(managers.filter((manager) => manager.status === "Ready").length),
       totalPackages: String(managers.reduce((sum, manager) => sum + manager.packages.length, 0)),
       totalBytes: formatBytes(totalBytes),
       unsupported: String(managers.filter((manager) => manager.status === "Unsupported").length),
     };
-  }, [managerSnapshots]);
+  }, [enabledManagers, managerSnapshots]);
 
   const showError = useCallback((title: string, error: unknown) => {
     setUiMessage({
@@ -341,6 +349,7 @@ export function usePackageManagers() {
 
   const refresh = useCallback(
     async (managerId = selectedManagerRef.current) => {
+      if (!enabledManagersRef.current.includes(managerId)) return;
       if (scanningManagersRef.current.has(managerId)) return;
 
       scanningManagersRef.current = new Set(scanningManagersRef.current).add(managerId);
@@ -392,7 +401,7 @@ export function usePackageManagers() {
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      void refresh("Npm");
+      void refresh(enabledManagersRef.current[0] ?? "Npm");
     });
     return () => cancelAnimationFrame(frame);
   }, [refresh]);
@@ -422,11 +431,45 @@ export function usePackageManagers() {
 
   const selectManager = useCallback(
     (managerId: ManagerId) => {
+      if (!enabledManagersRef.current.includes(managerId)) return;
       setSelectedManager(managerId);
       setSelectedPackageIndex(null);
       setOpenPackageActionMenuIndex(null);
       if (!managerSnapshotsRef.current[managerId] && !scanningManagersRef.current.has(managerId)) {
         void refresh(managerId);
+      }
+    },
+    [refresh],
+  );
+
+  const setManagerEnabled = useCallback(
+    (managerId: ManagerId, enabled: boolean) => {
+      const current = enabledManagersRef.current;
+      const alreadyEnabled = current.includes(managerId);
+      if (alreadyEnabled === enabled) return;
+      if (!enabled && current.length === 1) return;
+
+      const nextSet = new Set(current);
+      if (enabled) {
+        nextSet.add(managerId);
+      } else {
+        nextSet.delete(managerId);
+      }
+
+      const next = managerOrder.filter((candidate) => nextSet.has(candidate));
+      enabledManagersRef.current = next;
+      setEnabledManagers(next);
+      writeEnabledManagers(next);
+
+      if (!next.includes(selectedManagerRef.current)) {
+        const nextSelectedManager = next[0] ?? "Npm";
+        selectedManagerRef.current = nextSelectedManager;
+        setSelectedManager(nextSelectedManager);
+        setSelectedPackageIndex(null);
+        setOpenPackageActionMenuIndex(null);
+        if (!managerSnapshotsRef.current[nextSelectedManager] && !scanningManagersRef.current.has(nextSelectedManager)) {
+          void refresh(nextSelectedManager);
+        }
       }
     },
     [refresh],
@@ -599,6 +642,7 @@ export function usePackageManagers() {
   const actions: PackageManagerActions = {
     refresh,
     selectManager,
+    setManagerEnabled,
     selectPackage,
     togglePackageActions,
     closePackageActions,
@@ -634,6 +678,7 @@ export function usePackageManagers() {
   return {
     actions,
     currentManager,
+    enabledManagers,
     homeDirectory,
     managerSnapshots,
     openPackageActionMenuIndex,
