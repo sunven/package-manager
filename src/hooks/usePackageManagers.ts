@@ -6,21 +6,26 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
 import {
   applyPipOutdatedPreview,
+  cacheCleanupFailureMessage,
+  cacheCleanupPartialMessage,
+  cacheCleanupStepSummary,
   cancelMaintenanceConfirmation,
   completeMaintenanceOperation,
   failMaintenanceOperation,
   finishMaintenanceOperation,
-  requestNpmCacheClean,
-  requestPnpmStorePrune,
+  finishMaintenanceOperationWithResult,
+  requestCacheCleanup,
   requestPackageUninstall as requestMaintenancePackageUninstall,
   shouldApplyHydrationResult,
   startConfirmedMaintenanceOperation,
   type MaintenanceRequest,
   type MaintenanceUiState,
 } from "../state";
+import { cleanupCopyFor, hasCleanupPlan } from "../cleanupCopy";
 import { managerOrder } from "../constants";
 import { readEnabledManagers, writeEnabledManagers } from "../managerSettings";
 import type {
+  CacheCleanupRun,
   DiskUsage,
   HomebrewCleanupPreview,
   HomebrewFilter,
@@ -76,8 +81,7 @@ export interface PackageManagerActions {
   copyCommand: (payload: string) => Promise<void>;
   copyCleanupCommand: () => Promise<void>;
   requestPackageUninstall: (index: number) => void;
-  requestCacheClean: () => void;
-  requestStorePrune: () => void;
+  requestCacheCleanup: () => void;
   cancelMaintenance: () => void;
   confirmMaintenance: () => Promise<void>;
   copyPackageAction: (index: number, actionIndex: number) => Promise<void>;
@@ -593,14 +597,10 @@ export function usePackageManagers() {
     [packageAt, updateMaintenanceState],
   );
 
-  const requestCacheCleanAction = useCallback(() => {
-    if (selectedManagerRef.current !== "Npm") return;
-    updateMaintenanceState(requestNpmCacheClean);
-  }, [updateMaintenanceState]);
-
-  const requestStorePruneAction = useCallback(() => {
-    if (selectedManagerRef.current !== "Pnpm") return;
-    updateMaintenanceState(requestPnpmStorePrune);
+  const requestCacheCleanupAction = useCallback(() => {
+    const managerId = selectedManagerRef.current;
+    if (!hasCleanupPlan(managerId)) return;
+    updateMaintenanceState((state) => requestCacheCleanup(state, managerId));
   }, [updateMaintenanceState]);
 
   const cancelMaintenance = useCallback(() => {
@@ -616,6 +616,30 @@ export function usePackageManagers() {
     setMaintenanceState(started);
 
     try {
+      if (request.kind === "cleanupCache") {
+        const run = await invoke<CacheCleanupRun>("run_cache_cleanup", { manager: request.managerId });
+        if (run.outcome === "Failed" || run.outcome === "NoPlan") {
+          throw new Error(cacheCleanupFailureMessage(run));
+        }
+
+        await refresh(request.managerId);
+
+        if (run.outcome === "PartiallyCompleted") {
+          // Part of the plan really did delete things. Reporting this as a plain
+          // failure would send the user back to redo work that already happened.
+          const message = cacheCleanupPartialMessage(run);
+          updateMaintenanceState((state) => finishMaintenanceOperationWithResult(state, { tone: "warn", message }));
+          toast.warning(maintenancePartialTitle(request), { description: message });
+          return;
+        }
+
+        updateMaintenanceState(completeMaintenanceOperation);
+        toast.success(maintenanceSuccessTitle(request), {
+          description: cacheCleanupStepSummary(run),
+        });
+        return;
+      }
+
       const commandName = request.managerId === "Pnpm" ? "run_pnpm_maintenance" : "run_npm_maintenance";
       const operation = request.managerId === "Pnpm" ? pnpmMaintenanceOperation(request) : npmMaintenanceOperation(request);
       const preview = await invoke<MaintenanceRunPreview>(commandName, { operation });
@@ -651,8 +675,7 @@ export function usePackageManagers() {
     copyCommand,
     copyCleanupCommand,
     requestPackageUninstall,
-    requestCacheClean: requestCacheCleanAction,
-    requestStorePrune: requestStorePruneAction,
+    requestCacheCleanup: requestCacheCleanupAction,
     cancelMaintenance,
     confirmMaintenance,
     copyPackageAction,
@@ -700,32 +723,41 @@ export function usePackageManagers() {
   };
 }
 
-function npmMaintenanceOperation(request: Extract<MaintenanceRequest, { managerId: "Npm" }>): NpmMaintenanceOperation {
-  if (request.kind === "cleanCache") return { kind: "cleanCache" };
+function npmMaintenanceOperation(
+  request: Extract<MaintenanceRequest, { managerId: "Npm"; kind: "uninstallGlobalPackage" }>,
+): NpmMaintenanceOperation {
   return {
     kind: "uninstallGlobalPackage",
     packageName: request.packageName,
   };
 }
 
-function pnpmMaintenanceOperation(request: Extract<MaintenanceRequest, { managerId: "Pnpm" }>): PnpmMaintenanceOperation {
-  if (request.kind === "storePrune") return { kind: "storePrune" };
+function pnpmMaintenanceOperation(
+  request: Extract<MaintenanceRequest, { managerId: "Pnpm"; kind: "uninstallGlobalPackage" }>,
+): PnpmMaintenanceOperation {
   return {
     kind: "uninstallGlobalPackage",
     packageName: request.packageName,
   };
+}
+
+function maintenancePartialTitle(request: MaintenanceRequest) {
+  if (request.kind === "cleanupCache") return `${managerLabel(request.managerId)} 清理部分完成`;
+  return "维护操作部分完成";
 }
 
 function maintenanceSuccessTitle(request: MaintenanceRequest) {
-  if (request.kind === "cleanCache") return "npm 缓存已清理";
-  if (request.kind === "storePrune") return "pnpm store 已清理";
-  return request.managerId === "Pnpm" ? "pnpm 全局包已卸载" : "npm 全局包已卸载";
+  if (request.kind === "cleanupCache") {
+    return cleanupCopyFor(request.managerId)?.succeeded ?? "清理完成";
+  }
+  return `${managerLabel(request.managerId)} 全局包已卸载`;
 }
 
 function maintenanceFailureTitle(request: MaintenanceRequest) {
-  if (request.kind === "cleanCache") return "npm 缓存清理失败";
-  if (request.kind === "storePrune") return "pnpm store 清理失败";
-  return request.managerId === "Pnpm" ? "pnpm 全局包卸载失败" : "npm 全局包卸载失败";
+  if (request.kind === "cleanupCache") {
+    return cleanupCopyFor(request.managerId)?.failed ?? "清理失败";
+  }
+  return `${managerLabel(request.managerId)} 全局包卸载失败`;
 }
 
 function maintenanceFailureMessage(preview: MaintenanceRunPreview) {

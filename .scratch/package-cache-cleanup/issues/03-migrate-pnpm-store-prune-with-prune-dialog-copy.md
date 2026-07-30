@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Migrate pnpm Store Prune to the New Entry Point with Prune-Type Dialog Copy
 
@@ -18,21 +18,32 @@ This slice also introduces the data-driven dialog copy that later slices extend.
 
 ## Acceptance criteria
 
-- [ ] `StorePrune` is removed from `PnpmMaintenanceOperation` and pnpm's plan lives in the static table as a single `pnpm store prune` step.
-- [ ] `PnpmMaintenanceOperation::UninstallGlobalPackage` and its command are unchanged, still at a 30-second timeout.
-- [ ] The pnpm confirmation dialog shows **no** reclaimable-space figure.
-- [ ] The pnpm confirmation dialog explains that only unreferenced store content is removed and the actual amount depends on current references.
-- [ ] The dialog still shows the command text that will run.
-- [ ] Dialog copy is driven from data rather than an extended hardcoded if/else chain.
-- [ ] Confirming executes the plan; cancelling executes nothing.
-- [ ] Pending state is shown and duplicate submissions are prevented.
-- [ ] Successful prune refreshes pnpm so the displayed store usage updates.
-- [ ] Failure surfaces the underlying error without hiding existing pnpm scan data.
-- [ ] Hardlink-deduplicated store size semantics are unchanged.
-- [ ] Existing pnpm uninstall tests pass unchanged.
-- [ ] A frontend test asserts no figure is rendered in the pnpm dialog.
-- [ ] `pnpm test` and `cargo test` pass.
+- [x] `StorePrune` is removed from `PnpmMaintenanceOperation` and pnpm's plan lives in the static table as a single `pnpm store prune` step.
+- [x] `PnpmMaintenanceOperation::UninstallGlobalPackage` and its command are unchanged, still at a 30-second timeout.
+- [x] The pnpm confirmation dialog shows **no** reclaimable-space figure.
+- [x] The pnpm confirmation dialog explains that only unreferenced store content is removed and the actual amount depends on current references.
+- [x] The dialog still shows the command text that will run.
+- [x] Dialog copy is driven from data rather than an extended hardcoded if/else chain.
+- [x] Confirming executes the plan; cancelling executes nothing.
+- [x] Pending state is shown and duplicate submissions are prevented.
+- [x] Successful prune refreshes pnpm so the displayed store usage updates.
+- [x] Failure surfaces the underlying error without hiding existing pnpm scan data.
+- [x] Hardlink-deduplicated store size semantics are unchanged.
+- [x] Existing pnpm uninstall tests pass unchanged.
+- [x] A frontend test asserts no figure is rendered in the pnpm dialog.
+- [x] `pnpm test` and `cargo test` pass.
 
 ## Blocked by
 
 - .scratch/package-cache-cleanup/issues/01-add-cache-cleanup-plan-table-and-entry-point.md
+
+## Comments
+
+- pnpm's `store prune` now lives in the plan table; `StorePrune` is gone from `PnpmMaintenanceOperation`, and a new Rust test asserts a `{"kind":"storePrune"}` payload is now *rejected*, so the uninstall command cannot keep a second route to it. `UninstallGlobalPackage` is untouched at 30 seconds.
+- The prune-type presentation is established: pnpm shows no reclaim figure and instead carries a `reclaimNote` explaining that only unreferenced content goes and the amount depends on current references. uv reuses this in issue 06.
+- **Scope beyond the criteria as written — please review.** The grep for this slice showed `onRequestCacheClean` / `onRequestStorePrune` threaded through three `PathPanel` layers, one pair per manager. Extending that shape to the remaining five managers means 8 prop pairs across 3 layers. So the two request kinds `cleanCache` and `storePrune` were merged into a single `cleanupCache` + `managerId`, and per-manager copy moved into a new `src/cleanupCopy.ts` table keyed the same way the Rust plan table is. Rationale: with one backend entry point these two kinds describe the same operation on different managers, and `CONTEXT.md` already treats 清理 as one concept — the criterion "dialog copy is driven from data" cannot be met cleanly while two kinds mean one thing. This touched shipped state (`MaintenanceRequest`, `requestNpmCacheClean`/`requestPnpmStorePrune` → `requestCacheCleanup`), `App.tsx`, `PathPanel` (3 layers), and 2 existing test files.
+- `cleanupCopy.ts` doubles as the frontend's source of truth for *whether* a manager can be cleaned: absence from the table means no affordance renders, mirroring absence from the Rust plan table. A test asserts nvm, Maven and Cargo are absent, so a future contributor cannot grant one of them a button without tripping it.
+- `MaintenanceConfirmationBanner`'s if/else chain is gone; it now reads the table, and partial completion renders in its own amber tone rather than borrowing the success or failure styling.
+- Verified with `cargo test` (70 passed), `pnpm test` (37 passed, 6 new), `pnpm build`, no warnings.
+- Blast radius was analysed by grep: 8 Rust sites for `StorePrune`, 30+ TS sites for the two props. Risk MEDIUM.
+- Test teeth verified by mutation: granting Cargo a plan entry and deleting pnpm's `reclaimNote` each failed a test. Reverted.

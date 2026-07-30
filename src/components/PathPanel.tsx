@@ -2,6 +2,7 @@ import { Copy, ExternalLink, Info, Trash2 } from "lucide-react";
 import { pathKindLabels } from "../constants";
 import type { HomebrewMaintenance, ManagerSnapshot, PathInfo } from "../types";
 import type { MaintenanceRequest } from "../state";
+import { cleanupCopyForPath, cleanupReady } from "../cleanupCopy";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel, trimTail } from "../utils/format";
 import { EmptyState, IconButton, StatusBadge, TextButton } from "./ui";
 import { Button } from "../../components/ui/button";
@@ -25,8 +26,7 @@ export function PathPanel({
   manager,
   onCopyCleanupCommand,
   onCopyPath,
-  onRequestCacheClean,
-  onRequestStorePrune,
+  onRequestCacheCleanup,
   onOpenPath,
   pendingMaintenance,
   pendingHomebrewCleanup,
@@ -36,8 +36,7 @@ export function PathPanel({
   manager: ManagerSnapshot | null;
   onCopyCleanupCommand: () => void;
   onCopyPath: (path: string) => void;
-  onRequestCacheClean: () => void;
-  onRequestStorePrune: () => void;
+  onRequestCacheCleanup: () => void;
   onOpenPath: (path: string) => void;
   pendingMaintenance: MaintenanceRequest | null;
   pendingHomebrewCleanup: boolean;
@@ -56,24 +55,44 @@ export function PathPanel({
   return (
     <div className="flex flex-col gap-3">
       {manager.id === "Homebrew" ? (
-        <HomebrewCleanupCard homeDirectory={homeDirectory} maintenance={manager.homebrew} onCopyCleanupCommand={onCopyCleanupCommand} pending={pendingHomebrewCleanup} />
+        <HomebrewCleanupCard
+          cleanupReady={cleanupReady(manager)}
+          homeDirectory={homeDirectory}
+          maintenance={manager.homebrew}
+          onCopyCleanupCommand={onCopyCleanupCommand}
+          onRequestCacheCleanup={onRequestCacheCleanup}
+          pending={pendingHomebrewCleanup}
+          pendingCleanup={pendingMaintenance?.kind === "cleanupCache" && pendingMaintenance.managerId === "Homebrew"}
+        />
       ) : null}
       {inlinePaths.length || stackedPaths.length ? (
         <>
           {inlinePaths.length ? (
             <InlinePathCard
+              cleanupAvailable={manager.status !== "Missing"}
               homeDirectory={homeDirectory}
               managerId={manager.id}
               onCopyPath={onCopyPath}
               onOpenPath={onOpenPath}
-              onRequestCacheClean={onRequestCacheClean}
-              onRequestStorePrune={onRequestStorePrune}
+              onRequestCacheCleanup={onRequestCacheCleanup}
               pathNotes={manager.id === "Npm" ? npmPathNotes : undefined}
               paths={inlinePaths}
               pendingMaintenance={pendingMaintenance}
             />
           ) : null}
-          {stackedPaths.map((path) => <PathCard homeDirectory={homeDirectory} key={`${path.kind}-${path.path}`} onCopyPath={onCopyPath} onOpenPath={onOpenPath} path={path} />)}
+          {stackedPaths.map((path) => (
+            <PathCard
+              cleanupAvailable={manager.status !== "Missing"}
+              homeDirectory={homeDirectory}
+              key={`${path.kind}-${path.path}`}
+              managerId={manager.id}
+              onCopyPath={onCopyPath}
+              onOpenPath={onOpenPath}
+              onRequestCacheCleanup={onRequestCacheCleanup}
+              path={path}
+              pendingMaintenance={pendingMaintenance}
+            />
+          ))}
         </>
       ) : (
         <EmptyState message="未解析到缓存或存储路径" />
@@ -117,22 +136,22 @@ function splitPaths(manager: ManagerSnapshot | null): { inlinePaths: PathInfo[];
 }
 
 function InlinePathCard({
+  cleanupAvailable,
   homeDirectory,
   managerId,
   onCopyPath,
   onOpenPath,
-  onRequestCacheClean,
-  onRequestStorePrune,
+  onRequestCacheCleanup,
   pathNotes,
   paths,
   pendingMaintenance,
 }: {
+  cleanupAvailable: boolean;
   homeDirectory: string | null;
   managerId: ManagerSnapshot["id"];
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
-  onRequestCacheClean: () => void;
-  onRequestStorePrune: () => void;
+  onRequestCacheCleanup: () => void;
   pathNotes?: Partial<Record<PathInfo["kind"], string>>;
   paths: PathInfo[];
   pendingMaintenance: MaintenanceRequest | null;
@@ -145,14 +164,14 @@ function InlinePathCard({
     <div className={gridClassName}>
       {paths.map((path) => (
         <InlinePathCell
+          cleanupAvailable={cleanupAvailable}
           homeDirectory={homeDirectory}
           key={`${path.kind}-${path.path}`}
           managerId={managerId}
           note={pathNotes?.[path.kind]}
           onCopyPath={onCopyPath}
           onOpenPath={onOpenPath}
-          onRequestCacheClean={onRequestCacheClean}
-          onRequestStorePrune={onRequestStorePrune}
+          onRequestCacheCleanup={onRequestCacheCleanup}
           path={path}
           pendingMaintenance={pendingMaintenance}
         />
@@ -163,34 +182,32 @@ function InlinePathCard({
 
 function InlinePathCell({
   className = "min-w-0",
+  cleanupAvailable,
   homeDirectory,
   managerId,
   note,
   onCopyPath,
   onOpenPath,
-  onRequestCacheClean,
-  onRequestStorePrune,
+  onRequestCacheCleanup,
   path,
   pendingMaintenance,
 }: {
   className?: string;
+  cleanupAvailable: boolean;
   homeDirectory: string | null;
   managerId: ManagerSnapshot["id"];
   note?: string;
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
-  onRequestCacheClean: () => void;
-  onRequestStorePrune: () => void;
+  onRequestCacheCleanup: () => void;
   path: PathInfo;
   pendingMaintenance: MaintenanceRequest | null;
 }) {
   const size = path.size;
   const sizeValue = size.status === "Ready" ? (size.human ?? "0 B") : null;
   const detail = size.status === "Pending" ? "等待占用扫描" : `${size.files} 文件`;
-  const canCleanNpmCache = managerId === "Npm" && path.kind === "Cache";
-  const canPrunePnpmStore = managerId === "Pnpm" && path.kind === "Store";
-  const pendingCacheClean = pendingMaintenance?.kind === "cleanCache";
-  const pendingStorePrune = pendingMaintenance?.kind === "storePrune";
+  const cleanupCopy = cleanupAvailable ? cleanupCopyForPath(managerId, path.kind) : null;
+  const pendingCleanup = pendingMaintenance?.kind === "cleanupCache" && pendingMaintenance.managerId === managerId;
 
   return (
     <div className={`${className} rounded-md border bg-background p-2`}>
@@ -213,13 +230,8 @@ function InlinePathCell({
         <IconButton className="size-6 shrink-0" disabled={size.status === "Missing"} label={`打开 ${pathLabel(path.label)}路径`} onClick={() => onOpenPath(path.path)}>
           <ExternalLink />
         </IconButton>
-        {canCleanNpmCache ? (
-          <IconButton className="size-6 shrink-0" disabled={pendingCacheClean} label="清理 npm 缓存" onClick={onRequestCacheClean}>
-            <Trash2 />
-          </IconButton>
-        ) : null}
-        {canPrunePnpmStore ? (
-          <IconButton className="size-6 shrink-0" disabled={pendingStorePrune} label="清理 pnpm store" onClick={onRequestStorePrune}>
+        {cleanupCopy ? (
+          <IconButton className="size-6 shrink-0" disabled={pendingCleanup} label={pendingCleanup ? "清理中" : cleanupCopy.action} onClick={onRequestCacheCleanup}>
             <Trash2 />
           </IconButton>
         ) : null}
@@ -247,16 +259,26 @@ function PathNoteTooltip({ label, note }: { label: string; note: string }) {
 }
 
 function PathCard({
+  cleanupAvailable,
   homeDirectory,
+  managerId,
   onCopyPath,
   onOpenPath,
+  onRequestCacheCleanup,
   path,
+  pendingMaintenance,
 }: {
+  cleanupAvailable: boolean;
   homeDirectory: string | null;
+  managerId: ManagerSnapshot["id"];
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
+  onRequestCacheCleanup: () => void;
   path: PathInfo;
+  pendingMaintenance: MaintenanceRequest | null;
 }) {
+  const cleanupCopy = cleanupAvailable ? cleanupCopyForPath(managerId, path.kind) : null;
+  const pendingCleanup = pendingMaintenance?.kind === "cleanupCache" && pendingMaintenance.managerId === managerId;
   const size = path.size;
   const sizeValue = size.status === "Ready" ? (size.human ?? "0 B") : null;
   const detail =
@@ -294,6 +316,11 @@ function PathCard({
           <IconButton disabled={size.status === "Missing"} label="打开路径" onClick={() => onOpenPath(path.path)}>
             <ExternalLink />
           </IconButton>
+          {cleanupCopy ? (
+            <IconButton disabled={pendingCleanup} label={pendingCleanup ? "清理中" : cleanupCopy.action} onClick={onRequestCacheCleanup}>
+              <Trash2 />
+            </IconButton>
+          ) : null}
         </div>
       </CardContent>
     </Card>
@@ -301,15 +328,21 @@ function PathCard({
 }
 
 function HomebrewCleanupCard({
+  cleanupReady,
   homeDirectory,
   maintenance,
   onCopyCleanupCommand,
+  onRequestCacheCleanup,
   pending,
+  pendingCleanup,
 }: {
+  cleanupReady: boolean;
   homeDirectory: string | null;
   maintenance: HomebrewMaintenance | null;
   onCopyCleanupCommand: () => void;
+  onRequestCacheCleanup: () => void;
   pending: boolean;
+  pendingCleanup: boolean;
 }) {
   if (!maintenance) return null;
 
@@ -328,11 +361,18 @@ function HomebrewCleanupCard({
       <CardContent>
         <code className="block truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{formatHomePathsInText(cleanup.command.preview, homeDirectory)}</code>
         <CleanupBody cleanup={cleanup} homeDirectory={homeDirectory} />
-        <div className="mt-3">
+        <div className="mt-3 flex items-center gap-2">
           <TextButton onClick={onCopyCleanupCommand}>
             <Copy data-icon="inline-start" />
             复制预演命令
           </TextButton>
+          {/* Withheld until the dry-run lands: without it the dialog would have
+              no itemised list to show, which is the whole safety argument. */}
+          {cleanupReady ? (
+            <IconButton disabled={pendingCleanup} label={pendingCleanup ? "清理中" : "执行 Homebrew 清理"} onClick={onRequestCacheCleanup}>
+              <Trash2 />
+            </IconButton>
+          ) : null}
         </div>
       </CardContent>
     </Card>

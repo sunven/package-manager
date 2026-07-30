@@ -3,6 +3,7 @@ import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { DevelopmentHealthPage } from "./components/DevelopmentHealthPage";
 import { ManagerTabs } from "./components/ManagerTabs";
+import { cleanupPreviewDetails, cleanupReclaimable } from "./cleanupCopy";
 import { MaintenanceConfirmationBanner } from "./components/MaintenanceConfirmationBanner";
 import { MessageBanner } from "./components/MessageBanner";
 import { PackageTable } from "./components/PackageTable";
@@ -56,6 +57,16 @@ export function App() {
         onCancel={actions.cancelMaintenance}
         onConfirm={() => void actions.confirmMaintenance()}
         pending={state.maintenancePending}
+        reclaimDetails={
+          state.maintenanceConfirmation?.kind === "cleanupCache"
+            ? cleanupPreviewDetails(state.managerSnapshots[state.maintenanceConfirmation.managerId])
+            : null
+        }
+        reclaimable={
+          state.maintenanceConfirmation?.kind === "cleanupCache"
+            ? cleanupReclaimable(state.managerSnapshots[state.maintenanceConfirmation.managerId])
+            : null
+        }
         result={state.maintenanceResult}
       />
       {activeView === "settings" ? (
@@ -99,6 +110,7 @@ export function App() {
                 onOpenPath={(path) => void actions.openPath(path)}
                 onOpenPackage={(index) => void actions.openPackage(index)}
                 onPipFilter={actions.setPipFilter}
+                onRequestCacheCleanup={actions.requestCacheCleanup}
                 onRequestPackageUninstall={actions.requestPackageUninstall}
                 onSelectPackage={actions.selectPackage}
                 onToggleActions={actions.togglePackageActions}
@@ -117,8 +129,7 @@ export function App() {
                 manager={currentManager}
                 onCopyCleanupCommand={() => void actions.copyCleanupCommand()}
                 onCopyPath={(path) => void actions.copyPath(path)}
-                onRequestCacheClean={actions.requestCacheClean}
-                onRequestStorePrune={actions.requestStorePrune}
+                onRequestCacheCleanup={actions.requestCacheCleanup}
                 onOpenPath={(path) => void actions.openPath(path)}
                 pendingMaintenance={state.maintenancePending}
                 pendingHomebrewCleanup={state.pendingHomebrewCleanup}

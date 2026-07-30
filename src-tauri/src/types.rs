@@ -264,7 +264,6 @@ pub(crate) enum NpmMaintenanceOperation {
         #[serde(rename = "packageName")]
         package_name: String,
     },
-    CleanCache,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -274,7 +273,6 @@ pub(crate) enum PnpmMaintenanceOperation {
         #[serde(rename = "packageName")]
         package_name: String,
     },
-    StorePrune,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -348,4 +346,48 @@ pub(crate) enum ManagerStatus {
 pub(crate) struct ManagerScanSnapshot {
     pub(crate) scan_duration_ms: u128,
     pub(crate) manager: ManagerSnapshot,
+}
+
+/// Overall result of running a cleanup plan.
+///
+/// A plan is a step sequence, so "it worked" and "it broke" are not the only
+/// possibilities: a later step can fail after an earlier one already deleted
+/// something. Deliberately distinct from `ManagerStatus::Partial`, which means
+/// "manager partially usable" — a different concept (see `CONTEXT.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) enum CleanupOutcome {
+    Succeeded,
+    PartiallyCompleted,
+    Failed,
+    NoPlan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) enum CleanupStepState {
+    Succeeded,
+    Failed,
+    /// Never ran, because an earlier step failed and the plan stopped.
+    Skipped,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CleanupStepResult {
+    /// What the step did, in user-facing terms. Guarded deletions have no
+    /// command to show, so the label is the only description available.
+    pub(crate) label: String,
+    pub(crate) command: Option<CommandEnvelope>,
+    pub(crate) state: CleanupStepState,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) failure: Option<CommandFailure>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CacheCleanupRun {
+    pub(crate) manager: ManagerId,
+    pub(crate) outcome: CleanupOutcome,
+    pub(crate) steps: Vec<CleanupStepResult>,
+    pub(crate) message: Option<String>,
 }

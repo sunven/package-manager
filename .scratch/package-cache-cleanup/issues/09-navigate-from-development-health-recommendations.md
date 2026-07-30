@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Make Development Health Recommendations Navigate to Their Owning Manager
 
@@ -18,20 +18,32 @@ No batch or one-click cleanup. Per the PRD, that is the widest blast radius per 
 
 ## Acceptance criteria
 
-- [ ] Development Health recommendations are clickable.
-- [ ] Clicking a recommendation selects the owning manager's tab.
-- [ ] Clicking a recommendation executes no backend operation and opens no confirmation dialog.
-- [ ] Recommendations for nvm, Maven, and Cargo navigate normally.
-- [ ] No batch or "clean everything" affordance is added.
-- [ ] Keyboard activation works, and the clickable element carries an accessible label naming the destination.
-- [ ] Existing recommendation ordering, deduplication (`uniqueRecommendations`), and the 5-item cap are unchanged.
-- [ ] Existing `maintenanceBytes` and `totalBytes` computation is unchanged.
-- [ ] A frontend test asserts clicking a recommendation changes the selected manager.
-- [ ] A frontend test asserts clicking a recommendation triggers no cleanup invocation.
-- [ ] Existing `developmentHealth` tests pass unchanged.
-- [ ] `pnpm test` passes.
+- [x] Development Health recommendations are clickable.
+- [x] Clicking a recommendation selects the owning manager's tab.
+- [x] Clicking a recommendation executes no backend operation and opens no confirmation dialog.
+- [x] Recommendations for nvm, Maven, and Cargo navigate normally.
+- [x] No batch or "clean everything" affordance is added.
+- [x] Keyboard activation works, and the clickable element carries an accessible label naming the destination.
+- [x] Existing recommendation ordering, deduplication (`uniqueRecommendations`), and the 5-item cap are unchanged.
+- [x] Existing `maintenanceBytes` and `totalBytes` computation is unchanged.
+- [x] A frontend test asserts clicking a recommendation changes the selected manager.
+- [x] A frontend test asserts clicking a recommendation triggers no cleanup invocation.
+- [x] Existing `developmentHealth` tests pass unchanged.
+- [x] `pnpm test` passes.
 
 ## Blocked by
 
 - .scratch/package-cache-cleanup/issues/07-add-homebrew-cleanup-execution.md
 - .scratch/package-cache-cleanup/issues/08-add-docker-cleanup-execution.md
+
+## Comments
+
+- **Most of this issue was already built.** `RecommendationRow` already had a 查看 button calling `onOpenManager(recommendation.managerId)`, and `App.tsx` already wired it to select the manager and switch views. That shipped with the Development Health Page (commit `96a8df9`), before this PRD existed. Writing the issue was worth it anyway: it surfaced that the behaviour had **zero test coverage** and one real defect.
+- The defect: every row's button read 查看 and nothing else, so a screen reader user heard the same word up to five times with no way to tell which row led where. The button now carries an `aria-label` naming the manager and the recommendation.
+- Added `DevelopmentHealthPage.test.tsx` — the page had no component test at all. Four tests cover the accessible label, navigation for managers with no cleanup plan (nvm/Maven/Cargo), absence of any cleanup or confirm affordance, and absence of a batch affordance.
+- Two of my own test mistakes, worth recording because the second was a real methodology error:
+  - The fixture title contained 清理, which tripped my own assertion.
+  - More importantly, asserting the page does not contain the substring 清理 was **wrong as a test**: real recommendation text legitimately contains that word (`developmentHealth.ts:224` produces "Homebrew 清理预演有回收空间"). The assertion now targets the actual affordance labels from `cleanupCopy`, so it tests the thing it claims to test and cannot be broken by wording changes.
+- Nothing in `developmentHealth.ts` was touched, so ordering, `uniqueRecommendations` deduplication, the 5-item cap, and the byte computations are unchanged by construction.
+- Verified with `pnpm test` (73 passed, 4 new), `cargo test` (74 passed), `pnpm build`.
+- Test teeth verified by mutation: removing the `aria-label` failed 2 tests. Reverted.

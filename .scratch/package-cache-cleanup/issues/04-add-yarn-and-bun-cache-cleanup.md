@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Add Yarn and Bun Cache Cleanup
 
@@ -18,25 +18,36 @@ Yarn 2+ commands typically require running inside a Yarn project, and this app s
 
 ## Acceptance criteria
 
-- [ ] Yarn's plan is a single `yarn cache clean` step.
-- [ ] Bun's plan is a single `bun pm cache rm` step.
-- [ ] Both expose a cleanup affordance on their cache path card, following the existing `PathPanel` pattern.
-- [ ] The Yarn affordance renders when the manager status is `Unsupported` (Yarn 2+).
-- [ ] The Yarn affordance renders for Yarn Classic.
-- [ ] No cwd detection or berry pre-check is added; a failing berry command reports its stderr through the existing failure path.
-- [ ] Both confirmation dialogs show the measured cache path usage as the reclaimable figure.
-- [ ] Both dialogs show the command text that will run.
-- [ ] Confirming executes the plan; cancelling executes nothing.
-- [ ] Pending state is shown and duplicate submissions are prevented.
-- [ ] Success refreshes the manager so displayed cache usage updates.
-- [ ] Failure surfaces the underlying error without hiding existing scan data.
-- [ ] Neither affordance renders when the manager is `Missing`.
-- [ ] Table-driven Rust tests assert the exact `(program, args)` for both plans.
-- [ ] A frontend test asserts the Yarn affordance renders despite `Unsupported`.
-- [ ] A frontend test asserts the full-clear dialogs render a figure.
-- [ ] `pnpm test` and `cargo test` pass.
+- [x] Yarn's plan is a single `yarn cache clean` step.
+- [x] Bun's plan is a single `bun pm cache rm` step.
+- [x] Both expose a cleanup affordance on their cache path card, following the existing `PathPanel` pattern.
+- [x] The Yarn affordance renders when the manager status is `Unsupported` (Yarn 2+).
+- [x] The Yarn affordance renders for Yarn Classic.
+- [x] No cwd detection or berry pre-check is added; a failing berry command reports its stderr through the existing failure path.
+- [x] Both confirmation dialogs show the measured cache path usage as the reclaimable figure.
+- [x] Both dialogs show the command text that will run.
+- [x] Confirming executes the plan; cancelling executes nothing.
+- [x] Pending state is shown and duplicate submissions are prevented.
+- [x] Success refreshes the manager so displayed cache usage updates.
+- [x] Failure surfaces the underlying error without hiding existing scan data.
+- [x] Neither affordance renders when the manager is `Missing`.
+- [x] Table-driven Rust tests assert the exact `(program, args)` for both plans.
+- [x] A frontend test asserts the Yarn affordance renders despite `Unsupported`.
+- [x] A frontend test asserts the full-clear dialogs render a figure.
+- [x] `pnpm test` and `cargo test` pass.
 
 ## Blocked by
 
 - .scratch/package-cache-cleanup/issues/01-add-cache-cleanup-plan-table-and-entry-point.md
 - .scratch/package-cache-cleanup/issues/03-migrate-pnpm-store-prune-with-prune-dialog-copy.md
+
+## Comments
+
+- The Rust plans and their `(program, args)` assertions already landed in issue 01, so this slice was frontend: `cleanupCopy.ts` entries for Yarn and Bun, plus the full-clear reclaim figure the PRD calls for.
+- **The reclaim-figure machinery arrives here**, since Yarn and Bun are the first full-clear managers to need it. `CleanupCopy.reclaimSource` records where a figure may be sourced from and `cleanupReclaimable()` resolves it; absence of `reclaimSource` means show nothing. Issues 07 and 08 extend the `ReclaimSource` union for Homebrew's dry-run and Docker's `system df` reclaimable.
+- **Applied the figure to npm too**, not just Yarn and Bun. npm is a full-clear manager and the PRD assigns it path usage; leaving it as the only full-clear cleanup without a figure would have been an arbitrary gap. The measured npm cache already includes `_npx` and the plan removes both, so the number is exact.
+- **Added an explicit `Missing` guard.** The criterion was already satisfied emergently — a missing Yarn or Bun returns early from its scan and produces no cache path, so no card and no button. But that is fragile: Docker already keeps its paths when missing (`scan_docker_reports_missing_but_keeps_known_paths`), so a future manager could silently start showing a delete button while uninstalled. `PathPanel` now computes `cleanupAvailable` from the manager status once and threads one prop, rather than relying on the absence of a path.
+- Yarn 2+ renders the affordance despite `Unsupported`, verified by test. No cwd detection or berry pre-check was added, per the decision: a failing berry command reports its stderr through the existing failure path. This remains unverified against a real berry install — the machine has Yarn 1.22.22.
+- Corrected a weak test: the "no plan" case originally used Cargo, whose paths render as stacked cards that never carry a cleanup button, so it passed for the wrong reason. Switched to nvm, which renders inline path cards like npm and Yarn, so the assertion actually exercises the copy table's gate.
+- Verified with `pnpm test` (45 passed, 8 new), `cargo test` (70 passed), `pnpm build`, no warnings.
+- Test teeth verified by mutation: removing the `cleanupAvailable` guard failed the not-installed test. Reverted.

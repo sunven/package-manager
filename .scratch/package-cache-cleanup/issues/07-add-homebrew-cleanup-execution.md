@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Add Homebrew Cleanup Execution with Itemized Dry-Run Confirmation
 
@@ -22,28 +22,40 @@ Because `brew cleanup` removes old Cellar versions, cleanup can change the packa
 
 ## Acceptance criteria
 
-- [ ] Homebrew's plan is a single `brew cleanup` step with no additional flags.
-- [ ] The args contain no `--prune`, `--scrub`, or `--prune-prefix`.
-- [ ] The execute affordance lives on the existing `HomebrewCleanupCard` alongside the dry-run preview.
-- [ ] The confirmation dialog shows the exact reclaimable byte count from `HomebrewCleanupPreview`.
-- [ ] The confirmation dialog shows the itemized `rawOutput` list of what will be removed.
-- [ ] The dialog states that old versions of installed formulae will also be removed, before the user confirms.
-- [ ] The dialog shows the command text that will run.
-- [ ] The execute affordance is unavailable while the dry-run preview is still `Pending`, since there would be nothing to show.
-- [ ] Confirming executes the plan; cancelling executes nothing.
-- [ ] Pending state is shown and duplicate submissions are prevented.
-- [ ] Success triggers a full Homebrew refresh so the package list, path sizes, and the re-hydrated dry-run preview all update.
-- [ ] The reclaimable figure does not remain stale after a successful cleanup.
-- [ ] Failure surfaces the underlying error without hiding existing Homebrew scan data.
-- [ ] No affordance renders when Homebrew is `Missing`.
-- [ ] Homebrew scans continue to disable auto-update.
-- [ ] A Rust test asserts the exact `(program, args)`.
-- [ ] A frontend test asserts the dialog renders both the exact figure and the itemized list.
-- [ ] A frontend test asserts the dialog discloses the old-version removal.
-- [ ] Existing Homebrew formula/cask parsing, outdated/leaves merging, status, and dry-run tests pass unchanged.
-- [ ] `pnpm test` and `cargo test` pass.
+- [x] Homebrew's plan is a single `brew cleanup` step with no additional flags.
+- [x] The args contain no `--prune`, `--scrub`, or `--prune-prefix`.
+- [x] The execute affordance lives on the existing `HomebrewCleanupCard` alongside the dry-run preview.
+- [x] The confirmation dialog shows the exact reclaimable byte count from `HomebrewCleanupPreview`.
+- [x] The confirmation dialog shows the itemized `rawOutput` list of what will be removed.
+- [x] The dialog states that old versions of installed formulae will also be removed, before the user confirms.
+- [x] The dialog shows the command text that will run.
+- [x] The execute affordance is unavailable while the dry-run preview is still `Pending`, since there would be nothing to show.
+- [x] Confirming executes the plan; cancelling executes nothing.
+- [x] Pending state is shown and duplicate submissions are prevented.
+- [x] Success triggers a full Homebrew refresh so the package list, path sizes, and the re-hydrated dry-run preview all update.
+- [x] The reclaimable figure does not remain stale after a successful cleanup.
+- [x] Failure surfaces the underlying error without hiding existing Homebrew scan data.
+- [x] No affordance renders when Homebrew is `Missing`.
+- [x] Homebrew scans continue to disable auto-update.
+- [x] A Rust test asserts the exact `(program, args)`.
+- [x] A frontend test asserts the dialog renders both the exact figure and the itemized list.
+- [x] A frontend test asserts the dialog discloses the old-version removal.
+- [x] Existing Homebrew formula/cask parsing, outdated/leaves merging, status, and dry-run tests pass unchanged.
+- [x] `pnpm test` and `cargo test` pass.
 
 ## Blocked by
 
 - .scratch/package-cache-cleanup/issues/01-add-cache-cleanup-plan-table-and-entry-point.md
 - .scratch/package-cache-cleanup/issues/04-add-yarn-and-bun-cache-cleanup.md
+
+## Comments
+
+- Homebrew is the third entry-point shape in this feature. npm/pnpm/Yarn/Bun/uv hang their button on an inline path card, pip on a stacked path card, and Homebrew on its own `HomebrewCleanupCard`. Its copy entry deliberately carries **no `pathKind`**, so no button appears on the cache path card — the button has to sit beside the itemised dry-run output, because that pairing *is* the safety argument in ADR-0002.
+- `ReclaimSource` gained a second member, `homebrewDryRun`. This is why the union exists: Homebrew's cache path measures one thing while `brew cleanup` removes that *plus* old Cellar versions, so only the dry-run knows the real total. A test pins this by giving the cache path 500 MB and the dry-run 1.2 GB and asserting the dialog reports 1.2 GB.
+- Added `cleanupReady()`, which gates the affordance on the dry-run having landed. A `Pending` or `Failed` dry-run means there is no itemised list to confirm against, and confirming Homebrew cleanup without that list would be exactly the black-box confirmation the PRD rejects.
+- `cleanupPreviewDetails()` feeds the dialog a new `reclaimDetails` prop, rendered as a scrollable block. Only Homebrew produces it; every other manager passes null.
+- The description discloses the Cellar old-version removal up front, with "当前版本不受影响" so the disclosure does not read as more alarming than it is. Tested.
+- Refresh needs no change: `brew cleanup` alters the package list as well as sizes, and `refresh("Homebrew")` already rescans, re-measures paths, and re-hydrates the dry-run preview — so the reclaimable figure cannot stay stale and invite a second click.
+- Replaced a fragile test of my own: it counted occurrences of the button label to prove there was exactly one, which depended on `IconButton` emitting both `aria-label` and `title`. Now the component test asserts the button, the dry-run card and the itemised list coexist, and the path-card exclusion is asserted at the copy-table level where it belongs.
+- Verified with `cargo test` (74 passed), `pnpm test` (60 passed, 9 new), `pnpm build`, no warnings.
+- Test teeth verified by mutation on both sides: removing the dry-run gate failed 2 tests, and switching the Rust plan to `brew cleanup --prune=all` failed 2 Rust tests. Both reverted.

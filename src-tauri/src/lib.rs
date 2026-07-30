@@ -7,11 +7,12 @@ use crate::command::{run_command, run_command_owned};
 use crate::disk_usage::disk_usage;
 use crate::managers::{
     hydrate_homebrew_cleanup_with_runner, hydrate_pip_outdated_with_runner,
-    run_npm_maintenance_with_runner, run_pnpm_maintenance_with_runner, scan_manager_snapshot,
+    run_cache_cleanup_with_runner, run_npm_maintenance_with_runner,
+    run_pnpm_maintenance_with_runner, scan_manager_snapshot,
 };
 use crate::types::{
-    DiskUsage, HomebrewCleanupPreview, MaintenanceRunPreview, ManagerId, ManagerScanSnapshot,
-    NpmMaintenanceOperation, PipOutdatedPreview, PnpmMaintenanceOperation,
+    CacheCleanupRun, DiskUsage, HomebrewCleanupPreview, MaintenanceRunPreview, ManagerId,
+    ManagerScanSnapshot, NpmMaintenanceOperation, PipOutdatedPreview, PnpmMaintenanceOperation,
 };
 use std::path::Path;
 
@@ -67,6 +68,20 @@ async fn run_pnpm_maintenance(
     .map_err(|err| format!("pnpm maintenance failed: {err}"))
 }
 
+/// Runs the cleanup plan for `manager`.
+///
+/// `manager` is the entire parameter surface on purpose: the frontend cannot
+/// express which command runs, so the allowlist is the static plan table in
+/// `managers::cleanup` rather than a convention. See ADR-0001.
+#[tauri::command]
+async fn run_cache_cleanup(manager: ManagerId) -> Result<CacheCleanupRun, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_cache_cleanup_with_runner(manager, &run_command_owned)
+    })
+    .await
+    .map_err(|err| format!("Cache cleanup failed: {err}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -78,7 +93,8 @@ pub fn run() {
             hydrate_homebrew_cleanup,
             hydrate_pip_outdated,
             run_npm_maintenance,
-            run_pnpm_maintenance
+            run_pnpm_maintenance,
+            run_cache_cleanup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

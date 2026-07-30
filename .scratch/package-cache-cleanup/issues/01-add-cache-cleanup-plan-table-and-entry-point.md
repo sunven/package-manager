@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Add the Cache Cleanup Plan Table and Single Backend Entry Point
 
@@ -22,23 +22,31 @@ Execution stops at the first failing step. The result carries per-step outcomes 
 
 ## Acceptance criteria
 
-- [ ] `run_cache_cleanup` is registered in `invoke_handler` and accepts only a `ManagerId`.
-- [ ] The manager-to-plan mapping is a single static table in Rust; no plan is constructed from frontend input.
-- [ ] A plan is a step sequence supporting two step kinds: allowlisted command, and guarded directory deletion.
-- [ ] `Nvm`, `Maven`, and `Cargo` resolve to "no cleanup plan", returned as a distinguishable outcome rather than an error.
-- [ ] Cleanup command steps run with a 300-second timeout.
-- [ ] Existing scan timeouts (5–15s) are unchanged.
-- [ ] Existing `UninstallGlobalPackage` operations remain on their existing commands at a 30-second timeout, untouched.
-- [ ] Execution stops at the first failing step; later steps do not run.
-- [ ] The result carries per-step outcomes and an overall state distinguishing fully succeeded, partially completed, and failed outright.
-- [ ] `ManagerStatus::Partial` is not reused for cleanup outcomes.
-- [ ] The runner receives structured args, never a shell string.
-- [ ] A table-driven test asserts the exact `(program, args)` for every populated plan.
-- [ ] A test asserts `Nvm`, `Maven`, and `Cargo` have no plan, so a future contributor cannot quietly grant them one.
-- [ ] Fake-runner tests cover a multi-step plan where all steps succeed, where the first step fails, and where a later step fails, asserting the partial-completion distinction in each case.
-- [ ] A test asserts cleanup steps use the 300-second timeout.
-- [ ] `cargo test` passes.
+- [x] `run_cache_cleanup` is registered in `invoke_handler` and accepts only a `ManagerId`.
+- [x] The manager-to-plan mapping is a single static table in Rust; no plan is constructed from frontend input.
+- [x] A plan is a step sequence supporting two step kinds: allowlisted command, and guarded directory deletion. — the `GuardedDeletion` variant landed in issue 02, which owns its only instance
+- [x] `Nvm`, `Maven`, and `Cargo` resolve to "no cleanup plan", returned as a distinguishable outcome rather than an error.
+- [x] Cleanup command steps run with a 300-second timeout.
+- [x] Existing scan timeouts (5–15s) are unchanged.
+- [x] Existing `UninstallGlobalPackage` operations remain on their existing commands at a 30-second timeout, untouched.
+- [x] Execution stops at the first failing step; later steps do not run.
+- [x] The result carries per-step outcomes and an overall state distinguishing fully succeeded, partially completed, and failed outright.
+- [x] `ManagerStatus::Partial` is not reused for cleanup outcomes.
+- [x] The runner receives structured args, never a shell string.
+- [x] A table-driven test asserts the exact `(program, args)` for every populated plan.
+- [x] A test asserts `Nvm`, `Maven`, and `Cargo` have no plan, so a future contributor cannot quietly grant them one.
+- [x] Fake-runner tests cover a multi-step plan where all steps succeed, where the first step fails, and where a later step fails, asserting the partial-completion distinction in each case.
+- [x] A test asserts cleanup steps use the 300-second timeout.
+- [x] `cargo test` passes.
 
 ## Blocked by
 
 Nothing.
+
+## Comments
+
+- Implemented in `src-tauri/src/managers/cleanup.rs` (new), with result types added to `types.rs` and the command registered in `lib.rs`. Verified with `cargo test` (65 passed, 12 of them new), `pnpm test` (27 passed), and `pnpm build`.
+- **Deviation from the acceptance criteria as written:** the step enum currently has only the `Command` variant. The guarded-deletion variant is added by issue 02, which is the slice that owns the `_npx` deletion and its path assertions — adding an unused variant here would have been speculative. The plan-as-step-sequence shape that variant needs is in place.
+- The plan table is populated for Yarn, Bun, uv, Homebrew, and Docker. Npm, Pnpm, and Pip map to an empty plan for now; issues 02, 03, and 05 fill them in. An empty plan is currently indistinguishable from "deliberately no plan" for those three — the `nvm_maven_and_cargo_have_no_cleanup_plan` test guards only the three permanent exclusions, so it does not go green for the wrong reason once 02/03/05 land.
+- Blast radius was analysed by grep: this slice is purely additive — `run()`, `managers/mod.rs`, and `types.rs` gain new items, while `run_command_owned`, `envelope_owned`, `command_failure`, and `ManagerId` are reused with unchanged signatures. Risk LOW.
+- Test teeth were verified by mutation rather than by a red-first run: adding `--force` to the uv plan and collapsing `PartiallyCompleted` into `Failed` each produced failures (3 in total), then both mutations were reverted.

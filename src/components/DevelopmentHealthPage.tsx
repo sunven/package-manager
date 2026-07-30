@@ -195,7 +195,16 @@ function RecommendationRow({
         <p className="mt-2 truncate text-sm font-medium">{recommendation.title}</p>
         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{recommendation.detail}</p>
       </div>
-      <Button className="w-full sm:w-auto" onClick={() => onOpenManager(recommendation.managerId)} size="sm" type="button" variant="outline">
+      {/* Navigates only. Execution stays on the manager tab, beside the cache
+          path and its measured size — the figures that justify confirming. */}
+      <Button
+        aria-label={`查看 ${managerLabel(recommendation.managerId)}：${recommendation.title}`}
+        className="w-full sm:w-auto"
+        onClick={() => onOpenManager(recommendation.managerId)}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
         <ArrowRight data-icon="inline-start" />
         查看
       </Button>

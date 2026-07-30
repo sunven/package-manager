@@ -1,4 +1,4 @@
-import { Copy, ExternalLink } from "lucide-react";
+import { Copy, ExternalLink, Trash2 } from "lucide-react";
 import { environmentKindLabels, homebrewFilterLabels, mavenFilterLabels, packageKindLabels, pipFilterLabels, signalLabels } from "../constants";
 import type {
   HomebrewFilter,
@@ -13,10 +13,12 @@ import type {
 import type { MaintenanceRequest } from "../state";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel } from "../utils/format";
 import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, type IndexedPackage } from "../utils/filters";
+import { cleanupCopyFor } from "../cleanupCopy";
 import { cx } from "../utils/classNames";
 import { EmptyState, IconButton, SignalBadge, StatCard, StatusBadge } from "./ui";
 import { PackageActions } from "./PackageActions";
 import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 
@@ -32,6 +34,7 @@ interface PackageTableProps {
   onCopyPath: (path: string) => void;
   onOpenPath: (path: string) => void;
   onPipFilter: (filter: PipFilter) => void;
+  onRequestCacheCleanup: () => void;
   onRequestPackageUninstall: (index: number) => void;
   onSelectPackage: (index: number) => void;
   onToggleActions: (index: number) => void;
@@ -95,7 +98,12 @@ export function PackageTable(props: PackageTableProps) {
   if (manager.id === "Docker") {
     return (
       <>
-        <DockerSummary health={manager.docker} />
+        <DockerSummary
+          cleanupAvailable={manager.status !== "Missing"}
+          health={manager.docker}
+          onRequestCacheCleanup={props.onRequestCacheCleanup}
+          pendingCleanup={props.pendingMaintenance?.kind === "cleanupCache" && props.pendingMaintenance.managerId === "Docker"}
+        />
         <SpecializedTable emptyMessage="未找到 Docker 镜像、容器或卷" heading={["名称", "状态 / 大小", "信号", "位置", "操作"]} packages={indexedPackages(manager)} {...props} />
       </>
     );
@@ -368,9 +376,20 @@ function PipSummary({ health, homeDirectory }: { health: PipEnvironmentHealth | 
   );
 }
 
-function DockerSummary({ health }: { health: DockerResourceHealth | null }) {
+function DockerSummary({
+  cleanupAvailable,
+  health,
+  onRequestCacheCleanup,
+  pendingCleanup,
+}: {
+  cleanupAvailable: boolean;
+  health: DockerResourceHealth | null;
+  onRequestCacheCleanup: () => void;
+  pendingCleanup: boolean;
+}) {
   if (!health) return null;
   const diskRows = health.diskUsage.slice(0, 4);
+  const cleanupCopy = cleanupAvailable ? cleanupCopyFor("Docker") : null;
 
   return (
     <div className="flex flex-col gap-2 p-4">
@@ -389,6 +408,16 @@ function DockerSummary({ health }: { health: DockerResourceHealth | null }) {
         </div>
       ) : health.diskUsageStatus === "Failed" ? (
         <p className="text-sm font-medium text-destructive">{displayMessage(health.diskUsageMessage ?? "Docker disk usage failed")}</p>
+      ) : null}
+      {/* Anchored here rather than on a path card: the plan prunes build cache
+          and dangling images, and these are the figures that justify running it. */}
+      {cleanupCopy ? (
+        <div className="mt-1 flex">
+          <Button disabled={pendingCleanup} onClick={onRequestCacheCleanup} size="sm" type="button" variant="outline">
+            <Trash2 data-icon="inline-start" />
+            {pendingCleanup ? "清理中" : cleanupCopy.action}
+          </Button>
+        </div>
       ) : null}
     </div>
   );

@@ -47,6 +47,7 @@ function renderPackageTable(manager: ManagerSnapshot) {
       onCopyPath={noop}
       onOpenPath={noop}
       onPipFilter={noop}
+      onRequestCacheCleanup={noop}
       onRequestPackageUninstall={noop}
       onSelectPackage={noop}
       onToggleActions={noop}

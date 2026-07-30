@@ -190,14 +190,10 @@ export interface PipOutdatedPreview {
   failure: CommandFailure | null;
 }
 
-export type NpmMaintenanceOperation =
-  | {
-      kind: "uninstallGlobalPackage";
-      packageName: string;
-    }
-  | {
-      kind: "cleanCache";
-    };
+export type NpmMaintenanceOperation = {
+  kind: "uninstallGlobalPackage";
+  packageName: string;
+};
 
 export type PnpmMaintenanceOperation =
   | {
@@ -207,6 +203,25 @@ export type PnpmMaintenanceOperation =
   | {
       kind: "storePrune";
     };
+
+export type CleanupOutcome = "Succeeded" | "PartiallyCompleted" | "Failed" | "NoPlan";
+export type CleanupStepState = "Succeeded" | "Failed" | "Skipped";
+
+export interface CleanupStepResult {
+  label: string;
+  command: CommandEnvelope | null;
+  state: CleanupStepState;
+  stdout: string;
+  stderr: string;
+  failure: CommandFailure | null;
+}
+
+export interface CacheCleanupRun {
+  manager: ManagerId;
+  outcome: CleanupOutcome;
+  steps: CleanupStepResult[];
+  message: string | null;
+}
 
 export interface MaintenanceRunPreview {
   status: AsyncStatus;

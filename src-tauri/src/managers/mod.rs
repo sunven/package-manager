@@ -1,5 +1,6 @@
 mod bun;
 mod cargo;
+mod cleanup;
 mod docker;
 mod homebrew;
 mod maven;
@@ -22,6 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+pub(crate) use cleanup::run_cache_cleanup_with_runner;
 pub(crate) use homebrew::hydrate_homebrew_cleanup_with_runner;
 pub(crate) use node::{run_npm_maintenance_with_runner, run_pnpm_maintenance_with_runner};
 pub(crate) use pip::hydrate_pip_outdated_with_runner;
@@ -442,66 +444,11 @@ info "alpha@1.0.0" has binaries:
             NpmMaintenanceOperation::UninstallGlobalPackage { package_name } => {
                 assert_eq!(package_name, "@scope/tool");
             }
-            NpmMaintenanceOperation::CleanCache => panic!("expected uninstall operation"),
         }
     }
 
-    #[test]
-    fn run_npm_maintenance_cleans_cache_with_force() {
-        let result = run_npm_maintenance_with_runner(
-            NpmMaintenanceOperation::CleanCache,
-            &|program, args, timeout| match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-                ["config", "get", "cache"] => Ok(fake_run(
-                    program,
-                    &["config", "get", "cache"],
-                    timeout,
-                    "/tmp/npm-cache\n",
-                )),
-                ["cache", "clean", "--force"] => Ok(fake_run(
-                    program,
-                    &["cache", "clean", "--force"],
-                    timeout,
-                    "npm cache cleaned",
-                )),
-                other => panic!("unexpected npm args: {other:?}"),
-            },
-        );
-
-        assert_eq!(result.status, AsyncStatus::Ready);
-        assert_eq!(result.command.preview, "npm cache clean --force");
-    }
-
-    #[test]
-    fn run_npm_maintenance_removes_npx_cache_after_cleaning_npm_cache() {
-        let root = temp_dir("npm-cache");
-        let _guard = TempDirGuard(root.clone());
-        let npx = root.join("_npx");
-        fs::create_dir_all(&npx).expect("create npx cache");
-        write_file(&npx.join("tool/package.json"), b"{}");
-
-        let result = run_npm_maintenance_with_runner_and_cache_cleaner(
-            NpmMaintenanceOperation::CleanCache,
-            &|program, args, timeout| match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-                ["config", "get", "cache"] => Ok(fake_run(
-                    program,
-                    &["config", "get", "cache"],
-                    timeout,
-                    &format!("{}\n", root.display()),
-                )),
-                ["cache", "clean", "--force"] => Ok(fake_run(
-                    program,
-                    &["cache", "clean", "--force"],
-                    timeout,
-                    "npm cache cleaned",
-                )),
-                other => panic!("unexpected npm args: {other:?}"),
-            },
-            &remove_dir_all_if_exists,
-        );
-
-        assert_eq!(result.status, AsyncStatus::Ready);
-        assert!(!npx.exists());
-    }
+    // npm cache cleanup and the `_npx` guarded deletion moved to the cleanup plan
+    // table; their tests live in `managers::cleanup`.
 
     #[test]
     fn run_npm_maintenance_reports_failed_uninstall() {
@@ -562,20 +509,8 @@ info "alpha@1.0.0" has binaries:
         assert_eq!(result.command.preview, "pnpm remove --global @scope/tool");
     }
 
-    #[test]
-    fn run_pnpm_maintenance_prunes_store_with_structured_args() {
-        let result = run_pnpm_maintenance_with_runner(
-            PnpmMaintenanceOperation::StorePrune,
-            &|program, args, timeout| {
-                assert_eq!(program, "pnpm");
-                assert_eq!(args, &["store".to_string(), "prune".to_string()]);
-                Ok(fake_run(program, &["store", "prune"], timeout, "Removed 2 packages"))
-            },
-        );
-
-        assert_eq!(result.status, AsyncStatus::Ready);
-        assert_eq!(result.command.preview, "pnpm store prune");
-    }
+    // pnpm store prune moved to the cleanup plan table; its tests live in
+    // `managers::cleanup`.
 
     #[test]
     fn run_pnpm_maintenance_reports_failed_uninstall() {
@@ -608,43 +543,26 @@ info "alpha@1.0.0" has binaries:
     }
 
     #[test]
-    fn run_pnpm_maintenance_reports_failed_store_prune() {
-        let result = run_pnpm_maintenance_with_runner(
-            PnpmMaintenanceOperation::StorePrune,
-            &|program, args, timeout| {
-                assert_eq!(program, "pnpm");
-                assert_eq!(args, &["store".to_string(), "prune".to_string()]);
-                Ok(fake_failed_run(
-                    "pnpm",
-                    &["store", "prune"],
-                    timeout,
-                    "store prune failed",
-                ))
-            },
-        );
-
-        assert_eq!(result.status, AsyncStatus::Failed);
-        assert_eq!(result.stderr, "store prune failed");
-        assert!(result.failure.is_some());
-    }
-
-    #[test]
     fn pnpm_maintenance_operation_accepts_frontend_camel_case_payload() {
         let uninstall: PnpmMaintenanceOperation = serde_json::from_str(
             r#"{"kind":"uninstallGlobalPackage","packageName":"@scope/tool"}"#,
         )
         .expect("deserialize pnpm uninstall payload");
-        let store_prune: PnpmMaintenanceOperation =
-            serde_json::from_str(r#"{"kind":"storePrune"}"#)
-                .expect("deserialize pnpm store prune payload");
 
         match uninstall {
             PnpmMaintenanceOperation::UninstallGlobalPackage { package_name } => {
                 assert_eq!(package_name, "@scope/tool");
             }
-            PnpmMaintenanceOperation::StorePrune => panic!("expected uninstall operation"),
         }
-        assert!(matches!(store_prune, PnpmMaintenanceOperation::StorePrune));
+    }
+
+    #[test]
+    fn pnpm_maintenance_no_longer_accepts_a_store_prune_payload() {
+        // Store prune belongs to the cleanup plan table now. The uninstall
+        // command must not keep a second route to it.
+        assert!(
+            serde_json::from_str::<PnpmMaintenanceOperation>(r#"{"kind":"storePrune"}"#).is_err()
+        );
     }
 
     #[test]

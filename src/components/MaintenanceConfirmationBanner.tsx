@@ -1,4 +1,6 @@
 import type { MaintenanceRequest, MaintenanceResult } from "../state";
+import { cleanupCopyFor } from "../cleanupCopy";
+import { managerLabel } from "../utils/format";
 import { Button } from "../../components/ui/button";
 import {
   Dialog,
@@ -12,12 +14,21 @@ import {
 export function MaintenanceConfirmationBanner({
   confirmation,
   pending,
+  reclaimable,
+  reclaimDetails,
   result,
   onCancel,
   onConfirm,
 }: {
   confirmation: MaintenanceRequest | null;
   pending: MaintenanceRequest | null;
+  /** Reclaimable-space figure, or null when none can be shown honestly. */
+  reclaimable: string | null;
+  /**
+   * Itemised list of what will be removed, when the manager can produce one
+   * before running. Only Homebrew can, via its dry-run.
+   */
+  reclaimDetails: string | null;
   result: MaintenanceResult | null;
   onCancel: () => void;
   onConfirm: () => void;
@@ -40,10 +51,26 @@ export function MaintenanceConfirmationBanner({
           {visibleResult ? null : <DialogDescription>{copy.description}</DialogDescription>}
         </DialogHeader>
         {visibleResult ? (
-          <p className={visibleResult.tone === "bad" ? "text-sm text-destructive" : "text-sm text-muted-foreground"}>
+          <p className={resultToneClassName(visibleResult.tone)}>
             {visibleResult.message}
           </p>
-        ) : null}
+        ) : (
+          <>
+            {reclaimable && confirmation.kind === "cleanupCache" ? (
+              <p className="text-sm text-muted-foreground">
+                预计回收 <strong className="font-medium text-foreground">{reclaimable}</strong>
+              </p>
+            ) : null}
+            {confirmationCopy.reclaimNote ? (
+              <p className="text-sm text-muted-foreground">{confirmationCopy.reclaimNote}</p>
+            ) : null}
+            {reclaimDetails ? (
+              <pre className="max-h-48 overflow-auto rounded-md bg-muted p-3 text-xs leading-5 text-muted-foreground">
+                {reclaimDetails}
+              </pre>
+            ) : null}
+          </>
+        )}
         <DialogFooter>
           {visibleResult ? (
             <Button onClick={onCancel} size="sm" type="button" variant="outline">
@@ -65,68 +92,75 @@ export function MaintenanceConfirmationBanner({
   );
 }
 
+function resultToneClassName(tone: MaintenanceResult["tone"]) {
+  if (tone === "bad") return "text-sm text-destructive";
+  // Partial completion is neither success nor failure; it needs its own weight.
+  if (tone === "warn") return "text-sm text-amber-600 dark:text-amber-500";
+  return "text-sm text-muted-foreground";
+}
+
 function maintenanceConfirmationCopy(confirmation: MaintenanceRequest) {
-  if (confirmation.kind === "cleanCache") {
+  if (confirmation.kind === "cleanupCache") {
+    const copy = cleanupCopyFor(confirmation.managerId);
+    if (!copy) {
+      // Unreachable via the UI: managers without a plan expose no affordance.
+      return {
+        title: "无法清理",
+        description: `${managerLabel(confirmation.managerId)} 没有可用的清理方案。`,
+        confirm: "关闭",
+        reclaimNote: undefined as string | undefined,
+      };
+    }
     return {
-      title: "确认清理 npm 缓存",
-      description: "将执行 npm cache clean --force。清理后会刷新 npm 缓存占用。",
-      confirm: "清理缓存",
+      title: copy.title,
+      description: copy.description,
+      confirm: copy.confirm,
+      reclaimNote: copy.reclaimNote,
     };
   }
 
-  if (confirmation.kind === "storePrune") {
-    return {
-      title: "确认清理 pnpm store",
-      description: "将执行 pnpm store prune，清理不再引用的 store 内容。清理后会刷新 pnpm store 占用。",
-      confirm: "清理 store",
-    };
-  }
-
-  const managerLabel = confirmation.managerId === "Pnpm" ? "pnpm" : "npm";
+  const label = managerLabel(confirmation.managerId);
   const command = confirmation.managerId === "Pnpm"
     ? `pnpm remove --global ${confirmation.packageName}`
     : `npm uninstall -g ${confirmation.packageName}`;
   return {
-    title: `确认卸载 ${managerLabel} 全局包`,
-    description: `将执行 ${command}。卸载后会刷新 ${managerLabel} 包列表。`,
+    title: `确认卸载 ${label} 全局包`,
+    description: `将执行 ${command}。卸载后会刷新 ${label} 包列表。`,
     confirm: "卸载",
+    reclaimNote: undefined as string | undefined,
   };
 }
 
 function maintenanceResultCopy(request: MaintenanceRequest, result: MaintenanceResult) {
-  if (request.kind === "cleanCache") {
-    return result.tone === "bad"
-      ? {
-        title: "npm 缓存清理失败",
+  if (request.kind === "cleanupCache") {
+    const copy = cleanupCopyFor(request.managerId);
+    if (result.tone === "bad") {
+      return {
+        title: copy?.failed ?? "清理失败",
         description: "清理没有完成。请查看下方错误信息。",
-      }
-      : {
-        title: "npm 缓存已清理",
-          description: "npm 和 npx 缓存清理已完成，缓存占用已刷新。",
       };
+    }
+    if (result.tone === "warn") {
+      return {
+        title: `${managerLabel(request.managerId)} 清理部分完成`,
+        description: "部分步骤已经删除了内容，后续步骤没有完成。请查看下方明细再决定是否重试。",
+      };
+    }
+    return {
+      title: copy?.succeeded ?? "清理完成",
+      description: "清理已完成，占用已刷新。",
+    };
   }
 
-  if (request.kind === "storePrune") {
-    return result.tone === "bad"
-      ? {
-        title: "pnpm store 清理失败",
-        description: "清理没有完成。请查看下方错误信息。",
-      }
-      : {
-        title: "pnpm store 已清理",
-        description: "pnpm store prune 已完成，store 占用已刷新。",
-      };
-  }
-
-  const managerLabel = request.managerId === "Pnpm" ? "pnpm" : "npm";
+  const label = managerLabel(request.managerId);
 
   return result.tone === "bad"
     ? {
-      title: `${managerLabel} 全局包卸载失败`,
+      title: `${label} 全局包卸载失败`,
       description: `没有完成 ${request.packageName} 的卸载。请查看下方错误信息。`,
     }
     : {
-      title: `${managerLabel} 全局包已卸载`,
-      description: `${request.packageName} 已卸载，${managerLabel} 包列表已刷新。`,
+      title: `${label} 全局包已卸载`,
+      description: `${request.packageName} 已卸载，${label} 包列表已刷新。`,
     };
 }

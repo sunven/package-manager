@@ -35,13 +35,14 @@ export type MaintenanceRequest =
       packageIndex: number;
       packageName: string;
     }
+  /**
+   * One request kind covers every manager. With a single backend entry point,
+   * "clean npm's cache" and "prune pnpm's store" are the same operation applied
+   * to different managers — the plan table holds what differs.
+   */
   | {
-      kind: "cleanCache";
-      managerId: "Npm";
-    }
-  | {
-      kind: "storePrune";
-      managerId: "Pnpm";
+      kind: "cleanupCache";
+      managerId: ManagerId;
     };
 
 export type NpmMaintenanceRequest = Extract<MaintenanceRequest, { managerId: "Npm" }>;
@@ -53,7 +54,9 @@ export interface MaintenanceUiState {
 }
 
 export interface MaintenanceResult {
-  tone: "ok" | "bad";
+  /// `warn` is a partially completed multi-step cleanup: some steps deleted
+  /// things, a later one did not. Neither success nor failure describes it.
+  tone: "ok" | "bad" | "warn";
   message: string;
 }
 
@@ -109,20 +112,14 @@ export function requestPackageUninstall(
   };
 }
 
-export function requestNpmCacheClean(state: MaintenanceUiState): MaintenanceUiState {
+export function requestCacheCleanup(
+  state: MaintenanceUiState,
+  managerId: ManagerId,
+): MaintenanceUiState {
   if (state.pending) return state;
   return {
     ...state,
-    confirmation: { kind: "cleanCache", managerId: "Npm" },
-    result: null,
-  };
-}
-
-export function requestPnpmStorePrune(state: MaintenanceUiState): MaintenanceUiState {
-  if (state.pending) return state;
-  return {
-    ...state,
-    confirmation: { kind: "storePrune", managerId: "Pnpm" },
+    confirmation: { kind: "cleanupCache", managerId },
     result: null,
   };
 }
@@ -168,4 +165,48 @@ export function completeMaintenanceOperation(state: MaintenanceUiState): Mainten
 
 export function failMaintenanceOperation(state: MaintenanceUiState, message: string): MaintenanceUiState {
   return finishMaintenanceOperationWithResult(state, { tone: "bad", message });
+}
+
+export interface CleanupStepLike {
+  label: string;
+  command: { preview: string } | null;
+  state: "Succeeded" | "Failed" | "Skipped";
+  stdout: string;
+  stderr: string;
+  failure: { message: string } | null;
+}
+
+export interface CacheCleanupRunLike {
+  outcome: "Succeeded" | "PartiallyCompleted" | "Failed" | "NoPlan";
+  steps: CleanupStepLike[];
+  message: string | null;
+}
+
+function stepName(step: CleanupStepLike) {
+  return step.command?.preview ?? step.label;
+}
+
+export function cacheCleanupStepSummary(run: CacheCleanupRunLike) {
+  return run.steps.map(stepName).join("；");
+}
+
+/**
+ * Names the steps that ran and the step that broke.
+ *
+ * A partially completed plan already deleted something. Telling the user only
+ * "it failed" would send them back to redo work that already happened.
+ */
+export function cacheCleanupPartialMessage(run: CacheCleanupRunLike) {
+  const done = run.steps.filter((step) => step.state === "Succeeded").map(stepName);
+  const failed = run.steps.find((step) => step.state === "Failed");
+  const reason = failed?.failure?.message ?? run.message ?? "未知原因";
+
+  return `已完成：${done.join("；")}。未完成：${failed ? stepName(failed) : "后续步骤"}（${reason}）`;
+}
+
+export function cacheCleanupFailureMessage(run: CacheCleanupRunLike) {
+  const failed = run.steps.find((step) => step.state === "Failed");
+  return (
+    failed?.stderr || failed?.stdout || failed?.failure?.message || run.message || "清理失败"
+  );
 }

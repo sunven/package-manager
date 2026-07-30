@@ -236,6 +236,28 @@ where
     finish(snapshot)
 }
 
+/// Resolves the interpreter to run a cleanup through.
+///
+/// Deliberately re-resolved instead of carried over from the scan: cleanup
+/// should act on the Python environment in effect *now*, not the one that was
+/// active when the scan ran. It is never accepted from the frontend — doing so
+/// would let an arbitrary program path reach the command runner and would undo
+/// the guarantee that the frontend cannot choose what executes (ADR-0001).
+pub(crate) fn resolve_python_for_cleanup<F>(runner: &F) -> Result<String, String>
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    for program in ["python3", "python"] {
+        if let Ok(run) = runner(program, &["--version".to_string()], Duration::from_secs(5)) {
+            if run.exit_code == Some(0) {
+                return Ok(program.to_string());
+            }
+        }
+    }
+
+    Err("python3 and python are not installed or are not on PATH".to_string())
+}
+
 pub(super) fn detect_python<F>(runner: &F, snapshot: &mut ManagerSnapshot) -> Option<String>
 where
     F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,

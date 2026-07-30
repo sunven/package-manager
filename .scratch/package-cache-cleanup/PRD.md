@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # PRD: Cache Cleanup Execution Across Package Managers
 
@@ -178,3 +178,11 @@ Two ADRs govern this work and should be read before changing its shape:
 - `docs/adr/0002-homebrew-cleanup-exceeds-cache-scope.md` — why Homebrew is knowingly allowed to exceed the cache-only scope.
 
 `CONTEXT.md` defines the vocabulary this PRD uses, including the distinction between 清理 and 卸载, and the correction that `ManagerStatus::Unsupported` denies only a global package listing.
+
+## Comments
+
+- All 10 issues complete. 8 of 11 managers have cleanup; nvm, Maven and Cargo are permanently excluded per ADR-0001.
+- Verified with `cargo test` (74 passed), `pnpm test` (73 passed), `pnpm build`, `cargo fmt`, no compiler warnings.
+- Deviations from the PRD as written, all recorded in the owning issue: the request kinds `cleanCache`/`storePrune` were merged into one `cleanupCache` + `managerId` (issue 03); Docker shows per-resource-type reclaimable rows rather than one aggregate figure (issue 08); most of issue 09 turned out to already exist.
+- Blast radius was analysed by grep for every slice, and recorded per issue.
+- Four entry-point shapes emerged rather than the one the PRD implied: inline path card (npm/pnpm/Yarn/Bun/uv), stacked path card (pip), dedicated dry-run card (Homebrew), resource summary panel (Docker). All four read from the same `cleanupCopy` table and call the same `run_cache_cleanup(managerId)`.
