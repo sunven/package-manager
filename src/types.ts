@@ -265,3 +265,66 @@ export interface UiMessage {
   title: string;
   message: string;
 }
+
+export interface BuildArtifactSettings {
+  rootId: string | null;
+  rootPath: string | null;
+  maxDepth: number;
+}
+
+export type BuildArtifactScanStatus = "Ready" | "Partial";
+export type BuildArtifactCandidateStatus = "Ready" | "Symlink" | "NotDirectory" | "Unrecognized";
+export type BuildArtifactMeasurementStatus = "Pending" | "Ready" | "Partial" | "Missing" | "PermissionDenied" | "Error";
+export type BuildArtifactCleanupStatus = "Succeeded" | "PartiallyCompleted" | "Failed" | "Skipped" | "Rejected";
+
+export interface BuildArtifactMeasurement {
+  status: BuildArtifactMeasurementStatus;
+  bytes: number | null;
+  human: string | null;
+  files: number;
+  directories: number;
+  skipped: number;
+  latestModifiedMs: number | null;
+  message: string | null;
+}
+
+export interface BuildArtifactCandidate {
+  candidateId: string;
+  projectPath: string;
+  targetPath: string;
+  status: BuildArtifactCandidateStatus;
+  message: string | null;
+  measurement: BuildArtifactMeasurement;
+}
+
+export interface BuildArtifactScanError {
+  path: string;
+  message: string;
+}
+
+export interface BuildArtifactScan {
+  rootId: string;
+  scanId: string;
+  rootPath: string;
+  maxDepth: number;
+  status: BuildArtifactScanStatus;
+  candidates: BuildArtifactCandidate[];
+  skipped: number;
+  errors: BuildArtifactScanError[];
+  cargoAvailable: boolean;
+  cargoMessage: string | null;
+}
+
+export interface BuildArtifactCleanupResult {
+  candidateId: string;
+  status: BuildArtifactCleanupStatus;
+  command: CommandEnvelope | null;
+  beforeBytes: number;
+  afterBytes: number;
+  releasedBytes: number;
+  measurement: BuildArtifactMeasurement;
+  stdout: string;
+  stderr: string;
+  message: string | null;
+  failure: CommandFailure | null;
+}

@@ -1,4 +1,4 @@
-import { Activity, List, RefreshCw, Settings } from "lucide-react";
+import { Activity, Hammer, List, RefreshCw, Settings } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { managerLabel } from "../utils/format";
 import type { ManagerId } from "../types";
@@ -8,6 +8,7 @@ export function Shell({
   activeView,
   onRefresh,
   onShowHealth,
+  onShowBuildArtifacts,
   onShowManagers,
   onShowSettings,
   scanMeta,
@@ -16,9 +17,10 @@ export function Shell({
   totalBytes,
 }: {
   children: React.ReactNode;
-  activeView: "health" | "managers" | "settings";
+  activeView: "health" | "managers" | "artifacts" | "settings";
   onRefresh: () => void;
   onShowHealth: () => void;
+  onShowBuildArtifacts: () => void;
   onShowManagers: () => void;
   onShowSettings: () => void;
   scanMeta: string;
@@ -57,6 +59,15 @@ export function Shell({
                 包管理器
               </Button>
               <Button
+                onClick={onShowBuildArtifacts}
+                size="sm"
+                type="button"
+                variant={activeView === "artifacts" ? "secondary" : "ghost"}
+              >
+                <Hammer data-icon="inline-start" />
+                构建产物
+              </Button>
+              <Button
                 onClick={onShowSettings}
                 size="sm"
                 type="button"
@@ -66,21 +77,25 @@ export function Shell({
                 设置
               </Button>
             </div>
-            <div className="flex h-9 min-w-36 flex-col justify-center text-right">
-              <div className="text-xs font-medium leading-4 text-muted-foreground">总占用</div>
-              <div className="text-xl font-medium leading-5 tabular-nums">{totalBytes}</div>
-            </div>
-            <Button
-              disabled={scanning}
-              onClick={onRefresh}
-              size="lg"
-              type="button"
-            >
-              <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
-              {scanning ? `正在扫描 ${managerLabel(selectedManager)}...` : `刷新 ${managerLabel(selectedManager)}`}
-            </Button>
+            {activeView === "artifacts" ? null : (
+              <>
+                <div className="flex h-9 min-w-36 flex-col justify-center text-right">
+                  <div className="text-xs font-medium leading-4 text-muted-foreground">总占用</div>
+                  <div className="text-xl font-medium leading-5 tabular-nums">{totalBytes}</div>
+                </div>
+                <Button
+                  disabled={scanning}
+                  onClick={onRefresh}
+                  size="lg"
+                  type="button"
+                >
+                  <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
+                  {scanning ? `正在扫描 ${managerLabel(selectedManager)}...` : `刷新 ${managerLabel(selectedManager)}`}
+                </Button>
+              </>
+            )}
           </div>
-          <div className="min-h-5 text-right text-xs text-muted-foreground">{scanMeta}</div>
+          <div className="min-h-5 text-right text-xs text-muted-foreground">{activeView === "artifacts" ? "" : scanMeta}</div>
         </div>
       </header>
       {children}

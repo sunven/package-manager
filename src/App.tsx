@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
+import { useBuildArtifacts } from "./hooks/useBuildArtifacts";
+import { BuildArtifactsPage } from "./components/BuildArtifactsPage";
 import { DevelopmentHealthPage } from "./components/DevelopmentHealthPage";
 import { ManagerTabs } from "./components/ManagerTabs";
 import { cleanupPreviewDetails, cleanupReclaimable } from "./cleanupCopy";
@@ -15,7 +17,8 @@ import { Toaster } from "../components/ui/sonner";
 
 export function App() {
   const state = usePackageManagers();
-  const [activeView, setActiveView] = useState<"health" | "managers" | "settings">("health");
+  const buildArtifacts = useBuildArtifacts();
+  const [activeView, setActiveView] = useState<"health" | "managers" | "artifacts" | "settings">("health");
   const { actions, currentManager, scanningManagers, selectedManager } = state;
   const scanning = scanningManagers.has(selectedManager);
   const developmentHealth = useMemo(
@@ -37,6 +40,10 @@ export function App() {
     <Shell
       activeView={activeView}
       onRefresh={() => void actions.refresh()}
+      onShowBuildArtifacts={() => {
+        actions.closePackageActions();
+        setActiveView("artifacts");
+      }}
       onShowHealth={() => {
         actions.closePackageActions();
         setActiveView("health");
@@ -69,7 +76,9 @@ export function App() {
         }
         result={state.maintenanceResult}
       />
-      {activeView === "settings" ? (
+      {activeView === "artifacts" ? (
+        <BuildArtifactsPage controller={buildArtifacts} homeDirectory={state.homeDirectory} />
+      ) : activeView === "settings" ? (
         <SettingsPage
           enabledManagers={state.enabledManagers}
           managerSnapshots={state.managerSnapshots}

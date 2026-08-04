@@ -1,6 +1,6 @@
 # 清理动作一律委托给管理器自己的 CLI
 
-本工具需要为多个包管理器提供缓存清理能力，但其中 nvm、Maven、Cargo 三者**没有任何官方子命令**可以清理自己的缓存（nvm 是 shell function 无法 spawn；`~/.m2/repository` 本身就是缓存且无清理命令；`cargo clean` 清的是项目 target 而非 `CARGO_HOME`，`cargo cache` 是第三方插件）。我们决定：**清理只做委托清理**——本工具从一张 Rust 静态表中挑选 allowlisted 子命令，交由管理器自己的 CLI 执行删除，本工具不亲自删除文件。因此 nvm、Maven、Cargo **不提供清理能力**，只保留占用展示与命令复制。
+本工具需要为多个包管理器提供缓存清理能力，但其中 nvm、Maven、Cargo 三者**没有任何官方子命令**可以清理自己的缓存（nvm 是 shell function 无法 spawn；`~/.m2/repository` 本身就是缓存且无清理命令；`cargo clean` 清的是项目 target 而非 `CARGO_HOME`，`cargo cache` 是第三方插件）。我们决定：**清理只做委托清理**——本工具从一张 Rust 静态表中挑选 allowlisted 子命令，交由管理器自己的 CLI 执行删除，本工具不亲自删除文件。因此 nvm、Maven、Cargo 的管理器缓存**不提供清理方案**，只保留占用展示与命令复制。
 
 ## Considered Options
 
@@ -11,5 +11,6 @@
 ## Consequences
 
 - 覆盖率被牺牲：11 个管理器里只有 8 个有清理能力，而未覆盖的 Maven 本地仓库和 Cargo registry 往往恰是占用最大的目录。这是有意的，不是遗漏。
-- **不要**因为「看起来漏了」而给 nvm / Maven / Cargo 加上目录删除。要加，先撤销本 ADR。
+- **不要**因为「看起来漏了」而给 nvm / Maven / Cargo 加上缓存目录删除。要加，先撤销本 ADR。
+- 本决定不排除单独的项目构建产物清理：`cargo clean` 清理项目 `target`，仍属于委托清理；它不是 Cargo 管理器的缓存清理方案。
 - 唯一例外是 npm 的 `_npx` 目录：`npm cache clean --force` 只清 `_cacache` 不动 `_npx`，且 npm 官方无任何命令能清它。该例外以护栏删除形态存在——删除前断言路径为绝对路径、以 `npm config get cache` 的返回值为前缀、且 basename 恰为 `_npx`，任一断言不成立即报失败。新增护栏删除实例需要同等强度的身份断言论证。
