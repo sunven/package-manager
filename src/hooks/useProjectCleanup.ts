@@ -3,30 +3,30 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type {
-  BuildArtifactCandidate,
-  BuildArtifactCleanupResult,
-  BuildArtifactMeasurement,
-  BuildArtifactSettings,
-  BuildArtifactScan,
+  ProjectDataCandidate,
+  ProjectCleanupResult,
+  DirectoryMeasurement,
+  ProjectCleanupSettings,
+  ProjectDataScan,
   UiMessage,
 } from "../types";
 
 const MEASUREMENT_CONCURRENCY = 4;
 
-export function useBuildArtifacts() {
-  const [settings, setSettings] = useState<BuildArtifactSettings>({
+export function useProjectCleanup() {
+  const [settings, setSettings] = useState<ProjectCleanupSettings>({
     rootId: null,
     rootPath: null,
     maxDepth: 8,
   });
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [maxDepth, setMaxDepthState] = useState(8);
-  const [scan, setScan] = useState<BuildArtifactScan | null>(null);
+  const [scan, setScan] = useState<ProjectDataScan | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [pendingMeasurements, setPendingMeasurements] = useState(0);
   const [scanCancelled, setScanCancelled] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [cleanupResults, setCleanupResults] = useState<Map<string, BuildArtifactCleanupResult>>(new Map());
+  const [cleanupResults, setCleanupResults] = useState<Map<string, ProjectCleanupResult>>(new Map());
   const [cleanupErrors, setCleanupErrors] = useState<Map<string, string>>(new Map());
   const [cancelledCleanupIds, setCancelledCleanupIds] = useState<Set<string>>(new Set());
   const [confirmationIds, setConfirmationIds] = useState<string[] | null>(null);
@@ -37,17 +37,17 @@ export function useBuildArtifacts() {
   const [cleanupCancelRequested, setCleanupCancelRequested] = useState(false);
   const [message, setMessage] = useState<UiMessage | null>(null);
 
-  const scanRef = useRef<BuildArtifactScan | null>(null);
+  const scanRef = useRef<ProjectDataScan | null>(null);
   const scanTokenRef = useRef(0);
   const cleanupCancelRef = useRef(false);
 
-  const replaceScan = useCallback((next: BuildArtifactScan | null) => {
+  const replaceScan = useCallback((next: ProjectDataScan | null) => {
     scanRef.current = next;
     setScan(next);
   }, []);
 
   const updateCandidate = useCallback(
-    (scanId: string, candidateId: string, updater: (candidate: BuildArtifactCandidate) => BuildArtifactCandidate) => {
+    (scanId: string, candidateId: string, updater: (candidate: ProjectDataCandidate) => ProjectDataCandidate) => {
       setScan((current) => {
         if (!current || current.scanId !== scanId) return current;
         const next = {
@@ -65,14 +65,14 @@ export function useBuildArtifacts() {
 
   useEffect(() => {
     let active = true;
-    void invoke<BuildArtifactSettings>("get_build_artifact_settings")
+    void invoke<ProjectCleanupSettings>("get_project_cleanup_settings")
       .then((loaded) => {
         if (!active) return;
         setSettings(loaded);
         setMaxDepthState(loaded.maxDepth);
       })
       .catch((error) => {
-        if (active) setMessage(failureMessage("无法读取构建产物设置", error));
+        if (active) setMessage(failureMessage("无法读取项目清理设置", error));
       })
       .finally(() => {
         if (active) setSettingsLoading(false);
@@ -85,7 +85,7 @@ export function useBuildArtifacts() {
 
   const chooseRoot = useCallback(async () => {
     try {
-      const selected = await invoke<BuildArtifactSettings | null>("choose_build_artifact_root");
+      const selected = await invoke<ProjectCleanupSettings | null>("choose_project_cleanup_root");
       if (!selected) return;
       scanTokenRef.current += 1;
       setSettings(selected);
@@ -104,7 +104,7 @@ export function useBuildArtifacts() {
   }, [replaceScan]);
 
   const measureCandidates = useCallback(
-    async (activeScan: BuildArtifactScan, token: number) => {
+    async (activeScan: ProjectDataScan, token: number) => {
       const candidates = activeScan.candidates.filter(
         (candidate) => candidate.status === "Ready" || candidate.status === "Unrecognized",
       );
@@ -118,7 +118,7 @@ export function useBuildArtifacts() {
           cursor += 1;
           if (!candidate) return;
           try {
-            const measurement = await invoke<BuildArtifactMeasurement>("measure_build_artifact_candidate", {
+            const measurement = await invoke<DirectoryMeasurement>("measure_project_data_candidate", {
               scanId: activeScan.scanId,
               candidateId: candidate.candidateId,
             });
@@ -126,7 +126,7 @@ export function useBuildArtifacts() {
             updateCandidate(activeScan.scanId, candidate.candidateId, (current) => ({ ...current, measurement }));
           } catch (error) {
             if (token !== scanTokenRef.current) return;
-            const measurement: BuildArtifactMeasurement = {
+            const measurement: DirectoryMeasurement = {
               status: "Error",
               bytes: null,
               human: null,
@@ -167,7 +167,7 @@ export function useBuildArtifacts() {
     setCancelledCleanupIds(new Set());
     setConfirmationIds(null);
     try {
-      const result = await invoke<BuildArtifactScan>("scan_build_artifacts", {
+      const result = await invoke<ProjectDataScan>("scan_project_data", {
         rootId: settings.rootId,
         maxDepth,
       });
@@ -178,7 +178,7 @@ export function useBuildArtifacts() {
       await measureCandidates(result, token);
     } catch (error) {
       if (token === scanTokenRef.current) {
-        setMessage(failureMessage("构建产物扫描失败", error));
+        setMessage(failureMessage("项目派生数据扫描失败", error));
       }
     } finally {
       if (token === scanTokenRef.current) setDiscovering(false);
@@ -210,6 +210,14 @@ export function useBuildArtifacts() {
     setSelectedIds((current) => new Set([...current, ...candidateIds]));
   }, []);
 
+  const unselectVisible = useCallback((candidateIds: string[]) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      candidateIds.forEach((candidateId) => next.delete(candidateId));
+      return next;
+    });
+  }, []);
+
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
   const requestCleanup = useCallback(() => {
@@ -231,7 +239,7 @@ export function useBuildArtifacts() {
     cleanupCancelRef.current = false;
     let completed = 0;
     let succeeded = 0;
-    let released = 0;
+    let cleaned = 0;
 
     for (let index = 0; index < ids.length; index += 1) {
       if (cleanupCancelRef.current) {
@@ -247,7 +255,7 @@ export function useBuildArtifacts() {
       const candidateId = ids[index];
       setActiveCleanupId(candidateId);
       try {
-        const result = await invoke<BuildArtifactCleanupResult>("clean_build_artifact_candidate", {
+        const result = await invoke<ProjectCleanupResult>("clean_project_data_candidate", {
           scanId: activeScan.scanId,
           candidateId,
         });
@@ -256,7 +264,7 @@ export function useBuildArtifacts() {
           ...candidate,
           measurement: result.measurement,
         }));
-        released += result.releasedBytes;
+        cleaned += result.cleanedBytes;
         if (result.status === "Succeeded" || result.status === "Skipped") succeeded += 1;
       } catch (error) {
         setCleanupErrors((current) => new Map(current).set(candidateId, errorText(error)));
@@ -274,11 +282,11 @@ export function useBuildArtifacts() {
     setCleaning(false);
     setCleanupFinished(true);
     if (cleanupCancelRef.current) {
-      toast.warning("构建目录清理已停止", { description: `已处理 ${completed}/${ids.length} 项` });
+      toast.warning("项目清理已停止", { description: `已处理 ${completed}/${ids.length} 项` });
     } else if (succeeded === ids.length) {
-      toast.success("构建目录清理完成", { description: `实际释放 ${formatBytes(released)}` });
+      toast.success("项目清理完成", { description: `已清理目录占用 ${formatBytes(cleaned)}` });
     } else {
-      toast.warning("构建目录清理部分完成", { description: `已处理 ${completed}/${ids.length} 项` });
+      toast.warning("项目清理部分完成", { description: `已处理 ${completed}/${ids.length} 项` });
     }
   }, [cleaning, confirmationIds, updateCandidate]);
 
@@ -308,23 +316,23 @@ export function useBuildArtifacts() {
   const openRoot = useCallback(async () => {
     if (!settings.rootId) return;
     try {
-      await invoke("open_build_artifact_root", { rootId: settings.rootId });
+      await invoke("open_project_cleanup_root", { rootId: settings.rootId });
     } catch (error) {
       setMessage(failureMessage("打开扫描根目录失败", error));
     }
   }, [settings.rootId]);
 
-  const openCandidatePath = useCallback(async (candidateId: string, target: "Project" | "Target") => {
+  const openCandidatePath = useCallback(async (candidateId: string, target: "Project" | "Directory") => {
     const activeScan = scanRef.current;
     if (!activeScan) return;
     try {
-      await invoke("open_build_artifact_path", {
+      await invoke("open_project_data_path", {
         scanId: activeScan.scanId,
         candidateId,
         target,
       });
     } catch (error) {
-      setMessage(failureMessage("打开构建产物路径失败", error));
+      setMessage(failureMessage("打开项目派生数据路径失败", error));
     }
   }, []);
 
@@ -368,10 +376,11 @@ export function useBuildArtifacts() {
     settings,
     settingsLoading,
     toggleSelected,
+    unselectVisible,
   };
 }
 
-export type BuildArtifactsController = ReturnType<typeof useBuildArtifacts>;
+export type ProjectCleanupController = ReturnType<typeof useProjectCleanup>;
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);

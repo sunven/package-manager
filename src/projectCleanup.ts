@@ -1,23 +1,25 @@
 import type {
-  BuildArtifactCandidate,
-  BuildArtifactCleanupResult,
-  BuildArtifactScan,
+  ProjectDataCandidate,
+  ProjectDataKind,
+  ProjectCleanupResult,
+  ProjectDataScan,
 } from "./types";
 
-export type BuildArtifactSort = "size" | "modified" | "path";
+export type ProjectDataSort = "size" | "modified" | "path";
+export type ProjectDataFilter = "all" | ProjectDataKind;
 
-export function buildArtifactProjectName(path: string) {
+export function projectName(path: string) {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? path;
 }
 
-export function buildArtifactSelectable(
-  candidate: BuildArtifactCandidate,
+export function projectDataSelectable(
+  candidate: ProjectDataCandidate,
   cargoAvailable: boolean,
-  cleanupResult?: BuildArtifactCleanupResult,
+  cleanupResult?: ProjectCleanupResult,
 ) {
   return (
-    cargoAvailable &&
+    (candidate.kind === "NodeModules" || cargoAvailable) &&
     !cleanupResult &&
     candidate.status === "Ready" &&
     candidate.measurement.status === "Ready" &&
@@ -25,16 +27,18 @@ export function buildArtifactSelectable(
   );
 }
 
-export function filterAndSortBuildArtifacts(
-  candidates: BuildArtifactCandidate[],
+export function filterAndSortProjectData(
+  candidates: ProjectDataCandidate[],
   query: string,
-  sort: BuildArtifactSort,
+  sort: ProjectDataSort,
+  kind: ProjectDataFilter = "all",
 ) {
   const needle = query.trim().toLocaleLowerCase();
   return candidates
     .filter((candidate) => {
+      if (kind !== "all" && candidate.kind !== kind) return false;
       if (!needle) return true;
-      return `${candidate.projectPath}\n${candidate.targetPath}`.toLocaleLowerCase().includes(needle);
+      return `${candidate.projectPath}\n${candidate.directoryPath}`.toLocaleLowerCase().includes(needle);
     })
     .sort((left, right) => {
       if (sort === "path") return left.projectPath.localeCompare(right.projectPath);
@@ -45,13 +49,13 @@ export function filterAndSortBuildArtifacts(
     });
 }
 
-export function buildArtifactMetrics(
-  scan: BuildArtifactScan | null,
+export function projectDataMetrics(
+  scan: ProjectDataScan | null,
   selectedIds: Set<string>,
-  cleanupResults: ReadonlyMap<string, BuildArtifactCleanupResult>,
+  cleanupResults: ReadonlyMap<string, ProjectCleanupResult>,
 ) {
   if (!scan) {
-    return { verifiedBytes: 0, reviewBytes: 0, reviewCount: 0, selectedBytes: 0, releasedBytes: 0 };
+    return { verifiedBytes: 0, reviewBytes: 0, reviewCount: 0, selectedBytes: 0, cleanedBytes: 0 };
   }
   let verifiedBytes = 0;
   let reviewBytes = 0;
@@ -71,9 +75,9 @@ export function buildArtifactMetrics(
     }
     if (selectedIds.has(candidate.candidateId)) selectedBytes += bytes;
   }
-  const releasedBytes = Array.from(cleanupResults.values()).reduce(
-    (sum, result) => sum + result.releasedBytes,
+  const cleanedBytes = Array.from(cleanupResults.values()).reduce(
+    (sum, result) => sum + result.cleanedBytes,
     0,
   );
-  return { verifiedBytes, reviewBytes, reviewCount, selectedBytes, releasedBytes };
+  return { verifiedBytes, reviewBytes, reviewCount, selectedBytes, cleanedBytes };
 }

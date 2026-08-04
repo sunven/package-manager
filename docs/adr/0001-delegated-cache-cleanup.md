@@ -13,4 +13,4 @@
 - 覆盖率被牺牲：11 个管理器里只有 8 个有清理能力，而未覆盖的 Maven 本地仓库和 Cargo registry 往往恰是占用最大的目录。这是有意的，不是遗漏。
 - **不要**因为「看起来漏了」而给 nvm / Maven / Cargo 加上缓存目录删除。要加，先撤销本 ADR。
 - 本决定不排除单独的项目构建产物清理：`cargo clean` 清理项目 `target`，仍属于委托清理；它不是 Cargo 管理器的缓存清理方案。
-- 唯一例外是 npm 的 `_npx` 目录：`npm cache clean --force` 只清 `_cacache` 不动 `_npx`，且 npm 官方无任何命令能清它。该例外以护栏删除形态存在——删除前断言路径为绝对路径、以 `npm config get cache` 的返回值为前缀、且 basename 恰为 `_npx`，任一断言不成立即报失败。新增护栏删除实例需要同等强度的身份断言论证。
+- 本决策当时的唯一例外是 npm 的 `_npx` 目录：`npm cache clean --force` 只清 `_cacache` 不动 `_npx`，且 npm 官方无任何命令能清它。该例外以护栏删除形态存在——删除前断言路径为绝对路径、以 `npm config get cache` 的返回值为前缀、且 basename 恰为 `_npx`，任一断言不成立即报失败。后续新增的 Node 项目依赖目录例外见 [ADR-0004](./0004-node-dependency-directories-use-guarded-deletion.md)；它不是管理器缓存清理。新增护栏删除实例仍需要同等强度的身份断言论证。

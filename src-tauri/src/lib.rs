@@ -1,20 +1,20 @@
-mod build_artifacts;
 mod command;
 mod disk_usage;
 mod managers;
+mod project_cleanup;
 mod types;
 
-use crate::build_artifacts::{
-    discover_build_artifacts, measure_build_artifact, run_build_artifact_cleanup_with_runner,
-    BuildArtifactCleanupResult, BuildArtifactMeasurement, BuildArtifactOpenTarget,
-    BuildArtifactScan, BuildArtifactSettings, BuildArtifactState,
-};
 use crate::command::{run_command, run_command_owned};
 use crate::disk_usage::disk_usage;
 use crate::managers::{
     hydrate_homebrew_cleanup_with_runner, hydrate_pip_outdated_with_runner,
     run_cache_cleanup_with_runner, run_npm_maintenance_with_runner,
     run_pnpm_maintenance_with_runner, scan_manager_snapshot,
+};
+use crate::project_cleanup::{
+    discover_project_data, measure_project_data, run_project_cleanup_with_runner,
+    DirectoryMeasurement, ProjectCleanupResult, ProjectCleanupSettings, ProjectCleanupState,
+    ProjectDataOpenTarget, ProjectDataScan,
 };
 use crate::types::{
     CacheCleanupRun, DiskUsage, HomebrewCleanupPreview, MaintenanceRunPreview, ManagerId,
@@ -26,17 +26,17 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
-fn get_build_artifact_settings(
-    state: tauri::State<'_, BuildArtifactState>,
-) -> Result<BuildArtifactSettings, String> {
+fn get_project_cleanup_settings(
+    state: tauri::State<'_, ProjectCleanupState>,
+) -> Result<ProjectCleanupSettings, String> {
     state.settings()
 }
 
 #[tauri::command]
-async fn choose_build_artifact_root(
+async fn choose_project_cleanup_root(
     app: tauri::AppHandle,
-    state: tauri::State<'_, BuildArtifactState>,
-) -> Result<Option<BuildArtifactSettings>, String> {
+    state: tauri::State<'_, ProjectCleanupState>,
+) -> Result<Option<ProjectCleanupSettings>, String> {
     #[cfg(desktop)]
     {
         let selected = app.dialog().file().blocking_pick_folder();
@@ -53,21 +53,21 @@ async fn choose_build_artifact_root(
     {
         let _ = app;
         let _ = state;
-        Err("Build artifact directory selection is only available on desktop".to_string())
+        Err("Project cleanup directory selection is only available on desktop".to_string())
     }
 }
 
 #[tauri::command]
-async fn scan_build_artifacts(
+async fn scan_project_data(
     root_id: String,
     max_depth: u8,
-    state: tauri::State<'_, BuildArtifactState>,
-) -> Result<BuildArtifactScan, String> {
+    state: tauri::State<'_, ProjectCleanupState>,
+) -> Result<ProjectDataScan, String> {
     let (root_path, max_depth, scan_id) = state.prepare_scan(&root_id, max_depth)?;
     let scan_root = root_path.clone();
     let (discovery, cargo_available, cargo_message) =
         tauri::async_runtime::spawn_blocking(move || {
-            let discovery = discover_build_artifacts(&scan_root, max_depth);
+            let discovery = discover_project_data(&scan_root, max_depth);
             let cargo_probe =
                 run_command("cargo", &["--version"], std::time::Duration::from_secs(5));
             match cargo_probe {
@@ -81,7 +81,7 @@ async fn scan_build_artifacts(
             }
         })
         .await
-        .map_err(|err| format!("Build artifact scan failed: {err}"))?;
+        .map_err(|err| format!("Project data scan failed: {err}"))?;
     state.install_scan(
         &root_id,
         scan_id,
@@ -94,60 +94,61 @@ async fn scan_build_artifacts(
 }
 
 #[tauri::command]
-async fn measure_build_artifact_candidate(
+async fn measure_project_data_candidate(
     scan_id: String,
     candidate_id: String,
-    state: tauri::State<'_, BuildArtifactState>,
-) -> Result<BuildArtifactMeasurement, String> {
+    state: tauri::State<'_, ProjectCleanupState>,
+) -> Result<DirectoryMeasurement, String> {
     let candidate = state.candidate_for_measurement(&scan_id, &candidate_id)?;
-    let target_path = candidate.target_path.clone();
+    let kind = candidate.kind;
+    let directory_path = candidate.directory_path.clone();
     let measurement =
-        tauri::async_runtime::spawn_blocking(move || measure_build_artifact(&target_path))
+        tauri::async_runtime::spawn_blocking(move || measure_project_data(kind, &directory_path))
             .await
-            .map_err(|err| format!("Build artifact measurement failed: {err}"))?;
+            .map_err(|err| format!("Project data measurement failed: {err}"))?;
     state.apply_measurement(&scan_id, &candidate_id, measurement)
 }
 
 #[tauri::command]
-async fn clean_build_artifact_candidate(
+async fn clean_project_data_candidate(
     scan_id: String,
     candidate_id: String,
-    state: tauri::State<'_, BuildArtifactState>,
-) -> Result<BuildArtifactCleanupResult, String> {
+    state: tauri::State<'_, ProjectCleanupState>,
+) -> Result<ProjectCleanupResult, String> {
     let (root_path, candidate) = state.cleanup_context(&scan_id, &candidate_id)?;
     let result = tauri::async_runtime::spawn_blocking(move || {
-        run_build_artifact_cleanup_with_runner(&root_path, &candidate, &run_command_owned)
+        run_project_cleanup_with_runner(&root_path, &candidate, &run_command_owned)
     })
     .await
-    .map_err(|err| format!("Build artifact cleanup failed: {err}"))?;
+    .map_err(|err| format!("Project cleanup failed: {err}"))?;
     state.apply_cleanup_result(&scan_id, &result)?;
     Ok(result)
 }
 
 #[tauri::command]
-fn open_build_artifact_root(
+fn open_project_cleanup_root(
     app: tauri::AppHandle,
     root_id: String,
-    state: tauri::State<'_, BuildArtifactState>,
+    state: tauri::State<'_, ProjectCleanupState>,
 ) -> Result<(), String> {
     let path = state.root_path(&root_id)?;
     app.opener()
         .open_path(path.display().to_string(), None::<String>)
-        .map_err(|err| format!("Could not open build artifact root: {err}"))
+        .map_err(|err| format!("Could not open project cleanup root: {err}"))
 }
 
 #[tauri::command]
-fn open_build_artifact_path(
+fn open_project_data_path(
     app: tauri::AppHandle,
     scan_id: String,
     candidate_id: String,
-    target: BuildArtifactOpenTarget,
-    state: tauri::State<'_, BuildArtifactState>,
+    target: ProjectDataOpenTarget,
+    state: tauri::State<'_, ProjectCleanupState>,
 ) -> Result<(), String> {
     let path = state.candidate_path(&scan_id, &candidate_id, target)?;
     app.opener()
         .open_path(path.display().to_string(), None::<String>)
-        .map_err(|err| format!("Could not open build artifact path: {err}"))
+        .map_err(|err| format!("Could not open project data path: {err}"))
 }
 
 #[tauri::command]
@@ -223,22 +224,23 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // Keep the existing filename so an upgrade preserves the selected root.
             let settings_path = app
                 .path()
                 .app_config_dir()
                 .map_err(|err| format!("Could not resolve app config directory: {err}"))?
                 .join("build-artifacts.json");
-            app.manage(BuildArtifactState::load(settings_path));
+            app.manage(ProjectCleanupState::load(settings_path));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            get_build_artifact_settings,
-            choose_build_artifact_root,
-            scan_build_artifacts,
-            measure_build_artifact_candidate,
-            clean_build_artifact_candidate,
-            open_build_artifact_root,
-            open_build_artifact_path,
+            get_project_cleanup_settings,
+            choose_project_cleanup_root,
+            scan_project_data,
+            measure_project_data_candidate,
+            clean_project_data_candidate,
+            open_project_cleanup_root,
+            open_project_data_path,
             scan_manager,
             measure_path_size,
             hydrate_homebrew_cleanup,

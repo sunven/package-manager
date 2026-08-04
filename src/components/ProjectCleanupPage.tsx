@@ -1,14 +1,15 @@
 import { Copy, ExternalLink, FolderOpen, RefreshCw, Square, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
-  buildArtifactMetrics,
-  buildArtifactProjectName,
-  buildArtifactSelectable,
-  filterAndSortBuildArtifacts,
-  type BuildArtifactSort,
-} from "../buildArtifacts";
-import type { BuildArtifactsController } from "../hooks/useBuildArtifacts";
-import type { BuildArtifactCandidate, BuildArtifactCleanupResult } from "../types";
+  projectDataMetrics,
+  projectName,
+  projectDataSelectable,
+  filterAndSortProjectData,
+  type ProjectDataFilter,
+  type ProjectDataSort,
+} from "../projectCleanup";
+import type { ProjectCleanupController } from "../hooks/useProjectCleanup";
+import type { ProjectDataCandidate, ProjectCleanupResult } from "../types";
 import { formatBytes, formatHomePath } from "../utils/format";
 import {
   AlertDialog,
@@ -37,22 +38,23 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { EmptyState, IconButton, Panel, PanelHead, StatCard } from "./ui";
 
-export function BuildArtifactsPage({
+export function ProjectCleanupPage({
   controller,
   homeDirectory,
 }: {
-  controller: BuildArtifactsController;
+  controller: ProjectCleanupController;
   homeDirectory: string | null;
 }) {
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<BuildArtifactSort>("size");
+  const [sort, setSort] = useState<ProjectDataSort>("size");
+  const [kind, setKind] = useState<ProjectDataFilter>("all");
   const visibleCandidates = useMemo(
-    () => filterAndSortBuildArtifacts(controller.scan?.candidates ?? [], query, sort),
-    [controller.scan?.candidates, query, sort],
+    () => filterAndSortProjectData(controller.scan?.candidates ?? [], query, sort, kind),
+    [controller.scan?.candidates, kind, query, sort],
   );
   const selectableVisibleIds = visibleCandidates
     .filter((candidate) =>
-      buildArtifactSelectable(
+      projectDataSelectable(
         candidate,
         controller.scan?.cargoAvailable ?? false,
         controller.cleanupResults.get(candidate.candidateId),
@@ -62,7 +64,7 @@ export function BuildArtifactsPage({
     .filter((candidate) => !controller.cancelledCleanupIds.has(candidate.candidateId))
     .map((candidate) => candidate.candidateId);
   const allVisibleSelected = Boolean(selectableVisibleIds.length) && selectableVisibleIds.every((id) => controller.selectedIds.has(id));
-  const metrics = buildArtifactMetrics(controller.scan, controller.selectedIds, controller.cleanupResults);
+  const metrics = projectDataMetrics(controller.scan, controller.selectedIds, controller.cleanupResults);
   const scanBusy = controller.discovering || controller.pendingMeasurements > 0;
 
   return (
@@ -101,35 +103,35 @@ export function BuildArtifactsPage({
             </div>
           }
           eyebrow="扫描范围"
-          title="Rust 项目根目录"
+          title="项目派生数据"
         />
         <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_120px_auto] lg:items-end">
-          <label className="grid min-w-0 gap-1.5" htmlFor="build-artifact-root">
+          <label className="grid min-w-0 gap-1.5" htmlFor="project-cleanup-root">
             <span className="text-xs font-medium text-muted-foreground">扫描根目录</span>
             {controller.settingsLoading ? (
               <Skeleton className="h-9 w-full rounded-md" />
             ) : (
               <Input
-                id="build-artifact-root"
+                id="project-cleanup-root"
                 readOnly
                 title={controller.settings.rootPath ?? undefined}
                 value={controller.settings.rootPath ? formatHomePath(controller.settings.rootPath, homeDirectory) : "尚未选择"}
               />
             )}
           </label>
-          <label className="grid gap-1.5" htmlFor="build-artifact-depth">
+          <label className="grid gap-1.5" htmlFor="project-cleanup-depth">
             <span className="text-xs font-medium text-muted-foreground">最大深度</span>
             <Input
-              aria-describedby="build-artifact-depth-range"
+              aria-describedby="project-cleanup-depth-range"
               disabled={scanBusy || controller.cleaning}
-              id="build-artifact-depth"
+              id="project-cleanup-depth"
               max={32}
               min={0}
               onChange={(event) => controller.setMaxDepth(event.currentTarget.valueAsNumber)}
               type="number"
               value={controller.maxDepth}
             />
-            <span className="sr-only" id="build-artifact-depth-range">范围 0 到 32</span>
+            <span className="sr-only" id="project-cleanup-depth-range">范围 0 到 32</span>
           </label>
           <div className="flex gap-2">
             {scanBusy ? (
@@ -152,29 +154,45 @@ export function BuildArtifactsPage({
       </Panel>
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="已验证构建产物" value={formatBytes(metrics.verifiedBytes)} />
+        <StatCard label="已验证目录占用" value={formatBytes(metrics.verifiedBytes)} />
         <StatCard label={`待复核 ${metrics.reviewCount} 项`} value={formatBytes(metrics.reviewBytes)} />
         <StatCard label={`已选择 ${controller.selectedIds.size} 项`} value={formatBytes(metrics.selectedBytes)} />
-        <StatCard label="本轮实际释放" value={formatBytes(metrics.releasedBytes)} />
+        <StatCard label="本轮已清理" value={formatBytes(metrics.cleanedBytes)} />
       </section>
 
-      <BuildArtifactScanNotice controller={controller} />
+      <ProjectDataScanNotice controller={controller} />
 
       <Panel className="overflow-hidden">
         <PanelHead
           action={<span className="text-xs font-medium text-muted-foreground">{visibleCandidates.length} 项</span>}
-          eyebrow="构建产物"
+          eyebrow="项目派生数据"
           title="扫描结果"
         />
         <div className="flex flex-wrap items-center gap-2 border-b p-4">
           <Input
-            aria-label="搜索项目或 target 路径"
+            aria-label="搜索项目或目录路径"
             className="min-w-56 flex-1"
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="搜索项目或 target 路径"
+            placeholder="搜索项目或目录路径"
             type="search"
             value={query}
           />
+          <ToggleGroup
+            aria-label="候选类型"
+            onValueChange={(value) => {
+              if (value === "all" || value === "RustTarget" || value === "NodeModules") {
+                setKind(value);
+              }
+            }}
+            spacing={0}
+            type="single"
+            value={kind}
+            variant="outline"
+          >
+            <ToggleGroupItem value="all">全部</ToggleGroupItem>
+            <ToggleGroupItem value="RustTarget">Rust target</ToggleGroupItem>
+            <ToggleGroupItem value="NodeModules">Node node_modules</ToggleGroupItem>
+          </ToggleGroup>
           <ToggleGroup
             aria-label="结果排序"
             onValueChange={(value) => {
@@ -237,12 +255,13 @@ export function BuildArtifactsPage({
                     disabled={!selectableVisibleIds.length || controller.cleaning}
                     onCheckedChange={(checked) => {
                       if (checked === true) controller.selectVisible(selectableVisibleIds);
-                      else controller.clearSelection();
+                      else controller.unselectVisible(selectableVisibleIds);
                     }}
                   />
                 </TableHead>
                 <TableHead>项目</TableHead>
-                <TableHead>target 路径</TableHead>
+                <TableHead>类型</TableHead>
+                <TableHead>目录路径</TableHead>
                 <TableHead className="text-right">占用</TableHead>
                 <TableHead>最近活跃</TableHead>
                 <TableHead>状态</TableHead>
@@ -251,7 +270,7 @@ export function BuildArtifactsPage({
             </TableHeader>
             <TableBody>
               {visibleCandidates.map((candidate) => (
-                <BuildArtifactRow
+                <ProjectDataRow
                   candidate={candidate}
                   cleanupError={controller.cleanupErrors.get(candidate.candidateId)}
                   cleanupResult={controller.cleanupResults.get(candidate.candidateId)}
@@ -267,21 +286,21 @@ export function BuildArtifactsPage({
           <EmptyState
             message={
               query
-                ? "没有匹配的构建目录"
+                ? "没有匹配的项目派生数据"
                 : controller.scan
-                  ? "扫描范围内没有发现 target 候选"
+                  ? "扫描范围内没有发现项目派生数据"
                   : "选择根目录后开始扫描"
             }
           />
         )}
       </Panel>
 
-      <BuildArtifactCleanupDialog controller={controller} homeDirectory={homeDirectory} />
+      <ProjectCleanupDialog controller={controller} homeDirectory={homeDirectory} />
     </main>
   );
 }
 
-function BuildArtifactScanNotice({ controller }: { controller: BuildArtifactsController }) {
+function ProjectDataScanNotice({ controller }: { controller: ProjectCleanupController }) {
   if (controller.scanCancelled) {
     return (
       <Alert>
@@ -293,12 +312,15 @@ function BuildArtifactScanNotice({ controller }: { controller: BuildArtifactsCon
   if (controller.pendingMeasurements > 0) {
     return (
       <Alert>
-        <AlertTitle>正在测量构建目录</AlertTitle>
+        <AlertTitle>正在测量项目目录</AlertTitle>
         <AlertDescription>还有 {controller.pendingMeasurements} 项等待完成。</AlertDescription>
       </Alert>
     );
   }
   const first = controller.scan?.errors[0];
+  const hasRustCandidates = controller.scan?.candidates.some(
+    (candidate) => candidate.kind === "RustTarget",
+  );
   return controller.scan ? (
     <div className="grid gap-2">
       {controller.scan.status === "Partial" ? (
@@ -309,17 +331,17 @@ function BuildArtifactScanNotice({ controller }: { controller: BuildArtifactsCon
           </AlertDescription>
         </Alert>
       ) : null}
-      {!controller.scan.cargoAvailable ? (
-        <Alert variant="destructive">
+      {!controller.scan.cargoAvailable && hasRustCandidates ? (
+        <Alert>
           <AlertTitle>Cargo 不可用</AlertTitle>
-          <AlertDescription>{controller.scan.cargoMessage ?? "仍可查看构建产物，但不能执行清理。"}</AlertDescription>
+          <AlertDescription>{controller.scan.cargoMessage ?? "Rust target 不可清理；node_modules 不受影响。"}</AlertDescription>
         </Alert>
       ) : null}
     </div>
   ) : null;
 }
 
-function BuildArtifactRow({
+function ProjectDataRow({
   candidate,
   cleanupError,
   cleanupResult,
@@ -327,14 +349,14 @@ function BuildArtifactRow({
   homeDirectory,
   selected,
 }: {
-  candidate: BuildArtifactCandidate;
+  candidate: ProjectDataCandidate;
   cleanupError: string | undefined;
-  cleanupResult: BuildArtifactCleanupResult | undefined;
-  controller: BuildArtifactsController;
+  cleanupResult: ProjectCleanupResult | undefined;
+  controller: ProjectCleanupController;
   homeDirectory: string | null;
   selected: boolean;
 }) {
-  const selectable = buildArtifactSelectable(candidate, controller.scan?.cargoAvailable ?? false, cleanupResult)
+  const selectable = projectDataSelectable(candidate, controller.scan?.cargoAvailable ?? false, cleanupResult)
     && !cleanupError
     && !controller.cancelledCleanupIds.has(candidate.candidateId);
   const active = controller.activeCleanupId === candidate.candidateId;
@@ -343,7 +365,7 @@ function BuildArtifactRow({
     <TableRow data-state={selected ? "selected" : undefined}>
       <TableCell>
         <Checkbox
-          aria-label={`选择 ${buildArtifactProjectName(candidate.projectPath)}`}
+          aria-label={`选择 ${projectName(candidate.projectPath)}`}
           checked={selected}
           disabled={!selectable || controller.cleaning}
           onCheckedChange={(checked) => controller.toggleSelected(candidate.candidateId, checked === true)}
@@ -351,15 +373,18 @@ function BuildArtifactRow({
       </TableCell>
       <TableCell className="max-w-56 whitespace-normal">
         <span className="block truncate font-medium" title={candidate.projectPath}>
-          {buildArtifactProjectName(candidate.projectPath)}
+          {projectName(candidate.projectPath)}
         </span>
         <span className="mt-1 block truncate text-xs text-muted-foreground" title={candidate.projectPath}>
           {formatHomePath(candidate.projectPath, homeDirectory)}
         </span>
       </TableCell>
+      <TableCell>
+        <Badge variant="outline">{candidateTypeLabel(candidate)}</Badge>
+      </TableCell>
       <TableCell className="max-w-80 whitespace-normal">
-        <span className="block truncate text-xs text-muted-foreground" title={candidate.targetPath}>
-          {formatHomePath(candidate.targetPath, homeDirectory)}
+        <span className="block truncate text-xs text-muted-foreground" title={candidate.directoryPath}>
+          {formatHomePath(candidate.directoryPath, homeDirectory)}
         </span>
       </TableCell>
       <TableCell className="text-right tabular-nums">
@@ -373,13 +398,14 @@ function BuildArtifactRow({
           active={active}
           cancelled={controller.cancelledCleanupIds.has(candidate.candidateId)}
           candidate={candidate}
+          cargoAvailable={controller.scan?.cargoAvailable ?? false}
           cleanupError={cleanupError}
           cleanupResult={cleanupResult}
         />
       </TableCell>
       <TableCell>
         <div className="flex justify-end gap-1">
-          <IconButton label="复制 target 路径" onClick={() => void controller.copyPath(candidate.targetPath)}>
+          <IconButton label={`复制 ${candidateDirectoryName(candidate)} 路径`} onClick={() => void controller.copyPath(candidate.directoryPath)}>
             <Copy />
           </IconButton>
           <IconButton label="打开项目目录" onClick={() => void controller.openCandidatePath(candidate.candidateId, "Project")}>
@@ -387,8 +413,8 @@ function BuildArtifactRow({
           </IconButton>
           <IconButton
             disabled={candidate.measurement.status === "Missing"}
-            label="打开 target 目录"
-            onClick={() => void controller.openCandidatePath(candidate.candidateId, "Target")}
+            label={`打开 ${candidateDirectoryName(candidate)} 目录`}
+            onClick={() => void controller.openCandidatePath(candidate.candidateId, "Directory")}
           >
             <ExternalLink />
           </IconButton>
@@ -402,20 +428,22 @@ function CandidateStatusBadge({
   active,
   cancelled,
   candidate,
+  cargoAvailable,
   cleanupError,
   cleanupResult,
 }: {
   active: boolean;
   cancelled: boolean;
-  candidate: BuildArtifactCandidate;
+  candidate: ProjectDataCandidate;
+  cargoAvailable: boolean;
   cleanupError: string | undefined;
-  cleanupResult: BuildArtifactCleanupResult | undefined;
+  cleanupResult: ProjectCleanupResult | undefined;
 }) {
   if (active) return <Badge variant="secondary">清理中</Badge>;
   if (cancelled) return <Badge variant="outline">已取消</Badge>;
   if (cleanupError) return <Badge title={cleanupError} variant="destructive">调用失败</Badge>;
   if (cleanupResult) {
-    const labels: Record<BuildArtifactCleanupResult["status"], string> = {
+    const labels: Record<ProjectCleanupResult["status"], string> = {
       Succeeded: "已清理",
       PartiallyCompleted: "部分完成",
       Failed: "清理失败",
@@ -447,14 +475,17 @@ function CandidateStatusBadge({
   if (candidate.measurement.status !== "Ready") {
     return <Badge title={candidate.measurement.message ?? undefined} variant="destructive">不可测量</Badge>;
   }
+  if (candidate.kind === "RustTarget" && !cargoAvailable) {
+    return <Badge variant="outline">Cargo 不可用</Badge>;
+  }
   return <Badge>可清理</Badge>;
 }
 
-function BuildArtifactCleanupDialog({
+function ProjectCleanupDialog({
   controller,
   homeDirectory,
 }: {
-  controller: BuildArtifactsController;
+  controller: ProjectCleanupController;
   homeDirectory: string | null;
 }) {
   const candidates = controller.confirmationCandidates;
@@ -463,7 +494,13 @@ function BuildArtifactCleanupDialog({
     const result = controller.cleanupResults.get(candidate.candidateId);
     return result ? [result] : [];
   });
-  const released = results.reduce((sum, result) => sum + result.releasedBytes, 0);
+  const cleaned = results.reduce((sum, result) => sum + result.cleanedBytes, 0);
+  const rustCount = candidates.filter((candidate) => candidate.kind === "RustTarget").length;
+  const nodeCount = candidates.length - rustCount;
+  const candidateSummary = [
+    rustCount ? `${rustCount} 个 Rust target` : null,
+    nodeCount ? `${nodeCount} 个 Node node_modules` : null,
+  ].filter(Boolean).join("、");
   const failed = results.filter((result) => result.status === "Failed" || result.status === "Rejected" || result.status === "PartiallyCompleted").length
     + candidates.filter((candidate) => controller.cleanupErrors.has(candidate.candidateId)).length;
 
@@ -474,14 +511,14 @@ function BuildArtifactCleanupDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {controller.cleanupFinished ? "构建目录清理结果" : controller.cleaning ? "正在清理构建目录" : "确认清理构建目录"}
+            {controller.cleanupFinished ? "项目清理结果" : controller.cleaning ? "正在清理项目目录" : "确认项目清理"}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {controller.cleanupFinished
-              ? `已处理 ${controller.cleanupCompletedCount}/${candidates.length} 项，实际释放 ${formatBytes(released)}。`
+              ? `已处理 ${controller.cleanupCompletedCount}/${candidates.length} 项，已清理目录占用 ${formatBytes(cleaned)}。`
               : controller.cleaning
                 ? `正在处理 ${controller.cleanupCompletedCount + 1}/${candidates.length}；取消将在当前项目完成后生效。`
-                : `将通过 cargo clean --offline 永久清理 ${candidates.length} 个 target，预计回收 ${formatBytes(selectedBytes)}。`}
+                : `将永久清理 ${candidateSummary}，目录占用 ${formatBytes(selectedBytes)}。`}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -493,13 +530,16 @@ function BuildArtifactCleanupDialog({
             return (
               <div className="grid gap-1 border-b px-3 py-2 last:border-b-0" key={candidate.candidateId}>
                 <div className="flex min-w-0 items-center justify-between gap-3">
-                  <span className="truncate text-sm font-medium">{buildArtifactProjectName(candidate.projectPath)}</span>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-medium">{projectName(candidate.projectPath)}</span>
+                    <Badge variant="outline">{candidateTypeLabel(candidate)}</Badge>
+                  </div>
                   <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                    {result ? formatBytes(result.releasedBytes) : candidate.measurement.human ?? "-"}
+                    {result ? formatBytes(result.cleanedBytes) : candidate.measurement.human ?? "-"}
                   </span>
                 </div>
-                <span className="truncate text-xs text-muted-foreground" title={candidate.targetPath}>
-                  {formatHomePath(candidate.targetPath, homeDirectory)}
+                <span className="truncate text-xs text-muted-foreground" title={candidate.directoryPath}>
+                  {formatHomePath(candidate.directoryPath, homeDirectory)}
                 </span>
                 {error ? <span className="text-xs text-destructive">{error}</span> : null}
                 {cancelled ? <span className="text-xs text-muted-foreground">未执行</span> : null}
@@ -510,8 +550,8 @@ function BuildArtifactCleanupDialog({
 
         {!controller.cleaning && !controller.cleanupFinished ? (
           <Alert>
-            <AlertTitle>清理后需要重新编译</AlertTitle>
-            <AlertDescription>构建产物不会进入废纸篓，也不能撤销。</AlertDescription>
+            <AlertTitle>清理不可撤销</AlertTitle>
+            <AlertDescription>{cleanupWarning(rustCount, nodeCount)}</AlertDescription>
           </Alert>
         ) : null}
         {controller.cleanupFinished && failed > 0 ? (
@@ -561,7 +601,23 @@ function BuildArtifactCleanupDialog({
   );
 }
 
-function measurementSize(candidate: BuildArtifactCandidate) {
+function candidateDirectoryName(candidate: ProjectDataCandidate) {
+  return candidate.kind === "RustTarget" ? "target" : "node_modules";
+}
+
+function candidateTypeLabel(candidate: ProjectDataCandidate) {
+  return candidate.kind === "RustTarget" ? "Rust target" : "Node node_modules";
+}
+
+function cleanupWarning(rustCount: number, nodeCount: number) {
+  const recovery = [
+    rustCount ? "Rust target 需要重新构建" : null,
+    nodeCount ? "Node node_modules 需要重新安装依赖" : null,
+  ].filter(Boolean).join("；");
+  return `${recovery}。目录不会进入废纸篓，正在运行的构建、开发或测试任务可能受影响。`;
+}
+
+function measurementSize(candidate: ProjectDataCandidate) {
   const measurement = candidate.measurement;
   if (candidate.status === "Symlink" || candidate.status === "NotDirectory") return "-";
   if (measurement.status === "Pending") return "测量中";

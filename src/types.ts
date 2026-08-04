@@ -266,19 +266,20 @@ export interface UiMessage {
   message: string;
 }
 
-export interface BuildArtifactSettings {
+export interface ProjectCleanupSettings {
   rootId: string | null;
   rootPath: string | null;
   maxDepth: number;
 }
 
-export type BuildArtifactScanStatus = "Ready" | "Partial";
-export type BuildArtifactCandidateStatus = "Ready" | "Symlink" | "NotDirectory" | "Unrecognized";
-export type BuildArtifactMeasurementStatus = "Pending" | "Ready" | "Partial" | "Missing" | "PermissionDenied" | "Error";
-export type BuildArtifactCleanupStatus = "Succeeded" | "PartiallyCompleted" | "Failed" | "Skipped" | "Rejected";
+export type ProjectDataScanStatus = "Ready" | "Partial";
+export type ProjectDataKind = "RustTarget" | "NodeModules";
+export type ProjectDataCandidateStatus = "Ready" | "Symlink" | "NotDirectory" | "Unrecognized";
+export type DirectoryMeasurementStatus = "Pending" | "Ready" | "Partial" | "Missing" | "PermissionDenied" | "Error";
+export type ProjectCleanupStatus = "Succeeded" | "PartiallyCompleted" | "Failed" | "Skipped" | "Rejected";
 
-export interface BuildArtifactMeasurement {
-  status: BuildArtifactMeasurementStatus;
+export interface DirectoryMeasurement {
+  status: DirectoryMeasurementStatus;
   bytes: number | null;
   human: string | null;
   files: number;
@@ -288,41 +289,42 @@ export interface BuildArtifactMeasurement {
   message: string | null;
 }
 
-export interface BuildArtifactCandidate {
+export interface ProjectDataCandidate {
   candidateId: string;
+  kind: ProjectDataKind;
   projectPath: string;
-  targetPath: string;
-  status: BuildArtifactCandidateStatus;
+  directoryPath: string;
+  status: ProjectDataCandidateStatus;
   message: string | null;
-  measurement: BuildArtifactMeasurement;
+  measurement: DirectoryMeasurement;
 }
 
-export interface BuildArtifactScanError {
+export interface ProjectDataScanError {
   path: string;
   message: string;
 }
 
-export interface BuildArtifactScan {
+export interface ProjectDataScan {
   rootId: string;
   scanId: string;
   rootPath: string;
   maxDepth: number;
-  status: BuildArtifactScanStatus;
-  candidates: BuildArtifactCandidate[];
+  status: ProjectDataScanStatus;
+  candidates: ProjectDataCandidate[];
   skipped: number;
-  errors: BuildArtifactScanError[];
+  errors: ProjectDataScanError[];
   cargoAvailable: boolean;
   cargoMessage: string | null;
 }
 
-export interface BuildArtifactCleanupResult {
+export interface ProjectCleanupResult {
   candidateId: string;
-  status: BuildArtifactCleanupStatus;
+  status: ProjectCleanupStatus;
   command: CommandEnvelope | null;
   beforeBytes: number;
   afterBytes: number;
-  releasedBytes: number;
-  measurement: BuildArtifactMeasurement;
+  cleanedBytes: number;
+  measurement: DirectoryMeasurement;
   stdout: string;
   stderr: string;
   message: string | null;

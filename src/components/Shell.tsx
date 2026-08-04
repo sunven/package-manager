@@ -1,4 +1,4 @@
-import { Activity, Hammer, List, RefreshCw, Settings } from "lucide-react";
+import { Activity, List, RefreshCw, Settings, Trash2 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { managerLabel } from "../utils/format";
 import type { ManagerId } from "../types";
@@ -8,7 +8,7 @@ export function Shell({
   activeView,
   onRefresh,
   onShowHealth,
-  onShowBuildArtifacts,
+  onShowProjectCleanup,
   onShowManagers,
   onShowSettings,
   scanMeta,
@@ -17,10 +17,10 @@ export function Shell({
   totalBytes,
 }: {
   children: React.ReactNode;
-  activeView: "health" | "managers" | "artifacts" | "settings";
+  activeView: "health" | "managers" | "cleanup" | "settings";
   onRefresh: () => void;
   onShowHealth: () => void;
-  onShowBuildArtifacts: () => void;
+  onShowProjectCleanup: () => void;
   onShowManagers: () => void;
   onShowSettings: () => void;
   scanMeta: string;
@@ -30,16 +30,16 @@ export function Shell({
 }) {
   return (
     <div className="min-h-screen bg-background p-7 text-foreground">
-      <header className="mb-5 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-5">
+      <header className="mb-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
         <div className="min-w-0">
           <h1 className="text-3xl font-medium leading-9">开发环境控制中心</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
             查看本机开发工具链的资产、空间占用和风险信号。
           </p>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="flex items-center gap-1 rounded-2xl bg-muted p-1">
+        <div className="flex min-w-0 flex-col gap-2 xl:items-end">
+          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            <div className="grid grid-cols-2 gap-1 rounded-md bg-muted p-1 sm:flex sm:items-center">
               <Button
                 onClick={onShowHealth}
                 size="sm"
@@ -59,13 +59,13 @@ export function Shell({
                 包管理器
               </Button>
               <Button
-                onClick={onShowBuildArtifacts}
+                onClick={onShowProjectCleanup}
                 size="sm"
                 type="button"
-                variant={activeView === "artifacts" ? "secondary" : "ghost"}
+                variant={activeView === "cleanup" ? "secondary" : "ghost"}
               >
-                <Hammer data-icon="inline-start" />
-                构建产物
+                <Trash2 data-icon="inline-start" />
+                项目清理
               </Button>
               <Button
                 onClick={onShowSettings}
@@ -77,7 +77,7 @@ export function Shell({
                 设置
               </Button>
             </div>
-            {activeView === "artifacts" ? null : (
+            {activeView === "cleanup" ? null : (
               <>
                 <div className="flex h-9 min-w-36 flex-col justify-center text-right">
                   <div className="text-xs font-medium leading-4 text-muted-foreground">总占用</div>
@@ -95,7 +95,7 @@ export function Shell({
               </>
             )}
           </div>
-          <div className="min-h-5 text-right text-xs text-muted-foreground">{activeView === "artifacts" ? "" : scanMeta}</div>
+          <div className="min-h-5 text-xs text-muted-foreground xl:text-right">{activeView === "cleanup" ? "" : scanMeta}</div>
         </div>
       </header>
       {children}

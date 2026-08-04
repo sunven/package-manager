@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
-import { useBuildArtifacts } from "./hooks/useBuildArtifacts";
-import { BuildArtifactsPage } from "./components/BuildArtifactsPage";
+import { useProjectCleanup } from "./hooks/useProjectCleanup";
+import { ProjectCleanupPage } from "./components/ProjectCleanupPage";
 import { DevelopmentHealthPage } from "./components/DevelopmentHealthPage";
 import { ManagerTabs } from "./components/ManagerTabs";
 import { cleanupPreviewDetails, cleanupReclaimable } from "./cleanupCopy";
@@ -17,8 +17,8 @@ import { Toaster } from "../components/ui/sonner";
 
 export function App() {
   const state = usePackageManagers();
-  const buildArtifacts = useBuildArtifacts();
-  const [activeView, setActiveView] = useState<"health" | "managers" | "artifacts" | "settings">("health");
+  const projectCleanup = useProjectCleanup();
+  const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "settings">("health");
   const { actions, currentManager, scanningManagers, selectedManager } = state;
   const scanning = scanningManagers.has(selectedManager);
   const developmentHealth = useMemo(
@@ -40,9 +40,9 @@ export function App() {
     <Shell
       activeView={activeView}
       onRefresh={() => void actions.refresh()}
-      onShowBuildArtifacts={() => {
+      onShowProjectCleanup={() => {
         actions.closePackageActions();
-        setActiveView("artifacts");
+        setActiveView("cleanup");
       }}
       onShowHealth={() => {
         actions.closePackageActions();
@@ -76,8 +76,8 @@ export function App() {
         }
         result={state.maintenanceResult}
       />
-      {activeView === "artifacts" ? (
-        <BuildArtifactsPage controller={buildArtifacts} homeDirectory={state.homeDirectory} />
+      {activeView === "cleanup" ? (
+        <ProjectCleanupPage controller={projectCleanup} homeDirectory={state.homeDirectory} />
       ) : activeView === "settings" ? (
         <SettingsPage
           enabledManagers={state.enabledManagers}

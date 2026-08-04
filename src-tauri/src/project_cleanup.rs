@@ -1,3 +1,5 @@
+//! Scan-session-backed cleanup for project-owned derived data.
+
 use crate::command::{command_failure, envelope_owned};
 use crate::types::{CommandEnvelope, CommandFailure, CommandRun, FailureKind};
 use serde::{Deserialize, Serialize};
@@ -9,6 +11,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 
 pub(crate) const DEFAULT_MAX_DEPTH: u8 = 8;
 pub(crate) const MAX_SCAN_DEPTH: u8 = 32;
@@ -17,7 +21,7 @@ const MAX_REPORTED_SCAN_ERRORS: usize = 20;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BuildArtifactSettings {
+pub(crate) struct ProjectCleanupSettings {
     pub(crate) root_id: Option<String>,
     pub(crate) root_path: Option<String>,
     pub(crate) max_depth: u8,
@@ -25,45 +29,52 @@ pub(crate) struct BuildArtifactSettings {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BuildArtifactScan {
+pub(crate) struct ProjectDataScan {
     pub(crate) root_id: String,
     pub(crate) scan_id: String,
     pub(crate) root_path: String,
     pub(crate) max_depth: u8,
-    pub(crate) status: BuildArtifactScanStatus,
-    pub(crate) candidates: Vec<BuildArtifactCandidate>,
+    pub(crate) status: ProjectDataScanStatus,
+    pub(crate) candidates: Vec<ProjectDataCandidate>,
     pub(crate) skipped: usize,
-    pub(crate) errors: Vec<BuildArtifactScanError>,
+    pub(crate) errors: Vec<ProjectDataScanError>,
     pub(crate) cargo_available: bool,
     pub(crate) cargo_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub(crate) enum BuildArtifactScanStatus {
+pub(crate) enum ProjectDataScanStatus {
     Ready,
     Partial,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BuildArtifactScanError {
+pub(crate) struct ProjectDataScanError {
     pub(crate) path: String,
     pub(crate) message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BuildArtifactCandidate {
+pub(crate) struct ProjectDataCandidate {
     pub(crate) candidate_id: String,
+    pub(crate) kind: ProjectDataKind,
     pub(crate) project_path: String,
-    pub(crate) target_path: String,
-    pub(crate) status: BuildArtifactCandidateStatus,
+    pub(crate) directory_path: String,
+    pub(crate) status: ProjectDataCandidateStatus,
     pub(crate) message: Option<String>,
-    pub(crate) measurement: BuildArtifactMeasurement,
+    pub(crate) measurement: DirectoryMeasurement,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub(crate) enum BuildArtifactCandidateStatus {
+pub(crate) enum ProjectDataKind {
+    RustTarget,
+    NodeModules,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) enum ProjectDataCandidateStatus {
     Ready,
     Symlink,
     NotDirectory,
@@ -72,8 +83,8 @@ pub(crate) enum BuildArtifactCandidateStatus {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BuildArtifactMeasurement {
-    pub(crate) status: BuildArtifactMeasurementStatus,
+pub(crate) struct DirectoryMeasurement {
+    pub(crate) status: DirectoryMeasurementStatus,
     pub(crate) bytes: Option<u64>,
     pub(crate) human: Option<String>,
     pub(crate) files: u64,
@@ -84,7 +95,7 @@ pub(crate) struct BuildArtifactMeasurement {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub(crate) enum BuildArtifactMeasurementStatus {
+pub(crate) enum DirectoryMeasurementStatus {
     Pending,
     Ready,
     Partial,
@@ -94,21 +105,21 @@ pub(crate) enum BuildArtifactMeasurementStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-pub(crate) enum BuildArtifactOpenTarget {
+pub(crate) enum ProjectDataOpenTarget {
     Project,
-    Target,
+    Directory,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BuildArtifactCleanupResult {
+pub(crate) struct ProjectCleanupResult {
     pub(crate) candidate_id: String,
-    pub(crate) status: BuildArtifactCleanupStatus,
+    pub(crate) status: ProjectCleanupStatus,
     pub(crate) command: Option<CommandEnvelope>,
     pub(crate) before_bytes: u64,
     pub(crate) after_bytes: u64,
-    pub(crate) released_bytes: u64,
-    pub(crate) measurement: BuildArtifactMeasurement,
+    pub(crate) cleaned_bytes: u64,
+    pub(crate) measurement: DirectoryMeasurement,
     pub(crate) stdout: String,
     pub(crate) stderr: String,
     pub(crate) message: Option<String>,
@@ -116,7 +127,7 @@ pub(crate) struct BuildArtifactCleanupResult {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub(crate) enum BuildArtifactCleanupStatus {
+pub(crate) enum ProjectCleanupStatus {
     Succeeded,
     PartiallyCompleted,
     Failed,
@@ -141,11 +152,13 @@ struct AuthorizedRoot {
 #[derive(Debug, Clone)]
 pub(crate) struct CandidateRecord {
     id: String,
+    pub(crate) kind: ProjectDataKind,
     project_path: PathBuf,
-    pub(crate) target_path: PathBuf,
-    status: BuildArtifactCandidateStatus,
+    pub(crate) directory_path: PathBuf,
+    status: ProjectDataCandidateStatus,
     message: Option<String>,
-    measurement: BuildArtifactMeasurement,
+    measurement: DirectoryMeasurement,
+    cleanup_attempted: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -167,18 +180,18 @@ struct Registry {
     pending_scan_id: Option<String>,
 }
 
-pub(crate) struct BuildArtifactState(Mutex<Registry>);
+pub(crate) struct ProjectCleanupState(Mutex<Registry>);
 
-impl BuildArtifactState {
+impl ProjectCleanupState {
     pub(crate) fn load(settings_path: PathBuf) -> Self {
         Self(Mutex::new(Registry::load(settings_path)))
     }
 
-    pub(crate) fn settings(&self) -> Result<BuildArtifactSettings, String> {
+    pub(crate) fn settings(&self) -> Result<ProjectCleanupSettings, String> {
         self.lock().map(|registry| registry.settings())
     }
 
-    pub(crate) fn authorize_root(&self, path: PathBuf) -> Result<BuildArtifactSettings, String> {
+    pub(crate) fn authorize_root(&self, path: PathBuf) -> Result<ProjectCleanupSettings, String> {
         self.lock()?.authorize_root(path)
     }
 
@@ -199,7 +212,7 @@ impl BuildArtifactState {
         discovery: Discovery,
         cargo_available: bool,
         cargo_message: Option<String>,
-    ) -> Result<BuildArtifactScan, String> {
+    ) -> Result<ProjectDataScan, String> {
         self.lock()?.install_scan(
             root_id,
             scan_id,
@@ -223,8 +236,8 @@ impl BuildArtifactState {
         &self,
         scan_id: &str,
         candidate_id: &str,
-        measurement: BuildArtifactMeasurement,
-    ) -> Result<BuildArtifactMeasurement, String> {
+        measurement: DirectoryMeasurement,
+    ) -> Result<DirectoryMeasurement, String> {
         self.lock()?
             .apply_measurement(scan_id, candidate_id, measurement)
     }
@@ -240,7 +253,7 @@ impl BuildArtifactState {
     pub(crate) fn apply_cleanup_result(
         &self,
         scan_id: &str,
-        result: &BuildArtifactCleanupResult,
+        result: &ProjectCleanupResult,
     ) -> Result<(), String> {
         self.lock()?.apply_cleanup_result(scan_id, result)
     }
@@ -253,7 +266,7 @@ impl BuildArtifactState {
         &self,
         scan_id: &str,
         candidate_id: &str,
-        target: BuildArtifactOpenTarget,
+        target: ProjectDataOpenTarget,
     ) -> Result<PathBuf, String> {
         self.lock()?.candidate_path(scan_id, candidate_id, target)
     }
@@ -261,7 +274,7 @@ impl BuildArtifactState {
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Registry>, String> {
         self.0
             .lock()
-            .map_err(|_| "Build artifact state is unavailable".to_string())
+            .map_err(|_| "Project cleanup state is unavailable".to_string())
     }
 }
 
@@ -300,8 +313,8 @@ impl Registry {
         registry
     }
 
-    fn settings(&self) -> BuildArtifactSettings {
-        BuildArtifactSettings {
+    fn settings(&self) -> ProjectCleanupSettings {
+        ProjectCleanupSettings {
             root_id: self.root.as_ref().map(|root| root.id.clone()),
             root_path: self
                 .root
@@ -316,7 +329,7 @@ impl Registry {
         }
     }
 
-    fn authorize_root(&mut self, path: PathBuf) -> Result<BuildArtifactSettings, String> {
+    fn authorize_root(&mut self, path: PathBuf) -> Result<ProjectCleanupSettings, String> {
         let canonical = canonical_directory(&path)?;
         let id = self.next_identifier("root");
         self.persisted_root_path = Some(canonical.clone());
@@ -344,7 +357,7 @@ impl Registry {
             .as_mut()
             .filter(|root| root.id == root_id)
             .ok_or_else(|| {
-                "The selected build artifact root is no longer authorized".to_string()
+                "The selected project cleanup root is no longer authorized".to_string()
             })?;
         let path = canonical_directory(&root.path)?;
         root.path = path.clone();
@@ -367,17 +380,17 @@ impl Registry {
         discovery: Discovery,
         cargo_available: bool,
         cargo_message: Option<String>,
-    ) -> Result<BuildArtifactScan, String> {
+    ) -> Result<ProjectDataScan, String> {
         let current_root = self
             .root
             .as_ref()
             .filter(|root| root.id == root_id && root.path == root_path)
-            .ok_or_else(|| "The build artifact root changed while scanning".to_string())?;
+            .ok_or_else(|| "The project cleanup root changed while scanning".to_string())?;
         if current_root.max_depth != max_depth {
             return Err("The scan depth changed while scanning".to_string());
         }
         if self.pending_scan_id.as_deref() != Some(scan_id.as_str()) {
-            return Err("A newer build artifact scan replaced this request".to_string());
+            return Err("A newer project data scan replaced this request".to_string());
         }
 
         let mut candidates = HashMap::new();
@@ -386,20 +399,22 @@ impl Registry {
             let candidate_id = self.next_identifier("candidate");
             let record = CandidateRecord {
                 id: candidate_id.clone(),
+                kind: discovered.kind,
                 project_path: discovered.project_path,
-                target_path: discovered.target_path,
+                directory_path: discovered.directory_path,
                 status: discovered.status,
                 message: discovered.message,
                 measurement: pending_measurement(),
+                cleanup_attempted: false,
             };
             response_candidates.push(record.response());
             candidates.insert(candidate_id, record);
         }
 
         let status = if discovery.skipped == 0 {
-            BuildArtifactScanStatus::Ready
+            ProjectDataScanStatus::Ready
         } else {
-            BuildArtifactScanStatus::Partial
+            ProjectDataScanStatus::Partial
         };
         self.scan = Some(ScanSession {
             id: scan_id.clone(),
@@ -409,7 +424,7 @@ impl Registry {
         });
         self.pending_scan_id = None;
 
-        Ok(BuildArtifactScan {
+        Ok(ProjectDataScan {
             root_id: root_id.to_string(),
             scan_id,
             root_path: root_path.display().to_string(),
@@ -428,47 +443,54 @@ impl Registry {
         scan.candidates
             .get(candidate_id)
             .cloned()
-            .ok_or_else(|| "The build directory candidate is not part of this scan".to_string())
+            .ok_or_else(|| "The project data candidate is not part of this scan".to_string())
     }
 
     fn apply_measurement(
         &mut self,
         scan_id: &str,
         candidate_id: &str,
-        measurement: BuildArtifactMeasurement,
-    ) -> Result<BuildArtifactMeasurement, String> {
+        measurement: DirectoryMeasurement,
+    ) -> Result<DirectoryMeasurement, String> {
         let scan = self.current_scan_mut(scan_id)?;
         let candidate = scan
             .candidates
             .get_mut(candidate_id)
-            .ok_or_else(|| "The build directory candidate is not part of this scan".to_string())?;
+            .ok_or_else(|| "The project data candidate is not part of this scan".to_string())?;
         candidate.measurement = measurement.clone();
         Ok(measurement)
     }
 
     fn cleanup_context(
-        &self,
+        &mut self,
         scan_id: &str,
         candidate_id: &str,
     ) -> Result<(PathBuf, CandidateRecord), String> {
-        let scan = self.current_scan(scan_id)?;
-        let candidate =
-            scan.candidates.get(candidate_id).cloned().ok_or_else(|| {
-                "The build directory candidate is not part of this scan".to_string()
-            })?;
-        Ok((scan.root_path.clone(), candidate))
+        let scan = self.current_scan_mut(scan_id)?;
+        let candidate = scan
+            .candidates
+            .get_mut(candidate_id)
+            .ok_or_else(|| "The project data candidate is not part of this scan".to_string())?;
+        if candidate.cleanup_attempted {
+            return Err(
+                "This project data candidate was already processed; scan again before retrying"
+                    .to_string(),
+            );
+        }
+        candidate.cleanup_attempted = true;
+        Ok((scan.root_path.clone(), candidate.clone()))
     }
 
     fn apply_cleanup_result(
         &mut self,
         scan_id: &str,
-        result: &BuildArtifactCleanupResult,
+        result: &ProjectCleanupResult,
     ) -> Result<(), String> {
         let scan = self.current_scan_mut(scan_id)?;
         let candidate = scan
             .candidates
             .get_mut(&result.candidate_id)
-            .ok_or_else(|| "The build directory candidate is not part of this scan".to_string())?;
+            .ok_or_else(|| "The project data candidate is not part of this scan".to_string())?;
         candidate.measurement = result.measurement.clone();
         Ok(())
     }
@@ -478,19 +500,19 @@ impl Registry {
             .as_ref()
             .filter(|root| root.id == root_id)
             .map(|root| root.path.clone())
-            .ok_or_else(|| "The selected build artifact root is no longer authorized".to_string())
+            .ok_or_else(|| "The selected project cleanup root is no longer authorized".to_string())
     }
 
     fn candidate_path(
         &self,
         scan_id: &str,
         candidate_id: &str,
-        target: BuildArtifactOpenTarget,
+        target: ProjectDataOpenTarget,
     ) -> Result<PathBuf, String> {
         let candidate = self.candidate(scan_id, candidate_id)?;
         Ok(match target {
-            BuildArtifactOpenTarget::Project => candidate.project_path,
-            BuildArtifactOpenTarget::Target => candidate.target_path,
+            ProjectDataOpenTarget::Project => candidate.project_path,
+            ProjectDataOpenTarget::Directory => candidate.directory_path,
         })
     }
 
@@ -500,7 +522,7 @@ impl Registry {
             .as_ref()
             .filter(|scan| scan.id == scan_id)
             .ok_or_else(|| {
-                "The build artifact scan is stale; scan again before continuing".to_string()
+                "The project data scan is stale; scan again before continuing".to_string()
             })?;
         let root_matches = self
             .root
@@ -522,7 +544,7 @@ impl Registry {
             .as_mut()
             .filter(|scan| scan.id == scan_id)
             .ok_or_else(|| {
-                "The build artifact scan is stale; scan again before continuing".to_string()
+                "The project data scan is stale; scan again before continuing".to_string()
             })?;
         if root.as_ref() != Some(&(scan.root_id.clone(), scan.root_path.clone())) {
             return Err("The authorized root changed after this scan".to_string());
@@ -542,7 +564,7 @@ impl Registry {
         };
         if let Some(parent) = self.settings_path.parent() {
             fs::create_dir_all(parent).map_err(|err| {
-                format!("Could not create build artifact settings directory: {err}")
+                format!("Could not create project cleanup settings directory: {err}")
             })?;
         }
         let settings = PersistedSettings {
@@ -550,18 +572,19 @@ impl Registry {
             max_depth: self.max_depth,
         };
         let raw = serde_json::to_vec_pretty(&settings)
-            .map_err(|err| format!("Could not serialize build artifact settings: {err}"))?;
+            .map_err(|err| format!("Could not serialize project cleanup settings: {err}"))?;
         fs::write(&self.settings_path, raw)
-            .map_err(|err| format!("Could not save build artifact settings: {err}"))
+            .map_err(|err| format!("Could not save project cleanup settings: {err}"))
     }
 }
 
 impl CandidateRecord {
-    fn response(&self) -> BuildArtifactCandidate {
-        BuildArtifactCandidate {
+    fn response(&self) -> ProjectDataCandidate {
+        ProjectDataCandidate {
             candidate_id: self.id.clone(),
+            kind: self.kind,
             project_path: self.project_path.display().to_string(),
-            target_path: self.target_path.display().to_string(),
+            directory_path: self.directory_path.display().to_string(),
             status: self.status,
             message: self.message.clone(),
             measurement: self.measurement.clone(),
@@ -573,18 +596,19 @@ impl CandidateRecord {
 pub(crate) struct Discovery {
     candidates: Vec<DiscoveredCandidate>,
     skipped: usize,
-    errors: Vec<BuildArtifactScanError>,
+    errors: Vec<ProjectDataScanError>,
 }
 
 #[derive(Debug)]
 struct DiscoveredCandidate {
+    kind: ProjectDataKind,
     project_path: PathBuf,
-    target_path: PathBuf,
-    status: BuildArtifactCandidateStatus,
+    directory_path: PathBuf,
+    status: ProjectDataCandidateStatus,
     message: Option<String>,
 }
 
-pub(crate) fn discover_build_artifacts(root: &Path, max_depth: u8) -> Discovery {
+pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
     let mut discovery = Discovery {
         candidates: Vec::new(),
         skipped: 0,
@@ -594,7 +618,12 @@ pub(crate) fn discover_build_artifacts(root: &Path, max_depth: u8) -> Discovery 
 
     while let Some((directory, depth)) = pending.pop() {
         if is_cargo_project(&directory) {
-            if let Some(candidate) = inspect_candidate(&directory) {
+            if let Some(candidate) = inspect_rust_candidate(&directory) {
+                discovery.candidates.push(candidate);
+            }
+        }
+        if is_node_project(&directory) {
+            if let Some(candidate) = inspect_node_candidate(&directory) {
                 discovery.candidates.push(candidate);
             }
         }
@@ -625,7 +654,7 @@ pub(crate) fn discover_build_artifacts(root: &Path, max_depth: u8) -> Discovery 
                     continue;
                 }
             };
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            if is_link(&metadata) || !metadata.is_dir() {
                 continue;
             }
             if should_prune(entry.file_name().to_string_lossy().as_ref()) {
@@ -637,7 +666,7 @@ pub(crate) fn discover_build_artifacts(root: &Path, max_depth: u8) -> Discovery 
 
     discovery
         .candidates
-        .sort_by(|left, right| left.target_path.cmp(&right.target_path));
+        .sort_by(|left, right| left.directory_path.cmp(&right.directory_path));
     discovery
 }
 
@@ -645,7 +674,7 @@ impl Discovery {
     fn record_error(&mut self, path: &Path, message: String) {
         self.skipped = self.skipped.saturating_add(1);
         if self.errors.len() < MAX_REPORTED_SCAN_ERRORS {
-            self.errors.push(BuildArtifactScanError {
+            self.errors.push(ProjectDataScanError {
                 path: path.display().to_string(),
                 message,
             });
@@ -674,91 +703,169 @@ fn is_cargo_project(directory: &Path) -> bool {
     is_regular_file(&directory.join("Cargo.toml"))
 }
 
-fn inspect_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
-    let target_path = project_path.join("target");
-    let metadata = match fs::symlink_metadata(&target_path) {
+fn is_node_project(directory: &Path) -> bool {
+    is_regular_file(&directory.join("package.json"))
+}
+
+fn inspect_rust_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
+    let directory_path = project_path.join("target");
+    let metadata = match fs::symlink_metadata(&directory_path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
         Err(err) => {
             return Some(DiscoveredCandidate {
+                kind: ProjectDataKind::RustTarget,
                 project_path: project_path.to_path_buf(),
-                target_path,
-                status: BuildArtifactCandidateStatus::Unrecognized,
+                directory_path,
+                status: ProjectDataCandidateStatus::Unrecognized,
                 message: Some(format!("Could not inspect target: {err}")),
             })
         }
     };
 
-    let (status, message) = if metadata.file_type().is_symlink() {
+    let (status, message) = if is_link(&metadata) {
         (
-            BuildArtifactCandidateStatus::Symlink,
+            ProjectDataCandidateStatus::Symlink,
             Some("The target path is a symbolic link".to_string()),
         )
     } else if !metadata.is_dir() {
         (
-            BuildArtifactCandidateStatus::NotDirectory,
+            ProjectDataCandidateStatus::NotDirectory,
             Some("The target path is not a directory".to_string()),
         )
-    } else if has_cargo_marker(&target_path) {
-        (BuildArtifactCandidateStatus::Ready, None)
+    } else if has_cargo_marker(&directory_path) {
+        (ProjectDataCandidateStatus::Ready, None)
     } else {
         (
-            BuildArtifactCandidateStatus::Unrecognized,
+            ProjectDataCandidateStatus::Unrecognized,
             Some("No root-level CACHEDIR.TAG or .rustc_info.json was found".to_string()),
         )
     };
 
     Some(DiscoveredCandidate {
+        kind: ProjectDataKind::RustTarget,
         project_path: project_path.to_path_buf(),
-        target_path,
+        directory_path,
         status,
         message,
     })
 }
 
-fn has_cargo_marker(target_path: &Path) -> bool {
+fn inspect_node_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
+    let directory_path = project_path.join("node_modules");
+    let metadata = match fs::symlink_metadata(&directory_path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(err) => {
+            return Some(DiscoveredCandidate {
+                kind: ProjectDataKind::NodeModules,
+                project_path: project_path.to_path_buf(),
+                directory_path,
+                status: ProjectDataCandidateStatus::Unrecognized,
+                message: Some(format!("Could not inspect node_modules: {err}")),
+            })
+        }
+    };
+
+    let (status, message) = if is_link(&metadata) {
+        (
+            ProjectDataCandidateStatus::Symlink,
+            Some("The node_modules path is a symbolic link or junction".to_string()),
+        )
+    } else if !metadata.is_dir() {
+        (
+            ProjectDataCandidateStatus::NotDirectory,
+            Some("The node_modules path is not a directory".to_string()),
+        )
+    } else {
+        (ProjectDataCandidateStatus::Ready, None)
+    };
+
+    Some(DiscoveredCandidate {
+        kind: ProjectDataKind::NodeModules,
+        project_path: project_path.to_path_buf(),
+        directory_path,
+        status,
+        message,
+    })
+}
+
+fn has_cargo_marker(directory_path: &Path) -> bool {
     ["CACHEDIR.TAG", ".rustc_info.json"]
         .iter()
-        .any(|name| is_regular_file(&target_path.join(name)))
+        .any(|name| is_regular_file(&directory_path.join(name)))
 }
 
 fn is_regular_file(path: &Path) -> bool {
     fs::symlink_metadata(path)
-        .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        .map(|metadata| metadata.is_file() && !is_link(&metadata))
         .unwrap_or(false)
 }
 
-pub(crate) fn measure_build_artifact(path: &Path) -> BuildArtifactMeasurement {
+#[cfg(windows)]
+fn is_link(metadata: &fs::Metadata) -> bool {
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_link(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+pub(crate) fn measure_project_data(kind: ProjectDataKind, path: &Path) -> DirectoryMeasurement {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return missing_measurement(),
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-            return failed_measurement(BuildArtifactMeasurementStatus::PermissionDenied, err)
+            return failed_measurement(DirectoryMeasurementStatus::PermissionDenied, err)
         }
-        Err(err) => return failed_measurement(BuildArtifactMeasurementStatus::Error, err),
+        Err(err) => return failed_measurement(DirectoryMeasurementStatus::Error, err),
     };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return BuildArtifactMeasurement {
-            status: BuildArtifactMeasurementStatus::Error,
+    if is_link(&metadata) || !metadata.is_dir() {
+        return DirectoryMeasurement {
+            status: DirectoryMeasurementStatus::Error,
             bytes: None,
             human: None,
             files: 0,
             directories: 0,
             skipped: 0,
             latest_modified_ms: None,
-            message: Some("Build artifact target is not a regular directory".to_string()),
+            message: Some("Project data path is not a regular directory".to_string()),
+        };
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    if kind == ProjectDataKind::NodeModules {
+        return DirectoryMeasurement {
+            status: DirectoryMeasurementStatus::Error,
+            bytes: None,
+            human: None,
+            files: 0,
+            directories: 0,
+            skipped: 0,
+            latest_modified_ms: None,
+            message: Some(
+                "Guarded node_modules deletion is unavailable on this platform".to_string(),
+            ),
         };
     }
 
     let mut stats = MeasurementStats::default();
     let mut seen = HashSet::new();
-    measure_directory(path, &mut stats, &mut seen);
+    measure_directory(
+        path,
+        kind == ProjectDataKind::NodeModules,
+        &metadata,
+        &mut stats,
+        &mut seen,
+    );
     let status = if stats.skipped == 0 {
-        BuildArtifactMeasurementStatus::Ready
+        DirectoryMeasurementStatus::Ready
     } else {
-        BuildArtifactMeasurementStatus::Partial
+        DirectoryMeasurementStatus::Partial
     };
-    BuildArtifactMeasurement {
+    DirectoryMeasurement {
         status,
         bytes: Some(stats.bytes),
         human: Some(format_bytes(stats.bytes)),
@@ -780,7 +887,13 @@ struct MeasurementStats {
     first_error: Option<String>,
 }
 
-fn measure_directory(path: &Path, stats: &mut MeasurementStats, seen: &mut HashSet<(u64, u64)>) {
+fn measure_directory(
+    path: &Path,
+    enforce_single_filesystem: bool,
+    root_metadata: &fs::Metadata,
+    stats: &mut MeasurementStats,
+    seen: &mut HashSet<(u64, u64)>,
+) {
     stats.directories = stats.directories.saturating_add(1);
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
@@ -805,21 +918,55 @@ fn measure_directory(path: &Path, stats: &mut MeasurementStats, seen: &mut HashS
                 continue;
             }
         };
-        if metadata.file_type().is_symlink() || metadata.is_file() {
+        if is_link(&metadata) || metadata.is_file() {
             add_measured_file(stats, seen, &metadata);
         } else if metadata.is_dir() {
-            measure_directory(&entry_path, stats, seen);
+            if enforce_single_filesystem && !same_filesystem(root_metadata, &metadata) {
+                stats.record_message(
+                    &entry_path,
+                    "directory crosses a filesystem or volume boundary",
+                );
+                continue;
+            }
+            measure_directory(
+                &entry_path,
+                enforce_single_filesystem,
+                root_metadata,
+                stats,
+                seen,
+            );
         }
     }
 }
 
 impl MeasurementStats {
     fn record_skip(&mut self, path: &Path, error: std::io::Error) {
+        self.record_message(path, &error.to_string());
+    }
+
+    fn record_message(&mut self, path: &Path, message: &str) {
         self.skipped = self.skipped.saturating_add(1);
         if self.first_error.is_none() {
-            self.first_error = Some(format!("Could not measure {}: {error}", path.display()));
+            self.first_error = Some(format!("Could not measure {}: {message}", path.display()));
         }
     }
+}
+
+#[cfg(unix)]
+fn same_filesystem(root: &fs::Metadata, entry: &fs::Metadata) -> bool {
+    root.dev() == entry.dev()
+}
+
+#[cfg(windows)]
+fn same_filesystem(_root: &fs::Metadata, _entry: &fs::Metadata) -> bool {
+    // Windows volume mount points and junctions are reparse points, which are
+    // handled as link entries before this check and are never traversed.
+    true
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_filesystem(_root: &fs::Metadata, _entry: &fs::Metadata) -> bool {
+    false
 }
 
 #[cfg(unix)]
@@ -864,9 +1011,9 @@ fn update_latest_modified(stats: &mut MeasurementStats, modified: Option<SystemT
     );
 }
 
-fn pending_measurement() -> BuildArtifactMeasurement {
-    BuildArtifactMeasurement {
-        status: BuildArtifactMeasurementStatus::Pending,
+fn pending_measurement() -> DirectoryMeasurement {
+    DirectoryMeasurement {
+        status: DirectoryMeasurementStatus::Pending,
         bytes: None,
         human: None,
         files: 0,
@@ -877,24 +1024,24 @@ fn pending_measurement() -> BuildArtifactMeasurement {
     }
 }
 
-fn missing_measurement() -> BuildArtifactMeasurement {
-    BuildArtifactMeasurement {
-        status: BuildArtifactMeasurementStatus::Missing,
+fn missing_measurement() -> DirectoryMeasurement {
+    DirectoryMeasurement {
+        status: DirectoryMeasurementStatus::Missing,
         bytes: Some(0),
         human: Some("0 B".to_string()),
         files: 0,
         directories: 0,
         skipped: 0,
         latest_modified_ms: None,
-        message: Some("Build directory no longer exists".to_string()),
+        message: Some("Project data directory no longer exists".to_string()),
     }
 }
 
 fn failed_measurement(
-    status: BuildArtifactMeasurementStatus,
+    status: DirectoryMeasurementStatus,
     error: std::io::Error,
-) -> BuildArtifactMeasurement {
-    BuildArtifactMeasurement {
+) -> DirectoryMeasurement {
+    DirectoryMeasurement {
         status,
         bytes: None,
         human: None,
@@ -906,17 +1053,35 @@ fn failed_measurement(
     }
 }
 
-pub(crate) fn run_build_artifact_cleanup_with_runner<F>(
+pub(crate) fn run_project_cleanup_with_runner<F>(
     root: &Path,
     candidate: &CandidateRecord,
     runner: &F,
-) -> BuildArtifactCleanupResult
+) -> ProjectCleanupResult
 where
     F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
 {
+    run_project_cleanup_with_runner_and_deleter(
+        root,
+        candidate,
+        runner,
+        &remove_dependency_directory,
+    )
+}
+
+fn run_project_cleanup_with_runner_and_deleter<F, D>(
+    root: &Path,
+    candidate: &CandidateRecord,
+    runner: &F,
+    deleter: &D,
+) -> ProjectCleanupResult
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+    D: Fn(&Path) -> Result<(), String>,
+{
     let before_bytes = candidate.measurement.bytes.unwrap_or(0);
-    if candidate.status != BuildArtifactCandidateStatus::Ready
-        || candidate.measurement.status != BuildArtifactMeasurementStatus::Ready
+    if candidate.status != ProjectDataCandidateStatus::Ready
+        || candidate.measurement.status != DirectoryMeasurementStatus::Ready
         || candidate.measurement.skipped != 0
     {
         return rejected_cleanup(
@@ -928,17 +1093,19 @@ where
 
     match validate_for_cleanup(root, candidate) {
         Ok(Validation::Missing) => {
-            return BuildArtifactCleanupResult {
+            return ProjectCleanupResult {
                 candidate_id: candidate.id.clone(),
-                status: BuildArtifactCleanupStatus::Skipped,
+                status: ProjectCleanupStatus::Skipped,
                 command: None,
                 before_bytes,
                 after_bytes: 0,
-                released_bytes: 0,
+                cleaned_bytes: 0,
                 measurement: missing_measurement(),
                 stdout: String::new(),
                 stderr: String::new(),
-                message: Some("Build directory no longer exists; nothing was run".to_string()),
+                message: Some(
+                    "Project data directory no longer exists; nothing was run".to_string(),
+                ),
                 failure: None,
             }
         }
@@ -946,6 +1113,20 @@ where
         Ok(Validation::Ready) => {}
     }
 
+    match candidate.kind {
+        ProjectDataKind::RustTarget => run_rust_cleanup(candidate, runner, before_bytes),
+        ProjectDataKind::NodeModules => run_node_cleanup(candidate, deleter, before_bytes),
+    }
+}
+
+fn run_rust_cleanup<F>(
+    candidate: &CandidateRecord,
+    runner: &F,
+    before_bytes: u64,
+) -> ProjectCleanupResult
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
     let manifest_path = candidate.project_path.join("Cargo.toml");
     let args = vec![
         "clean".to_string(),
@@ -953,34 +1134,34 @@ where
         "--manifest-path".to_string(),
         manifest_path.display().to_string(),
         "--target-dir".to_string(),
-        candidate.target_path.display().to_string(),
+        candidate.directory_path.display().to_string(),
     ];
     let command = envelope_owned("cargo", args.clone(), CLEAN_TIMEOUT.as_millis() as u64);
     let run = runner("cargo", &args, CLEAN_TIMEOUT);
-    let measurement = measure_build_artifact(&candidate.target_path);
+    let measurement = measure_project_data(candidate.kind, &candidate.directory_path);
     let measurement_complete = matches!(
         measurement.status,
-        BuildArtifactMeasurementStatus::Ready | BuildArtifactMeasurementStatus::Missing
+        DirectoryMeasurementStatus::Ready | DirectoryMeasurementStatus::Missing
     );
     let after_bytes = if measurement_complete {
         measurement.bytes.unwrap_or(before_bytes)
     } else {
         before_bytes
     };
-    let released_bytes = before_bytes.saturating_sub(after_bytes);
+    let cleaned_bytes = before_bytes.saturating_sub(after_bytes);
 
     match run {
-        Ok(run) if run.exit_code == Some(0) => BuildArtifactCleanupResult {
+        Ok(run) if run.exit_code == Some(0) => ProjectCleanupResult {
             candidate_id: candidate.id.clone(),
             status: if measurement_complete {
-                BuildArtifactCleanupStatus::Succeeded
+                ProjectCleanupStatus::Succeeded
             } else {
-                BuildArtifactCleanupStatus::PartiallyCompleted
+                ProjectCleanupStatus::PartiallyCompleted
             },
             command: Some(command),
             before_bytes,
             after_bytes,
-            released_bytes,
+            cleaned_bytes,
             measurement,
             stdout: run.stdout,
             stderr: run.stderr,
@@ -999,7 +1180,7 @@ where
                 command,
                 before_bytes,
                 after_bytes,
-                released_bytes,
+                cleaned_bytes,
                 measurement,
                 stdout,
                 stderr,
@@ -1014,7 +1195,7 @@ where
                 command,
                 before_bytes,
                 after_bytes,
-                released_bytes,
+                cleaned_bytes,
                 measurement,
                 stdout,
                 stderr,
@@ -1024,28 +1205,105 @@ where
     }
 }
 
+fn run_node_cleanup<D>(
+    candidate: &CandidateRecord,
+    deleter: &D,
+    before_bytes: u64,
+) -> ProjectCleanupResult
+where
+    D: Fn(&Path) -> Result<(), String>,
+{
+    let deletion = deleter(&candidate.directory_path);
+    let measurement = measure_project_data(candidate.kind, &candidate.directory_path);
+    let measurement_complete = matches!(
+        measurement.status,
+        DirectoryMeasurementStatus::Ready | DirectoryMeasurementStatus::Missing
+    );
+    let after_bytes = if measurement_complete {
+        measurement.bytes.unwrap_or(before_bytes)
+    } else {
+        before_bytes
+    };
+    let cleaned_bytes = before_bytes.saturating_sub(after_bytes);
+
+    match deletion {
+        Ok(()) if measurement.status == DirectoryMeasurementStatus::Missing => {
+            ProjectCleanupResult {
+                candidate_id: candidate.id.clone(),
+                status: ProjectCleanupStatus::Succeeded,
+                command: None,
+                before_bytes,
+                after_bytes,
+                cleaned_bytes,
+                measurement,
+                stdout: String::new(),
+                stderr: String::new(),
+                message: None,
+                failure: None,
+            }
+        }
+        Ok(()) => ProjectCleanupResult {
+            candidate_id: candidate.id.clone(),
+            status: ProjectCleanupStatus::PartiallyCompleted,
+            command: None,
+            before_bytes,
+            after_bytes,
+            cleaned_bytes,
+            measurement,
+            stdout: String::new(),
+            stderr: String::new(),
+            message: Some(
+                "node_modules deletion returned successfully, but the directory still exists or could not be remeasured"
+                    .to_string(),
+            ),
+            failure: None,
+        },
+        Err(message) => ProjectCleanupResult {
+            candidate_id: candidate.id.clone(),
+            status: if cleaned_bytes > 0 {
+                ProjectCleanupStatus::PartiallyCompleted
+            } else {
+                ProjectCleanupStatus::Failed
+            },
+            command: None,
+            before_bytes,
+            after_bytes,
+            cleaned_bytes,
+            measurement,
+            stdout: String::new(),
+            stderr: String::new(),
+            message: Some(message),
+            failure: None,
+        },
+    }
+}
+
+fn remove_dependency_directory(path: &Path) -> Result<(), String> {
+    fs::remove_dir_all(path).map_err(|err| format!("Could not remove node_modules: {err}"))
+}
+
 fn failed_cleanup(
     candidate: &CandidateRecord,
     command: CommandEnvelope,
     before_bytes: u64,
     after_bytes: u64,
-    released_bytes: u64,
-    measurement: BuildArtifactMeasurement,
+    cleaned_bytes: u64,
+    measurement: DirectoryMeasurement,
     stdout: String,
     stderr: String,
     failure: CommandFailure,
-) -> BuildArtifactCleanupResult {
-    BuildArtifactCleanupResult {
+) -> ProjectCleanupResult {
+    ProjectCleanupResult {
         candidate_id: candidate.id.clone(),
-        status: if released_bytes > 0 {
-            BuildArtifactCleanupStatus::PartiallyCompleted
+        status: if cleaned_bytes > 0 {
+            ProjectCleanupStatus::PartiallyCompleted
         } else {
-            BuildArtifactCleanupStatus::Failed
+            ProjectCleanupStatus::Failed
         },
         command: Some(command),
         before_bytes,
         after_bytes,
-        released_bytes,
+        cleaned_bytes,
         measurement,
         stdout,
         stderr,
@@ -1058,14 +1316,14 @@ fn rejected_cleanup(
     candidate: &CandidateRecord,
     before_bytes: u64,
     message: &str,
-) -> BuildArtifactCleanupResult {
-    BuildArtifactCleanupResult {
+) -> ProjectCleanupResult {
+    ProjectCleanupResult {
         candidate_id: candidate.id.clone(),
-        status: BuildArtifactCleanupStatus::Rejected,
+        status: ProjectCleanupStatus::Rejected,
         command: None,
         before_bytes,
         after_bytes: before_bytes,
-        released_bytes: 0,
+        cleaned_bytes: 0,
         measurement: candidate.measurement.clone(),
         stdout: String::new(),
         stderr: String::new(),
@@ -1081,42 +1339,67 @@ enum Validation {
 
 fn validate_for_cleanup(root: &Path, candidate: &CandidateRecord) -> Result<Validation, String> {
     let root = canonical_directory(root)?;
-    let metadata = match fs::symlink_metadata(&candidate.target_path) {
+    let metadata = match fs::symlink_metadata(&candidate.directory_path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Validation::Missing),
-        Err(err) => return Err(format!("Could not revalidate target: {err}")),
+        Err(err) => {
+            return Err(format!(
+                "Could not revalidate project data directory: {err}"
+            ))
+        }
     };
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return Err("The target path changed and is no longer a regular directory".to_string());
-    }
-    if candidate
-        .target_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        != Some("target")
-        || candidate.target_path.parent() != Some(candidate.project_path.as_path())
-    {
+    if is_link(&metadata) || !metadata.is_dir() {
         return Err(
-            "The target path is no longer directly owned by the scanned project".to_string(),
+            "The project data path changed and is no longer a regular directory".to_string(),
         );
     }
-    let manifest_path = candidate.project_path.join("Cargo.toml");
-    if !is_regular_file(&manifest_path) {
-        return Err("The project's Cargo.toml is missing or is not a regular file".to_string());
+    let expected_name = match candidate.kind {
+        ProjectDataKind::RustTarget => "target",
+        ProjectDataKind::NodeModules => "node_modules",
+    };
+    if candidate
+        .directory_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        != Some(expected_name)
+        || candidate.directory_path.parent() != Some(candidate.project_path.as_path())
+    {
+        return Err(
+            "The project data path is no longer directly owned by the scanned project".to_string(),
+        );
     }
-    if !has_cargo_marker(&candidate.target_path) {
+    let manifest_name = match candidate.kind {
+        ProjectDataKind::RustTarget => "Cargo.toml",
+        ProjectDataKind::NodeModules => "package.json",
+    };
+    let manifest_path = candidate.project_path.join(manifest_name);
+    if !is_regular_file(&manifest_path) {
+        return Err(format!(
+            "The project's {manifest_name} is missing or is not a regular file"
+        ));
+    }
+    if candidate.kind == ProjectDataKind::RustTarget && !has_cargo_marker(&candidate.directory_path)
+    {
         return Err("The target no longer contains a trusted Cargo marker".to_string());
     }
 
     let project = fs::canonicalize(&candidate.project_path)
         .map_err(|err| format!("Could not resolve project directory: {err}"))?;
-    let target = fs::canonicalize(&candidate.target_path)
-        .map_err(|err| format!("Could not resolve target directory: {err}"))?;
+    let directory = fs::canonicalize(&candidate.directory_path)
+        .map_err(|err| format!("Could not resolve project data directory: {err}"))?;
     if !project.starts_with(&root)
-        || !target.starts_with(&root)
-        || target.parent() != Some(project.as_path())
+        || !directory.starts_with(&root)
+        || directory.parent() != Some(project.as_path())
     {
-        return Err("The project or target escaped the authorized scan root".to_string());
+        return Err("The project or data directory escaped the authorized scan root".to_string());
+    }
+    if candidate.kind == ProjectDataKind::NodeModules {
+        let measurement = measure_project_data(candidate.kind, &candidate.directory_path);
+        if measurement.status != DirectoryMeasurementStatus::Ready || measurement.skipped != 0 {
+            return Err(measurement.message.unwrap_or_else(|| {
+                "The node_modules directory could not be fully revalidated".to_string()
+            }));
+        }
     }
     Ok(Validation::Ready)
 }
@@ -1164,21 +1447,21 @@ mod tests {
         create_project(&root.join(".hidden/project"), Some("CACHEDIR.TAG"));
         fs::create_dir_all(root.join("bare/target")).expect("create bare target");
 
-        let discovery = discover_build_artifacts(&root, 8);
+        let discovery = discover_project_data(&root, 8);
 
         assert_eq!(discovery.candidates.len(), 2);
         assert_eq!(
             discovery.candidates[0].status,
-            BuildArtifactCandidateStatus::Unrecognized
+            ProjectDataCandidateStatus::Unrecognized
         );
         assert_eq!(
             discovery.candidates[1].status,
-            BuildArtifactCandidateStatus::Ready
+            ProjectDataCandidateStatus::Ready
         );
-        assert!(discovery
-            .candidates
-            .iter()
-            .all(|candidate| !candidate.target_path.to_string_lossy().contains(".hidden")));
+        assert!(discovery.candidates.iter().all(|candidate| !candidate
+            .directory_path
+            .to_string_lossy()
+            .contains(".hidden")));
     }
 
     #[test]
@@ -1188,7 +1471,7 @@ mod tests {
         create_project(&root, Some("CACHEDIR.TAG"));
         create_project(&root.join("nested"), Some("CACHEDIR.TAG"));
 
-        let discovery = discover_build_artifacts(&root, 0);
+        let discovery = discover_project_data(&root, 0);
 
         assert_eq!(discovery.candidates.len(), 1);
         assert_eq!(discovery.candidates[0].project_path, root);
@@ -1210,12 +1493,169 @@ mod tests {
         fs::create_dir_all(root.join("shared")).expect("create shared");
         symlink(root.join("shared"), root.join("project/target")).expect("link target");
 
-        let discovery = discover_build_artifacts(&root, 8);
+        let discovery = discover_project_data(&root, 8);
 
         assert_eq!(discovery.candidates.len(), 1);
         assert_eq!(
             discovery.candidates[0].status,
-            BuildArtifactCandidateStatus::Symlink
+            ProjectDataCandidateStatus::Symlink
+        );
+    }
+
+    #[test]
+    fn discovers_node_modules_without_entering_installed_dependencies() {
+        let root = temp_dir("discover-node");
+        let _guard = TempDirGuard(root.clone());
+        let rust_project = root.join("rust-project");
+        let node_project = root.join("node-project");
+        create_project(&rust_project, Some("CACHEDIR.TAG"));
+        create_node_project(&node_project);
+        create_node_project(&node_project.join("node_modules/installed-package"));
+
+        let discovery = discover_project_data(&root, 8);
+
+        assert_eq!(discovery.candidates.len(), 2);
+        assert!(discovery.candidates.iter().any(|candidate| {
+            candidate.kind == ProjectDataKind::RustTarget
+                && candidate.directory_path == rust_project.join("target")
+        }));
+        assert!(discovery.candidates.iter().any(|candidate| {
+            candidate.kind == ProjectDataKind::NodeModules
+                && candidate.directory_path == node_project.join("node_modules")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn node_project_requires_a_regular_package_json_and_regular_node_modules_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_dir("node-identity");
+        let _guard = TempDirGuard(root.clone());
+        let linked_manifest = root.join("linked-manifest");
+        fs::create_dir_all(linked_manifest.join("node_modules")).expect("create node_modules");
+        fs::write(root.join("shared-package.json"), "{}").expect("write shared manifest");
+        symlink(
+            root.join("shared-package.json"),
+            linked_manifest.join("package.json"),
+        )
+        .expect("link manifest");
+
+        let linked_modules = root.join("linked-modules");
+        fs::create_dir_all(&linked_modules).expect("create project");
+        fs::write(linked_modules.join("package.json"), "{}").expect("write manifest");
+        fs::create_dir_all(root.join("shared-modules")).expect("create shared modules");
+        symlink(
+            root.join("shared-modules"),
+            linked_modules.join("node_modules"),
+        )
+        .expect("link node_modules");
+
+        let discovery = discover_project_data(&root, 8);
+
+        assert_eq!(discovery.candidates.len(), 1);
+        assert_eq!(discovery.candidates[0].kind, ProjectDataKind::NodeModules);
+        assert_eq!(
+            discovery.candidates[0].status,
+            ProjectDataCandidateStatus::Symlink
+        );
+        assert_eq!(discovery.candidates[0].project_path, linked_modules);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn node_measurement_and_cleanup_do_not_follow_internal_links() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_dir("node-internal-link");
+        let _guard = TempDirGuard(root.clone());
+        let project = root.join("project");
+        let external = root.join("external");
+        create_node_project(&project);
+        fs::create_dir_all(&external).expect("create external directory");
+        fs::write(external.join("keep.txt"), "keep").expect("write external file");
+        symlink(&external, project.join("node_modules/external-link"))
+            .expect("link external directory");
+        let candidate = node_candidate(&project);
+
+        assert_eq!(
+            candidate.measurement.status,
+            DirectoryMeasurementStatus::Ready
+        );
+        assert_eq!(candidate.measurement.directories, 1);
+
+        let result = run_project_cleanup_with_runner(&root, &candidate, &|_, _, _| {
+            panic!("node_modules cleanup must not run cargo")
+        });
+
+        assert_eq!(result.status, ProjectCleanupStatus::Succeeded);
+        assert!(external.join("keep.txt").is_file());
+        assert!(!project.join("node_modules").exists());
+    }
+
+    #[test]
+    fn node_cleanup_uses_the_guarded_deleter_without_running_cargo() {
+        let root = temp_dir("node-cleanup");
+        let _guard = TempDirGuard(root.clone());
+        let project = root.join("project");
+        create_node_project(&project);
+        let candidate = node_candidate(&project);
+
+        let result = run_project_cleanup_with_runner_and_deleter(
+            &root,
+            &candidate,
+            &|_, _, _| panic!("node_modules cleanup must not run cargo"),
+            &|path| fs::remove_dir_all(path).map_err(|error| error.to_string()),
+        );
+
+        assert_eq!(result.status, ProjectCleanupStatus::Succeeded);
+        assert!(result.command.is_none());
+        assert!(result.cleaned_bytes > 0);
+    }
+
+    #[test]
+    fn node_cleanup_revalidates_package_json_before_deletion() {
+        let root = temp_dir("node-manifest-swap");
+        let _guard = TempDirGuard(root.clone());
+        let project = root.join("project");
+        create_node_project(&project);
+        let candidate = node_candidate(&project);
+        fs::remove_file(project.join("package.json")).expect("remove manifest");
+
+        let result = run_project_cleanup_with_runner_and_deleter(
+            &root,
+            &candidate,
+            &|_, _, _| panic!("node_modules cleanup must not run cargo"),
+            &|_| panic!("unverified node_modules must not be deleted"),
+        );
+
+        assert_eq!(result.status, ProjectCleanupStatus::Rejected);
+        assert!(project.join("node_modules").is_dir());
+    }
+
+    #[test]
+    fn node_cleanup_reports_partial_completion_when_deletion_errors_after_removal() {
+        let root = temp_dir("node-partial-cleanup");
+        let _guard = TempDirGuard(root.clone());
+        let project = root.join("project");
+        create_node_project(&project);
+        let candidate = node_candidate(&project);
+
+        let result = run_project_cleanup_with_runner_and_deleter(
+            &root,
+            &candidate,
+            &|_, _, _| panic!("node_modules cleanup must not run cargo"),
+            &|path| {
+                fs::remove_dir_all(path).expect("remove node_modules");
+                Err("simulated late deletion error".to_string())
+            },
+        );
+
+        assert_eq!(result.status, ProjectCleanupStatus::PartiallyCompleted);
+        assert!(result.cleaned_bytes > 0);
+        assert_eq!(
+            result.message.as_deref(),
+            Some("simulated late deletion error")
         );
     }
 
@@ -1227,9 +1667,9 @@ mod tests {
         fs::write(root.join("CACHEDIR.TAG"), "cache").expect("write marker");
         fs::write(root.join("debug/app"), vec![1_u8; 2048]).expect("write artifact");
 
-        let measurement = measure_build_artifact(&root);
+        let measurement = measure_project_data(ProjectDataKind::RustTarget, &root);
 
-        assert_eq!(measurement.status, BuildArtifactMeasurementStatus::Ready);
+        assert_eq!(measurement.status, DirectoryMeasurementStatus::Ready);
         assert!(measurement.bytes.unwrap_or(0) > 0);
         assert!(measurement.latest_modified_ms.is_some());
         assert_eq!(measurement.skipped, 0);
@@ -1255,7 +1695,7 @@ mod tests {
                 scan_id,
                 root_path,
                 depth,
-                discover_build_artifacts(&first, 8),
+                discover_project_data(&first, 8),
                 true,
                 None,
             )
@@ -1288,7 +1728,7 @@ mod tests {
                 first_scan_id,
                 first_root,
                 first_depth,
-                discover_build_artifacts(&root, 8),
+                discover_project_data(&root, 8),
                 true,
                 None,
             )
@@ -1299,13 +1739,48 @@ mod tests {
                 second_scan_id.clone(),
                 second_root,
                 second_depth,
-                discover_build_artifacts(&root, 8),
+                discover_project_data(&root, 8),
                 true,
                 None,
             )
             .expect("install latest scan");
 
         assert_eq!(installed.scan_id, second_scan_id);
+    }
+
+    #[test]
+    fn cleanup_context_can_only_be_claimed_once_per_scan() {
+        let root = temp_dir("single-cleanup-attempt");
+        let _guard = TempDirGuard(root.clone());
+        create_node_project(&root.join("project"));
+        let mut registry = Registry::load(root.join("settings.json"));
+        let root_id = registry
+            .authorize_root(root.clone())
+            .expect("authorize root")
+            .root_id
+            .expect("root id");
+        let (root_path, depth, scan_id) = registry.prepare_scan(&root_id, 8).expect("prepare scan");
+        let scan = registry
+            .install_scan(
+                &root_id,
+                scan_id,
+                root_path,
+                depth,
+                discover_project_data(&root, 8),
+                false,
+                Some("Cargo unavailable".to_string()),
+            )
+            .expect("install scan");
+        let candidate_id = scan.candidates[0].candidate_id.clone();
+
+        registry
+            .cleanup_context(&scan.scan_id, &candidate_id)
+            .expect("claim cleanup context");
+        let error = registry
+            .cleanup_context(&scan.scan_id, &candidate_id)
+            .expect_err("second cleanup attempt must be rejected");
+
+        assert!(error.contains("already processed"));
     }
 
     #[test]
@@ -1318,15 +1793,17 @@ mod tests {
         let target = project.join("target");
         let candidate = CandidateRecord {
             id: "candidate-1".to_string(),
+            kind: ProjectDataKind::RustTarget,
             project_path: project.clone(),
-            target_path: target.clone(),
-            status: BuildArtifactCandidateStatus::Ready,
+            directory_path: target.clone(),
+            status: ProjectDataCandidateStatus::Ready,
             message: None,
-            measurement: measure_build_artifact(&target),
+            measurement: measure_project_data(ProjectDataKind::RustTarget, &target),
+            cleanup_attempted: false,
         };
 
         let result =
-            run_build_artifact_cleanup_with_runner(&root, &candidate, &|program, args, timeout| {
+            run_project_cleanup_with_runner(&root, &candidate, &|program, args, timeout| {
                 assert_eq!(program, "cargo");
                 assert_eq!(timeout, Duration::from_secs(300));
                 assert_eq!(
@@ -1349,7 +1826,7 @@ mod tests {
                 })
             });
 
-        assert_eq!(result.status, BuildArtifactCleanupStatus::Succeeded);
+        assert_eq!(result.status, ProjectCleanupStatus::Succeeded);
         assert_eq!(
             result.command.expect("command").args,
             vec![
@@ -1364,7 +1841,7 @@ mod tests {
     }
 
     #[test]
-    fn successful_command_does_not_claim_released_bytes_when_remeasurement_fails() {
+    fn successful_command_does_not_claim_cleaned_bytes_when_remeasurement_fails() {
         let root = temp_dir("incomplete-remeasurement");
         let _guard = TempDirGuard(root.clone());
         let project = root.join("project");
@@ -1373,35 +1850,30 @@ mod tests {
         let target = project.join("target");
         let candidate = CandidateRecord {
             id: "candidate-1".to_string(),
+            kind: ProjectDataKind::RustTarget,
             project_path: project,
-            target_path: target.clone(),
-            status: BuildArtifactCandidateStatus::Ready,
+            directory_path: target.clone(),
+            status: ProjectDataCandidateStatus::Ready,
             message: None,
-            measurement: measure_build_artifact(&target),
+            measurement: measure_project_data(ProjectDataKind::RustTarget, &target),
+            cleanup_attempted: false,
         };
 
-        let result =
-            run_build_artifact_cleanup_with_runner(&root, &candidate, &|program, _, timeout| {
-                fs::remove_dir_all(&target).expect("remove target");
-                fs::write(&target, "not a directory").expect("replace target with file");
-                Ok(CommandRun {
-                    envelope: envelope(program, &[], timeout.as_millis() as u64),
-                    stdout: "cleaned".to_string(),
-                    stderr: String::new(),
-                    exit_code: Some(0),
-                    duration_ms: 1,
-                })
-            });
+        let result = run_project_cleanup_with_runner(&root, &candidate, &|program, _, timeout| {
+            fs::remove_dir_all(&target).expect("remove target");
+            fs::write(&target, "not a directory").expect("replace target with file");
+            Ok(CommandRun {
+                envelope: envelope(program, &[], timeout.as_millis() as u64),
+                stdout: "cleaned".to_string(),
+                stderr: String::new(),
+                exit_code: Some(0),
+                duration_ms: 1,
+            })
+        });
 
-        assert_eq!(
-            result.status,
-            BuildArtifactCleanupStatus::PartiallyCompleted
-        );
-        assert_eq!(result.released_bytes, 0);
-        assert_eq!(
-            result.measurement.status,
-            BuildArtifactMeasurementStatus::Error
-        );
+        assert_eq!(result.status, ProjectCleanupStatus::PartiallyCompleted);
+        assert_eq!(result.cleaned_bytes, 0);
+        assert_eq!(result.measurement.status, DirectoryMeasurementStatus::Error);
     }
 
     #[test]
@@ -1411,23 +1883,25 @@ mod tests {
         let project = root.join("project");
         create_project(&project, Some("CACHEDIR.TAG"));
         let target = project.join("target");
-        let measurement = measure_build_artifact(&target);
+        let measurement = measure_project_data(ProjectDataKind::RustTarget, &target);
         fs::remove_dir_all(&target).expect("remove target");
         let candidate = CandidateRecord {
             id: "candidate-1".to_string(),
+            kind: ProjectDataKind::RustTarget,
             project_path: project,
-            target_path: target,
-            status: BuildArtifactCandidateStatus::Ready,
+            directory_path: target,
+            status: ProjectDataCandidateStatus::Ready,
             message: None,
             measurement,
+            cleanup_attempted: false,
         };
 
-        let result = run_build_artifact_cleanup_with_runner(&root, &candidate, &|_, _, _| {
+        let result = run_project_cleanup_with_runner(&root, &candidate, &|_, _, _| {
             panic!("cargo must not run for a missing target")
         });
 
-        assert_eq!(result.status, BuildArtifactCleanupStatus::Skipped);
-        assert_eq!(result.released_bytes, 0);
+        assert_eq!(result.status, ProjectCleanupStatus::Skipped);
+        assert_eq!(result.cleaned_bytes, 0);
     }
 
     #[cfg(unix)]
@@ -1442,23 +1916,25 @@ mod tests {
         let target = project.join("target");
         let candidate = CandidateRecord {
             id: "candidate-1".to_string(),
+            kind: ProjectDataKind::RustTarget,
             project_path: project.clone(),
-            target_path: target.clone(),
-            status: BuildArtifactCandidateStatus::Ready,
+            directory_path: target.clone(),
+            status: ProjectDataCandidateStatus::Ready,
             message: None,
-            measurement: measure_build_artifact(&target),
+            measurement: measure_project_data(ProjectDataKind::RustTarget, &target),
+            cleanup_attempted: false,
         };
         fs::remove_dir_all(&target).expect("remove original target");
         fs::create_dir_all(root.join("shared")).expect("create shared target");
         fs::write(root.join("shared/CACHEDIR.TAG"), "marker").expect("write shared marker");
         symlink(root.join("shared"), &target).expect("replace target with symlink");
 
-        let result = run_build_artifact_cleanup_with_runner(&root, &candidate, &|_, _, _| {
+        let result = run_project_cleanup_with_runner(&root, &candidate, &|_, _, _| {
             panic!("cargo must not run for a symbolic link")
         });
 
-        assert_eq!(result.status, BuildArtifactCleanupStatus::Rejected);
-        assert_eq!(result.released_bytes, 0);
+        assert_eq!(result.status, ProjectCleanupStatus::Rejected);
+        assert_eq!(result.cleaned_bytes, 0);
     }
 
     fn create_project(path: &Path, marker: Option<&str>) {
@@ -1473,10 +1949,31 @@ mod tests {
         }
     }
 
+    fn create_node_project(path: &Path) {
+        fs::create_dir_all(path.join("node_modules")).expect("create node_modules");
+        fs::write(path.join("package.json"), "{}").expect("write package.json");
+        fs::write(path.join("node_modules/package.js"), vec![1_u8; 1024])
+            .expect("write dependency");
+    }
+
+    fn node_candidate(project: &Path) -> CandidateRecord {
+        let directory_path = project.join("node_modules");
+        CandidateRecord {
+            id: "candidate-node".to_string(),
+            kind: ProjectDataKind::NodeModules,
+            project_path: project.to_path_buf(),
+            directory_path: directory_path.clone(),
+            status: ProjectDataCandidateStatus::Ready,
+            message: None,
+            measurement: measure_project_data(ProjectDataKind::NodeModules, &directory_path),
+            cleanup_attempted: false,
+        }
+    }
+
     fn temp_dir(label: &str) -> PathBuf {
         let suffix = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "package-manager-build-artifacts-{label}-{}-{suffix}",
+            "package-manager-project-cleanup-{label}-{}-{suffix}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&path);
