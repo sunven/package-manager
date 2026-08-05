@@ -114,7 +114,11 @@ export function App() {
       />
       <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
         {activeView === "cleanup" ? (
-          <ProjectCleanupPage controller={projectCleanup} homeDirectory={state.homeDirectory} />
+          <ProjectCleanupPage
+            homeDirectory={state.homeDirectory}
+            view={projectCleanup.view}
+            workflow={projectCleanup.workflow}
+          />
         ) : activeView === "settings" ? (
           <SettingsPage
             enabledManagers={state.enabledManagers}

@@ -1,15 +1,22 @@
 import { Copy, ExternalLink, FolderOpen, RefreshCw, Square, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { toast } from "sonner";
 import {
-  projectDataMetrics,
   projectName,
-  projectDataSelectable,
   filterAndSortProjectData,
   type ProjectDataFilter,
   type ProjectDataSort,
 } from "../projectCleanup";
-import type { ProjectCleanupController } from "../hooks/useProjectCleanup";
-import type { ProjectDataCandidate, ProjectCleanupResult } from "../types";
+import type {
+  CleanupBatchView,
+  ProjectCleanupCandidateView,
+  ProjectCleanupView,
+  ProjectCleanupWorkflow,
+  WorkflowFailure,
+  WorkflowOutcome,
+} from "../projectCleanupWorkflow";
+import type { ProjectCleanupResult, UiMessage } from "../types";
 import { formatBytes, formatHomePath } from "../utils/format";
 import {
   AlertDialog,
@@ -39,40 +46,62 @@ import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { EmptyState, IconButton, Panel, PanelHead, StatCard } from "./ui";
 
 export function ProjectCleanupPage({
-  controller,
   homeDirectory,
+  view,
+  workflow,
 }: {
-  controller: ProjectCleanupController;
   homeDirectory: string | null;
+  view: ProjectCleanupView;
+  workflow: ProjectCleanupWorkflow;
 }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<ProjectDataSort>("size");
   const [kind, setKind] = useState<ProjectDataFilter>("all");
+  const [message, setMessage] = useState<UiMessage | null>(null);
+  const candidates = view.scan.session?.candidates ?? [];
+  const orderedCandidates = useMemo(
+    () => filterAndSortProjectData(candidates, "", sort, "all"),
+    [candidates, sort],
+  );
   const visibleCandidates = useMemo(
-    () => filterAndSortProjectData(controller.scan?.candidates ?? [], query, sort, kind),
-    [controller.scan?.candidates, kind, query, sort],
+    () => filterAndSortProjectData(candidates, query, sort, kind),
+    [candidates, kind, query, sort],
   );
   const selectableVisibleIds = visibleCandidates
-    .filter((candidate) =>
-      projectDataSelectable(
-        candidate,
-        controller.scan?.cargoAvailable ?? false,
-        controller.cleanupResults.get(candidate.candidateId),
-      ),
-    )
-    .filter((candidate) => !controller.cleanupErrors.has(candidate.candidateId))
-    .filter((candidate) => !controller.cancelledCleanupIds.has(candidate.candidateId))
+    .filter((candidate) => candidate.cleanability.kind === "cleanable")
     .map((candidate) => candidate.candidateId);
-  const allVisibleSelected = Boolean(selectableVisibleIds.length) && selectableVisibleIds.every((id) => controller.selectedIds.has(id));
-  const metrics = projectDataMetrics(controller.scan, controller.selectedIds, controller.cleanupResults);
-  const scanBusy = controller.discovering || controller.pendingMeasurements > 0;
+  const allVisibleSelected = Boolean(selectableVisibleIds.length)
+    && selectableVisibleIds.every((candidateId) =>
+      candidates.find((candidate) => candidate.candidateId === candidateId)?.selected,
+    );
+  const scanBusy = view.scan.phase === "discovering" || view.scan.phase === "measuring";
+  const batchRunning = view.batch?.phase === "running";
+  const workflowFailure = view.settings.failure ?? view.scan.failure;
+  const displayedMessage = message ?? (workflowFailure ? failureMessage(workflowFailure) : null);
+
+  const report = (outcome: WorkflowOutcome<unknown>, title: string) => {
+    if (outcome.kind === "failed") {
+      setMessage({ tone: "bad", title, message: outcome.failure.message });
+    } else if (outcome.kind === "invalid") {
+      setMessage({ tone: "bad", title, message: outcome.message });
+    }
+  };
+
+  const copyPath = async (path: string) => {
+    try {
+      await writeText(path);
+      toast.success("路径已复制");
+    } catch (error) {
+      setMessage({ tone: "bad", title: "复制路径失败", message: errorText(error) });
+    }
+  };
 
   return (
     <main className="view-grid">
-      {controller.message ? (
+      {displayedMessage ? (
         <Alert variant="destructive">
-          <AlertTitle>{controller.message.title}</AlertTitle>
-          <AlertDescription>{controller.message.message}</AlertDescription>
+          <AlertTitle>{displayedMessage.title}</AlertTitle>
+          <AlertDescription>{displayedMessage.message}</AlertDescription>
         </Alert>
       ) : null}
 
@@ -81,8 +110,8 @@ export function ProjectCleanupPage({
           action={
             <div className="flex flex-wrap justify-end gap-2">
               <Button
-                disabled={!controller.settings.rootId || scanBusy || controller.cleaning}
-                onClick={() => void controller.openRoot()}
+                disabled={!view.settings.rootId || scanBusy || batchRunning}
+                onClick={() => void workflow.openRoot().then((outcome) => report(outcome, "打开扫描根目录失败"))}
                 size="sm"
                 type="button"
                 variant="outline"
@@ -91,8 +120,8 @@ export function ProjectCleanupPage({
                 打开
               </Button>
               <Button
-                disabled={scanBusy || controller.cleaning}
-                onClick={() => void controller.chooseRoot()}
+                disabled={scanBusy || Boolean(view.batch)}
+                onClick={() => void workflow.chooseRoot().then((outcome) => report(outcome, "无法选择扫描根目录"))}
                 size="sm"
                 type="button"
                 variant="outline"
@@ -108,14 +137,14 @@ export function ProjectCleanupPage({
         <div className="grid gap-2 p-3 md:grid-cols-[minmax(0,1fr)_100px_auto] md:items-end">
           <label className="grid min-w-0 gap-1.5" htmlFor="project-cleanup-root">
             <span className="text-xs font-medium text-muted-foreground">扫描根目录</span>
-            {controller.settingsLoading ? (
+            {view.settings.phase === "loading" ? (
               <Skeleton className="h-9 w-full" />
             ) : (
               <Input
                 id="project-cleanup-root"
                 readOnly
-                title={controller.settings.rootPath ?? undefined}
-                value={controller.settings.rootPath ? formatHomePath(controller.settings.rootPath, homeDirectory) : "尚未选择"}
+                title={view.settings.rootPath ?? undefined}
+                value={view.settings.rootPath ? formatHomePath(view.settings.rootPath, homeDirectory) : "尚未选择"}
               />
             )}
           </label>
@@ -123,26 +152,32 @@ export function ProjectCleanupPage({
             <span className="text-xs font-medium text-muted-foreground">最大深度</span>
             <Input
               aria-describedby="project-cleanup-depth-range"
-              disabled={scanBusy || controller.cleaning}
+              disabled={scanBusy || Boolean(view.batch)}
               id="project-cleanup-depth"
               max={32}
               min={0}
-              onChange={(event) => controller.setMaxDepth(event.currentTarget.valueAsNumber)}
+              onChange={(event) => report(workflow.setMaxDepth(event.currentTarget.valueAsNumber), "无法更新扫描深度")}
               type="number"
-              value={controller.maxDepth}
+              value={view.settings.maxDepth}
             />
             <span className="sr-only" id="project-cleanup-depth-range">范围 0 到 32</span>
           </label>
           <div className="flex gap-2">
             {scanBusy ? (
-              <Button onClick={controller.cancelScan} size="sm" type="button" variant="outline">
+              <Button
+                disabled={Boolean(view.batch)}
+                onClick={() => report(workflow.requestScanStop(), "无法取消扫描")}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
                 <X data-icon="inline-start" />
                 取消扫描
               </Button>
             ) : null}
             <Button
-              disabled={!controller.settings.rootId || scanBusy || controller.cleaning}
-              onClick={() => void controller.runScan()}
+              disabled={!view.settings.rootId || scanBusy || Boolean(view.batch)}
+              onClick={() => void workflow.startScan().then((outcome) => report(outcome, "项目派生数据扫描失败"))}
               size="sm"
               type="button"
             >
@@ -154,13 +189,13 @@ export function ProjectCleanupPage({
       </Panel>
 
       <section aria-label="项目清理指标" className="stat-grid grid-cols-2 md:grid-cols-4">
-        <StatCard label="已验证目录占用" value={formatBytes(metrics.verifiedBytes)} />
-        <StatCard label={`待复核 ${metrics.reviewCount} 项`} value={formatBytes(metrics.reviewBytes)} />
-        <StatCard label={`已选择 ${controller.selectedIds.size} 项`} value={formatBytes(metrics.selectedBytes)} />
-        <StatCard label="本轮已清理" value={formatBytes(metrics.cleanedBytes)} />
+        <StatCard label="已验证目录占用" value={formatBytes(view.totals.verifiedBytes)} />
+        <StatCard label={`待复核 ${view.totals.reviewCount} 项`} value={formatBytes(view.totals.reviewBytes)} />
+        <StatCard label={`已选择 ${view.totals.selectedCount} 项`} value={formatBytes(view.totals.selectedBytes)} />
+        <StatCard label="本轮已清理" value={formatBytes(view.totals.cleanedBytes)} />
       </section>
 
-      <ProjectDataScanNotice controller={controller} />
+      <ProjectDataScanNotice view={view} />
 
       <Panel className="overflow-hidden">
         <PanelHead
@@ -208,8 +243,8 @@ export function ProjectCleanupPage({
             <ToggleGroupItem value="path">路径</ToggleGroupItem>
           </ToggleGroup>
           <Button
-            disabled={!selectableVisibleIds.length || allVisibleSelected || controller.cleaning}
-            onClick={() => controller.selectVisible(selectableVisibleIds)}
+            disabled={!selectableVisibleIds.length || allVisibleSelected || Boolean(view.batch)}
+            onClick={() => report(workflow.setSelected(selectableVisibleIds, true), "无法选择可清理候选")}
             size="sm"
             type="button"
             variant="outline"
@@ -218,8 +253,8 @@ export function ProjectCleanupPage({
             全选可清理项
           </Button>
           <Button
-            disabled={!controller.selectedIds.size || controller.cleaning}
-            onClick={controller.clearSelection}
+            disabled={!view.totals.selectedCount || Boolean(view.batch)}
+            onClick={() => report(workflow.clearSelection(), "无法清空选择")}
             size="sm"
             type="button"
             variant="outline"
@@ -227,18 +262,25 @@ export function ProjectCleanupPage({
             清空
           </Button>
           <Button
-            disabled={!controller.selectedIds.size || controller.cleaning}
-            onClick={controller.requestCleanup}
+            disabled={!view.totals.selectedCount || Boolean(view.batch)}
+            onClick={() => report(
+              workflow.prepareCleanupBatch(
+                orderedCandidates
+                  .filter((candidate) => candidate.selected)
+                  .map((candidate) => candidate.candidateId),
+              ),
+              "无法准备清理批次",
+            )}
             size="sm"
             type="button"
             variant="destructive"
           >
             <Trash2 data-icon="inline-start" />
-            清理 {controller.selectedIds.size} 项
+            清理 {view.totals.selectedCount} 项
           </Button>
         </div>
 
-        {controller.discovering && !controller.scan ? (
+        {view.scan.phase === "discovering" && !view.scan.session ? (
           <div className="grid gap-2 p-3">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
@@ -252,10 +294,12 @@ export function ProjectCleanupPage({
                   <Checkbox
                     aria-label="选择当前可见的可清理项"
                     checked={allVisibleSelected}
-                    disabled={!selectableVisibleIds.length || controller.cleaning}
+                    disabled={!selectableVisibleIds.length || Boolean(view.batch)}
                     onCheckedChange={(checked) => {
-                      if (checked === true) controller.selectVisible(selectableVisibleIds);
-                      else controller.unselectVisible(selectableVisibleIds);
+                      report(
+                        workflow.setSelected(selectableVisibleIds, checked === true),
+                        "无法更新选择",
+                      );
                     }}
                   />
                 </TableHead>
@@ -272,12 +316,12 @@ export function ProjectCleanupPage({
               {visibleCandidates.map((candidate) => (
                 <ProjectDataRow
                   candidate={candidate}
-                  cleanupError={controller.cleanupErrors.get(candidate.candidateId)}
-                  cleanupResult={controller.cleanupResults.get(candidate.candidateId)}
-                  controller={controller}
+                  batch={view.batch}
+                  copyPath={copyPath}
                   homeDirectory={homeDirectory}
                   key={candidate.candidateId}
-                  selected={controller.selectedIds.has(candidate.candidateId)}
+                  report={report}
+                  workflow={workflow}
                 />
               ))}
             </TableBody>
@@ -287,7 +331,7 @@ export function ProjectCleanupPage({
             message={
               query
                 ? "没有匹配的项目派生数据"
-                : controller.scan
+                : view.scan.session
                   ? "扫描范围内没有发现项目派生数据"
                   : "选择根目录后开始扫描"
             }
@@ -295,13 +339,18 @@ export function ProjectCleanupPage({
         )}
       </Panel>
 
-      <ProjectCleanupDialog controller={controller} homeDirectory={homeDirectory} />
+      <ProjectCleanupDialog
+        batch={view.batch}
+        homeDirectory={homeDirectory}
+        report={report}
+        workflow={workflow}
+      />
     </main>
   );
 }
 
-function ProjectDataScanNotice({ controller }: { controller: ProjectCleanupController }) {
-  if (controller.scanCancelled) {
+function ProjectDataScanNotice({ view }: { view: ProjectCleanupView }) {
+  if (view.scan.phase === "stopped") {
     return (
       <Alert>
         <AlertTitle>扫描已取消</AlertTitle>
@@ -309,32 +358,33 @@ function ProjectDataScanNotice({ controller }: { controller: ProjectCleanupContr
       </Alert>
     );
   }
-  if (controller.pendingMeasurements > 0) {
+  if (view.scan.pendingMeasurements > 0) {
     return (
       <Alert>
         <AlertTitle>正在测量项目目录</AlertTitle>
-        <AlertDescription>还有 {controller.pendingMeasurements} 项等待完成。</AlertDescription>
+        <AlertDescription>还有 {view.scan.pendingMeasurements} 项等待完成。</AlertDescription>
       </Alert>
     );
   }
-  const first = controller.scan?.errors[0];
-  const hasRustCandidates = controller.scan?.candidates.some(
+  const session = view.scan.session;
+  const first = session?.errors[0];
+  const hasRustCandidates = session?.candidates.some(
     (candidate) => candidate.kind === "RustTarget",
   );
-  return controller.scan ? (
+  return session ? (
     <div className="grid gap-2 md:grid-cols-2">
-      {controller.scan.status === "Partial" ? (
+      {session.status === "Partial" ? (
         <Alert>
           <AlertTitle>扫描部分完成</AlertTitle>
           <AlertDescription>
-            已跳过 {controller.scan.skipped} 个无法读取的目录{first ? `；${first.path}：${first.message}` : ""}。
+            已跳过 {session.skipped} 个无法读取的目录{first ? `；${first.path}：${first.message}` : ""}。
           </AlertDescription>
         </Alert>
       ) : null}
-      {!controller.scan.cargoAvailable && hasRustCandidates ? (
+      {!session.cargoAvailable && hasRustCandidates ? (
         <Alert>
           <AlertTitle>Cargo 不可用</AlertTitle>
-          <AlertDescription>{controller.scan.cargoMessage ?? "Rust target 不可清理；node_modules 不受影响。"}</AlertDescription>
+          <AlertDescription>{session.cargoMessage ?? "Rust target 不可清理；node_modules 不受影响。"}</AlertDescription>
         </Alert>
       ) : null}
     </div>
@@ -342,33 +392,37 @@ function ProjectDataScanNotice({ controller }: { controller: ProjectCleanupContr
 }
 
 function ProjectDataRow({
+  batch,
   candidate,
-  cleanupError,
-  cleanupResult,
-  controller,
+  copyPath,
   homeDirectory,
-  selected,
+  report,
+  workflow,
 }: {
-  candidate: ProjectDataCandidate;
-  cleanupError: string | undefined;
-  cleanupResult: ProjectCleanupResult | undefined;
-  controller: ProjectCleanupController;
+  batch: CleanupBatchView | null;
+  candidate: ProjectCleanupCandidateView;
+  copyPath: (path: string) => Promise<void>;
   homeDirectory: string | null;
-  selected: boolean;
+  report: (outcome: WorkflowOutcome<unknown>, title: string) => void;
+  workflow: ProjectCleanupWorkflow;
 }) {
-  const selectable = projectDataSelectable(candidate, controller.scan?.cargoAvailable ?? false, cleanupResult)
-    && !cleanupError
-    && !controller.cancelledCleanupIds.has(candidate.candidateId);
-  const active = controller.activeCleanupId === candidate.candidateId;
+  const selectable = candidate.cleanability.kind === "cleanable";
+  const active = batch?.phase === "running"
+    && batch.candidates.some(
+      (item) => item.candidateId === candidate.candidateId && item.state.kind === "running",
+    );
 
   return (
-    <TableRow data-state={selected ? "selected" : undefined}>
+    <TableRow data-state={candidate.selected ? "selected" : undefined}>
       <TableCell>
         <Checkbox
           aria-label={`选择 ${projectName(candidate.projectPath)}`}
-          checked={selected}
-          disabled={!selectable || controller.cleaning}
-          onCheckedChange={(checked) => controller.toggleSelected(candidate.candidateId, checked === true)}
+          checked={candidate.selected}
+          disabled={!selectable || Boolean(batch)}
+          onCheckedChange={(checked) => report(
+            workflow.setSelected([candidate.candidateId], checked === true),
+            "无法更新选择",
+          )}
         />
       </TableCell>
       <TableCell className="max-w-56 whitespace-normal">
@@ -396,25 +450,28 @@ function ProjectDataRow({
       <TableCell>
         <CandidateStatusBadge
           active={active}
-          cancelled={controller.cancelledCleanupIds.has(candidate.candidateId)}
           candidate={candidate}
-          cargoAvailable={controller.scan?.cargoAvailable ?? false}
-          cleanupError={cleanupError}
-          cleanupResult={cleanupResult}
         />
       </TableCell>
       <TableCell>
         <div className="flex justify-end gap-1">
-          <IconButton label={`复制 ${candidateDirectoryName(candidate)} 路径`} onClick={() => void controller.copyPath(candidate.directoryPath)}>
+          <IconButton label={`复制 ${candidateDirectoryName(candidate)} 路径`} onClick={() => void copyPath(candidate.directoryPath)}>
             <Copy />
           </IconButton>
-          <IconButton label="打开项目目录" onClick={() => void controller.openCandidatePath(candidate.candidateId, "Project")}>
+          <IconButton
+            label="打开项目目录"
+            onClick={() => void workflow.openCandidate(candidate.candidateId, "Project").then(
+              (outcome) => report(outcome, "打开项目目录失败"),
+            )}
+          >
             <FolderOpen />
           </IconButton>
           <IconButton
             disabled={candidate.measurement.status === "Missing"}
             label={`打开 ${candidateDirectoryName(candidate)} 目录`}
-            onClick={() => void controller.openCandidatePath(candidate.candidateId, "Directory")}
+            onClick={() => void workflow.openCandidate(candidate.candidateId, "Directory").then(
+              (outcome) => report(outcome, "打开项目派生数据目录失败"),
+            )}
           >
             <ExternalLink />
           </IconButton>
@@ -426,23 +483,21 @@ function ProjectDataRow({
 
 function CandidateStatusBadge({
   active,
-  cancelled,
   candidate,
-  cargoAvailable,
-  cleanupError,
-  cleanupResult,
 }: {
   active: boolean;
-  cancelled: boolean;
-  candidate: ProjectDataCandidate;
-  cargoAvailable: boolean;
-  cleanupError: string | undefined;
-  cleanupResult: ProjectCleanupResult | undefined;
+  candidate: ProjectCleanupCandidateView;
 }) {
   if (active) return <Badge variant="secondary">清理中</Badge>;
-  if (cancelled) return <Badge variant="outline">已取消</Badge>;
-  if (cleanupError) return <Badge title={cleanupError} variant="destructive">调用失败</Badge>;
-  if (cleanupResult) {
+  if (candidate.cleanup.kind === "attempted" && candidate.cleanup.outcome.kind === "effect-failed") {
+    return (
+      <Badge title={candidate.cleanup.outcome.failure.message} variant="destructive">
+        调用失败
+      </Badge>
+    );
+  }
+  if (candidate.cleanup.kind === "attempted" && candidate.cleanup.outcome.kind === "result") {
+    const cleanupResult = candidate.cleanup.outcome.result;
     const labels: Record<ProjectCleanupResult["status"], string> = {
       Succeeded: "已清理",
       PartiallyCompleted: "部分完成",
@@ -459,7 +514,10 @@ function CandidateStatusBadge({
       </Badge>
     );
   }
-  if (candidate.status !== "Ready") {
+  if (
+    candidate.cleanability.kind === "blocked"
+    && candidate.cleanability.reason === "identity-not-verified"
+  ) {
     const labels = {
       Symlink: "符号链接",
       NotDirectory: "不是目录",
@@ -468,65 +526,104 @@ function CandidateStatusBadge({
     };
     return <Badge title={candidate.message ?? undefined} variant="outline">{labels[candidate.status]}</Badge>;
   }
-  if (candidate.measurement.status === "Pending") return <Badge variant="secondary">测量中</Badge>;
-  if (candidate.measurement.status === "Partial") {
+  if (candidate.cleanability.kind === "measuring") {
+    return <Badge variant="secondary">测量中</Badge>;
+  }
+  if (
+    candidate.cleanability.kind === "blocked"
+    && candidate.cleanability.reason === "directory-footprint-incomplete"
+    && candidate.measurement.status === "Partial"
+  ) {
     return <Badge title={candidate.measurement.message ?? undefined} variant="destructive">测量不完整</Badge>;
   }
-  if (candidate.measurement.status !== "Ready") {
+  if (
+    candidate.cleanability.kind === "blocked"
+    && candidate.cleanability.reason === "directory-footprint-incomplete"
+  ) {
     return <Badge title={candidate.measurement.message ?? undefined} variant="destructive">不可测量</Badge>;
   }
-  if (candidate.kind === "RustTarget" && !cargoAvailable) {
+  if (
+    candidate.cleanability.kind === "blocked"
+    && candidate.cleanability.reason === "cleanup-mechanism-unavailable"
+  ) {
     return <Badge variant="outline">Cargo 不可用</Badge>;
   }
-  return <Badge>可清理</Badge>;
+  if (candidate.cleanability.kind === "cleanable") return <Badge>可清理</Badge>;
+  return <Badge variant="outline">需要重新扫描</Badge>;
 }
 
 function ProjectCleanupDialog({
-  controller,
+  batch,
   homeDirectory,
+  report,
+  workflow,
 }: {
-  controller: ProjectCleanupController;
+  batch: CleanupBatchView | null;
   homeDirectory: string | null;
+  report: (outcome: WorkflowOutcome<unknown>, title: string) => void;
+  workflow: ProjectCleanupWorkflow;
 }) {
-  const candidates = controller.confirmationCandidates;
-  const selectedBytes = candidates.reduce((sum, candidate) => sum + (candidate.measurement.bytes ?? 0), 0);
-  const results = candidates.flatMap((candidate) => {
-    const result = controller.cleanupResults.get(candidate.candidateId);
-    return result ? [result] : [];
-  });
-  const cleaned = results.reduce((sum, result) => sum + result.cleanedBytes, 0);
+  const candidates = batch?.candidates ?? [];
   const rustCount = candidates.filter((candidate) => candidate.kind === "RustTarget").length;
   const nodeCount = candidates.length - rustCount;
   const candidateSummary = [
     rustCount ? `${rustCount} 个 Rust target` : null,
     nodeCount ? `${nodeCount} 个 Node node_modules` : null,
   ].filter(Boolean).join("、");
-  const failed = results.filter((result) => result.status === "Failed" || result.status === "Rejected" || result.status === "PartiallyCompleted").length
-    + candidates.filter((candidate) => controller.cleanupErrors.has(candidate.candidateId)).length;
+  const failed = candidates.filter((candidate) => {
+    if (candidate.state.kind !== "finished") return false;
+    return candidate.state.outcome.kind === "effect-failed"
+      || !["Succeeded", "Skipped"].includes(candidate.state.outcome.result.status);
+  }).length;
+
+  const runCleanup = async () => {
+    const outcome = await workflow.runCleanupBatch();
+    report(outcome, "项目清理失败");
+    if (outcome.kind !== "succeeded") return;
+    const summary = outcome.value;
+    if (summary.finish === "stopped") {
+      toast.warning("项目清理已停止", {
+        description: `已处理 ${summary.completedCount}/${summary.totalCount} 项`,
+      });
+    } else if (summary.failedCount === 0) {
+      toast.success("项目清理完成", {
+        description: `已清理目录占用 ${formatBytes(summary.cleanedBytes)}`,
+      });
+    } else {
+      toast.warning("项目清理部分完成", {
+        description: `已处理 ${summary.completedCount}/${summary.totalCount} 项`,
+      });
+    }
+  };
 
   return (
-    <AlertDialog open={Boolean(controller.confirmationIds)} onOpenChange={(open) => {
-      if (!open) controller.closeCleanup();
+    <AlertDialog open={Boolean(batch)} onOpenChange={(open) => {
+      if (!open) report(workflow.closeCleanupBatch(), "无法关闭清理批次");
     }}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {controller.cleanupFinished ? "项目清理结果" : controller.cleaning ? "正在清理项目目录" : "确认项目清理"}
+            {batch?.phase === "result"
+              ? "项目清理结果"
+              : batch?.phase === "running"
+                ? "正在清理项目目录"
+                : "确认项目清理"}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {controller.cleanupFinished
-              ? `已处理 ${controller.cleanupCompletedCount}/${candidates.length} 项，已清理目录占用 ${formatBytes(cleaned)}。`
-              : controller.cleaning
-                ? `正在处理 ${controller.cleanupCompletedCount + 1}/${candidates.length}；取消将在当前项目完成后生效。`
-                : `将永久清理 ${candidateSummary}，目录占用 ${formatBytes(selectedBytes)}。`}
+            {batch?.phase === "result"
+              ? `已处理 ${batch.completedCount}/${candidates.length} 项，已清理目录占用 ${formatBytes(batch.cleanedBytes)}。`
+              : batch?.phase === "running"
+                ? `正在处理 ${Math.min(batch.completedCount + 1, candidates.length)}/${candidates.length}；取消将在当前项目完成后生效。`
+                : `将永久清理 ${candidateSummary}，目录占用 ${formatBytes(batch?.selectedBytes ?? 0)}。`}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
         <div className="max-h-64 overflow-y-auto border bg-muted/20">
           {candidates.map((candidate) => {
-            const result = controller.cleanupResults.get(candidate.candidateId);
-            const error = controller.cleanupErrors.get(candidate.candidateId);
-            const cancelled = controller.cancelledCleanupIds.has(candidate.candidateId);
+            const outcome = candidate.state.kind === "finished" ? candidate.state.outcome : null;
+            const result = outcome?.kind === "result" ? outcome.result : null;
+            const error = outcome?.kind === "effect-failed" ? outcome.failure.message : null;
+            const stopped = candidate.state.kind === "stopped";
             return (
               <div className="grid gap-1 border-b px-3 py-2 last:border-b-0" key={candidate.candidateId}>
                 <div className="flex min-w-0 items-center justify-between gap-3">
@@ -535,26 +632,26 @@ function ProjectCleanupDialog({
                     <Badge variant="outline">{candidateTypeLabel(candidate)}</Badge>
                   </div>
                   <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                    {result ? formatBytes(result.cleanedBytes) : candidate.measurement.human ?? "-"}
+                    {result ? formatBytes(result.cleanedBytes) : formatBytes(candidate.beforeBytes)}
                   </span>
                 </div>
                 <span className="truncate text-xs text-muted-foreground" title={candidate.directoryPath}>
                   {formatHomePath(candidate.directoryPath, homeDirectory)}
                 </span>
                 {error ? <span className="text-xs text-destructive">{error}</span> : null}
-                {cancelled ? <span className="text-xs text-muted-foreground">未执行</span> : null}
+                {stopped ? <span className="text-xs text-muted-foreground">未执行</span> : null}
               </div>
             );
           })}
         </div>
 
-        {!controller.cleaning && !controller.cleanupFinished ? (
+        {batch?.phase === "confirmation" ? (
           <Alert>
             <AlertTitle>清理不可撤销</AlertTitle>
             <AlertDescription>{cleanupWarning(rustCount, nodeCount)}</AlertDescription>
           </Alert>
         ) : null}
-        {controller.cleanupFinished && failed > 0 ? (
+        {batch?.phase === "result" && failed > 0 ? (
           <Alert variant="destructive">
             <AlertTitle>{failed} 项未完整清理</AlertTitle>
             <AlertDescription>行内状态保留到下次扫描，可打开项目检查后再处理。</AlertDescription>
@@ -562,29 +659,41 @@ function ProjectCleanupDialog({
         ) : null}
 
         <AlertDialogFooter>
-          {controller.cleanupFinished ? (
+          {batch?.phase === "result" ? (
             <AlertDialogCancel asChild>
-              <Button onClick={controller.closeCleanup} type="button" variant="outline">关闭</Button>
+              <Button
+                onClick={() => report(workflow.closeCleanupBatch(), "无法关闭清理批次")}
+                type="button"
+                variant="outline"
+              >
+                关闭
+              </Button>
             </AlertDialogCancel>
-          ) : controller.cleaning ? (
+          ) : batch?.phase === "running" ? (
             <Button
-              disabled={controller.cleanupCancelRequested}
-              onClick={controller.cancelCleanup}
+              disabled={batch.stopRequested}
+              onClick={() => report(workflow.requestCleanupStop(), "无法停止清理批次")}
               type="button"
               variant="outline"
             >
-              {controller.cleanupCancelRequested ? "等待当前项完成" : "完成当前项后停止"}
+              {batch.stopRequested ? "等待当前项完成" : "完成当前项后停止"}
             </Button>
           ) : (
             <>
               <AlertDialogCancel asChild>
-                <Button onClick={controller.closeCleanup} type="button" variant="outline">取消</Button>
+                <Button
+                  onClick={() => report(workflow.closeCleanupBatch(), "无法取消清理批次")}
+                  type="button"
+                  variant="outline"
+                >
+                  取消
+                </Button>
               </AlertDialogCancel>
               <AlertDialogAction asChild>
                 <Button
                   onClick={(event) => {
                     event.preventDefault();
-                    void controller.confirmCleanup();
+                    void runCleanup();
                   }}
                   type="button"
                   variant="destructive"
@@ -601,11 +710,11 @@ function ProjectCleanupDialog({
   );
 }
 
-function candidateDirectoryName(candidate: ProjectDataCandidate) {
+function candidateDirectoryName(candidate: Pick<ProjectCleanupCandidateView, "kind">) {
   return candidate.kind === "RustTarget" ? "target" : "node_modules";
 }
 
-function candidateTypeLabel(candidate: ProjectDataCandidate) {
+function candidateTypeLabel(candidate: Pick<ProjectCleanupCandidateView, "kind">) {
   return candidate.kind === "RustTarget" ? "Rust target" : "Node node_modules";
 }
 
@@ -617,7 +726,7 @@ function cleanupWarning(rustCount: number, nodeCount: number) {
   return `${recovery}。目录不会进入废纸篓，正在运行的构建、开发或测试任务可能受影响。`;
 }
 
-function measurementSize(candidate: ProjectDataCandidate) {
+function measurementSize(candidate: ProjectCleanupCandidateView) {
   const measurement = candidate.measurement;
   if (candidate.status === "Symlink" || candidate.status === "NotDirectory") return "-";
   if (measurement.status === "Pending") return "测量中";
@@ -634,4 +743,20 @@ function formatModified(milliseconds: number | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(milliseconds));
+}
+
+function failureMessage(failure: WorkflowFailure): UiMessage {
+  const titles: Record<WorkflowFailure["operation"], string> = {
+    settings: "无法读取项目清理设置",
+    root: "无法选择扫描根目录",
+    scan: "项目派生数据扫描失败",
+    measure: "项目派生数据测量失败",
+    clean: "项目清理失败",
+    open: "打开项目路径失败",
+  };
+  return { tone: "bad", title: titles[failure.operation], message: failure.message };
+}
+
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

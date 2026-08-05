@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  projectDataMetrics,
-  projectDataSelectable,
   filterAndSortProjectData,
 } from "./projectCleanup";
-import type { ProjectDataCandidate, ProjectDataScan } from "./types";
+import type { ProjectDataCandidate } from "./types";
 
 function candidate(
   candidateId: string,
@@ -33,21 +31,6 @@ function candidate(
   };
 }
 
-function scan(candidates: ProjectDataCandidate[]): ProjectDataScan {
-  return {
-    rootId: "root-1",
-    scanId: "scan-1",
-    rootPath: "/code",
-    maxDepth: 8,
-    status: "Ready",
-    candidates,
-    skipped: 0,
-    errors: [],
-    cargoAvailable: true,
-    cargoMessage: null,
-  };
-}
-
 describe("project data list policy", () => {
   it("sorts by directory footprint and filters by path or type", () => {
     const rows = [
@@ -69,33 +52,5 @@ describe("project data list policy", () => {
     expect(
       filterAndSortProjectData(rows, "", "size", "NodeModules").map((row) => row.candidateId),
     ).toEqual(["large"]);
-  });
-
-  it("only requires Cargo for verified Rust targets", () => {
-    const ready = candidate("ready", 100, 10);
-    const nodeModules = candidate("node", 100, 10, "Ready", "NodeModules");
-    const unknown = candidate("unknown", 100, 10, "Unrecognized");
-    const partial = candidate("partial", 100, 10);
-    partial.measurement.status = "Partial";
-    partial.measurement.skipped = 1;
-
-    expect(projectDataSelectable(ready, true)).toBe(true);
-    expect(projectDataSelectable(ready, false)).toBe(false);
-    expect(projectDataSelectable(nodeModules, false)).toBe(true);
-    expect(projectDataSelectable(unknown, true)).toBe(false);
-    expect(projectDataSelectable(partial, true)).toBe(false);
-  });
-
-  it("keeps verified, review, selected, and cleaned totals separate", () => {
-    const ready = candidate("ready", 500, 20);
-    const review = candidate("review", 200, 10, "Unrecognized");
-
-    expect(projectDataMetrics(scan([ready, review]), new Set(["ready"]), new Map())).toEqual({
-      verifiedBytes: 500,
-      reviewBytes: 200,
-      reviewCount: 1,
-      selectedBytes: 500,
-      cleanedBytes: 0,
-    });
   });
 });
