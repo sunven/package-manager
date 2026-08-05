@@ -22,7 +22,7 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <Card className={cn("min-w-0 gap-0 py-0", className)}>
+    <Card className={cn("industrial-panel min-w-0 gap-0 py-0", className)}>
       {children}
     </Card>
   );
@@ -38,7 +38,7 @@ export function PanelHead({
   action?: ReactNode;
 }) {
   return (
-    <CardHeader className="border-b py-4">
+    <CardHeader className="industrial-panel-head border-b py-4">
       <CardDescription className="text-xs font-medium uppercase">{eyebrow}</CardDescription>
       <CardTitle className="truncate">{title}</CardTitle>
       {action ? <CardAction>{action}</CardAction> : null}
@@ -48,7 +48,7 @@ export function PanelHead({
 
 export function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <Card size="sm" className="min-h-[76px] justify-between gap-2 py-3">
+    <Card size="sm" className="industrial-stat-card min-h-[76px] justify-between gap-2 py-3">
       <CardHeader className="px-3.5">
         <CardDescription className="text-xs font-medium">{label}</CardDescription>
       </CardHeader>
@@ -61,7 +61,7 @@ export function StatCard({ label, value }: { label: string; value: string }) {
 
 export function EmptyState({ message }: { message: string }) {
   return (
-    <Empty className="min-h-40 px-5 py-8">
+    <Empty className="industrial-empty-state min-h-40 px-5 py-8">
       <EmptyDescription>{message}</EmptyDescription>
     </Empty>
   );
@@ -69,7 +69,7 @@ export function EmptyState({ message }: { message: string }) {
 
 export function StatusBadge({ status, className }: { status: DisplayStatus; className?: string }) {
   return (
-    <Badge className={className} variant={statusVariant(status)}>
+    <Badge className={cn("status-badge", status === "Ready" && "status-badge--ready", className)} variant={statusVariant(status)}>
       {statusLabels[status]}
     </Badge>
   );

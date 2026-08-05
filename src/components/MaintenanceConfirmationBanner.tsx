@@ -65,7 +65,7 @@ export function MaintenanceConfirmationBanner({
               <p className="text-sm text-muted-foreground">{confirmationCopy.reclaimNote}</p>
             ) : null}
             {reclaimDetails ? (
-              <pre className="max-h-48 overflow-auto rounded-md bg-muted p-3 text-xs leading-5 text-muted-foreground">
+              <pre className="terminal-code max-h-48 overflow-auto p-3 text-xs leading-5 text-muted-foreground">
                 {reclaimDetails}
               </pre>
             ) : null}
@@ -95,7 +95,7 @@ export function MaintenanceConfirmationBanner({
 function resultToneClassName(tone: MaintenanceResult["tone"]) {
   if (tone === "bad") return "text-sm text-destructive";
   // Partial completion is neither success nor failure; it needs its own weight.
-  if (tone === "warn") return "text-sm text-amber-600 dark:text-amber-500";
+  if (tone === "warn") return "text-sm text-foreground";
   return "text-sm text-muted-foreground";
 }
 

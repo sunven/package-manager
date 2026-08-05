@@ -18,8 +18,8 @@ export function DevelopmentHealthPage({
   const signalCount = health.riskSignalCount + health.reviewSignalCount;
 
   return (
-    <main className="mt-5 grid gap-4">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+    <main className="view-grid">
+      <section aria-label="开发环境指标" className="metric-grid grid-cols-2 md:grid-cols-5">
         <MetricTile
           detail={`${health.readyManagerCount} 个就绪`}
           icon={Activity}
@@ -52,7 +52,7 @@ export function DevelopmentHealthPage({
         />
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+      <section className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
         <Panel className="overflow-hidden">
           <PanelHead
             action={<span className="whitespace-nowrap text-xs font-medium text-muted-foreground">{health.recommendations.length} 项</span>}
@@ -60,7 +60,7 @@ export function DevelopmentHealthPage({
             title="优先建议"
           />
           {health.recommendations.length ? (
-            <div className="divide-y">
+            <div className="flex flex-wrap gap-px bg-border">
               {health.recommendations.map((recommendation) => (
                 <RecommendationRow key={recommendation.id} recommendation={recommendation} onOpenManager={onOpenManager} />
               ))}
@@ -77,10 +77,10 @@ export function DevelopmentHealthPage({
             title="最大占用"
           />
           {health.topStorage.length ? (
-            <div className="divide-y">
+            <div className="flex flex-wrap gap-px bg-border">
               {health.topStorage.map((item) => (
                 <button
-                  className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-5 py-3 text-left hover:bg-muted/60"
+                  className="grid min-w-0 flex-[1_1_11rem] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-background px-4 py-2 text-left hover:bg-muted/60"
                   key={`${item.managerId}-${item.path}`}
                   onClick={() => onOpenManager(item.managerId)}
                   type="button"
@@ -99,7 +99,7 @@ export function DevelopmentHealthPage({
         </Panel>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <Panel className="overflow-hidden">
           <PanelHead
             action={<span className="whitespace-nowrap text-xs font-medium text-muted-foreground">{signalCount} 个</span>}
@@ -107,9 +107,9 @@ export function DevelopmentHealthPage({
             title="信号分布"
           />
           {health.signalGroups.length ? (
-            <div className="grid gap-2 p-4 sm:grid-cols-2">
+            <div className="grid gap-px bg-border p-px sm:grid-cols-2">
               {health.signalGroups.map((group) => (
-                <div className="rounded-md border bg-background p-3" key={group.key}>
+                <div className="telemetry-cell bg-background p-3" key={group.key}>
                   <div className="flex min-w-0 items-center justify-between gap-2">
                     <span className="truncate text-sm font-medium">{group.label}</span>
                     <ToneBadge tone={group.tone} />
@@ -129,10 +129,10 @@ export function DevelopmentHealthPage({
             eyebrow="工具"
             title="扫描状态"
           />
-          <div className="grid gap-2 p-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="flex flex-wrap gap-px bg-border p-px">
             {health.managerStatuses.map((manager) => (
               <button
-                className="grid min-h-14 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border bg-background px-3 py-2 text-left hover:bg-muted/60"
+                className="telemetry-cell grid min-h-14 min-w-40 flex-[1_1_11rem] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 bg-background px-3 py-2 text-left transition-colors hover:bg-foreground hover:text-background"
                 key={manager.managerId}
                 onClick={() => onOpenManager(manager.managerId)}
                 type="button"
@@ -163,10 +163,10 @@ function MetricTile({
   value: string;
 }) {
   return (
-    <div className="grid min-h-28 min-w-0 grid-rows-[auto_1fr] rounded-md border bg-card p-4 shadow-sm">
+    <div className="telemetry-metric grid min-h-28 min-w-0 grid-rows-[auto_1fr]">
       <div className="flex min-w-0 items-center justify-between gap-3">
         <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
-        <Icon className="size-4 shrink-0 text-muted-foreground" />
+        <Icon className="size-4 shrink-0 text-primary" />
       </div>
       <div className="mt-3 min-w-0 self-end">
         <strong className="block truncate text-2xl font-medium leading-8 tabular-nums">{value}</strong>
@@ -184,7 +184,7 @@ function RecommendationRow({
   recommendation: HealthRecommendation;
 }) {
   return (
-    <div className="grid min-w-0 gap-3 px-5 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+    <div className="grid min-w-0 flex-[1_1_22rem] gap-2 bg-background px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <ToneBadge tone={recommendation.tone} />
@@ -192,8 +192,8 @@ function RecommendationRow({
           {recommendation.bytes ? <span className="text-xs font-medium text-muted-foreground">{formatBytes(recommendation.bytes)}</span> : null}
           {recommendation.count ? <span className="text-xs font-medium text-muted-foreground">{recommendation.count} 项</span> : null}
         </div>
-        <p className="mt-2 truncate text-sm font-medium">{recommendation.title}</p>
-        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{recommendation.detail}</p>
+        <p className="mt-1 truncate text-sm font-medium">{recommendation.title}</p>
+        <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground">{recommendation.detail}</p>
       </div>
       {/* Navigates only. Execution stays on the manager tab, beside the cache
           path and its measured size — the figures that justify confirming. */}
@@ -214,14 +214,14 @@ function RecommendationRow({
 
 function ToneBadge({ tone }: { tone: HealthTone }) {
   const config = {
-    risk: "border-destructive/40 bg-destructive/10 text-destructive",
-    review: "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-    safe: "border-primary/40 bg-primary/10 text-primary",
+    risk: "border-destructive bg-destructive/10 text-destructive",
+    review: "border-muted-foreground bg-muted text-foreground",
+    safe: "border-primary bg-primary/10 text-primary",
   }[tone];
   const label = tone === "risk" ? "风险" : tone === "review" ? "复核" : "维护";
 
   return (
-    <span className={`inline-flex h-6 shrink-0 items-center rounded-md border px-2 text-xs font-medium ${config}`}>
+    <span className={`inline-flex h-6 shrink-0 items-center border px-2 text-xs font-medium uppercase ${config}`}>
       {label}
     </span>
   );

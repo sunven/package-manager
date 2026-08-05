@@ -1,7 +1,16 @@
-import { Activity, List, RefreshCw, Settings, Trash2 } from "lucide-react";
+import { Activity, List, Moon, RefreshCw, Settings, Sun, Trash2 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { managerLabel } from "../utils/format";
 import type { ManagerId } from "../types";
+
+type ViewId = "health" | "managers" | "cleanup" | "settings";
+
+const viewMeta: Record<ViewId, { code: string; label: string }> = {
+  health: { code: "SYS.HEALTH / 01", label: "开发体检" },
+  managers: { code: "PKG.INDEX / 02", label: "包管理器" },
+  cleanup: { code: "DISK.PURGE / 03", label: "项目清理" },
+  settings: { code: "SYS.CONFIG / 04", label: "系统设置" },
+};
 
 export function Shell({
   children,
@@ -11,79 +20,86 @@ export function Shell({
   onShowProjectCleanup,
   onShowManagers,
   onShowSettings,
+  onToggleTheme,
   scanMeta,
   scanning,
   selectedManager,
   totalBytes,
+  theme,
 }: {
   children: React.ReactNode;
-  activeView: "health" | "managers" | "cleanup" | "settings";
+  activeView: ViewId;
   onRefresh: () => void;
   onShowHealth: () => void;
   onShowProjectCleanup: () => void;
   onShowManagers: () => void;
   onShowSettings: () => void;
+  onToggleTheme: () => void;
   scanMeta: string;
   scanning: boolean;
   selectedManager: ManagerId;
   totalBytes: string;
+  theme: "dark" | "light";
 }) {
+  const activeMeta = viewMeta[activeView];
+  const themeToggleLabel = theme === "dark" ? "切换到浅色主题" : "切换到深色主题";
+
   return (
-    <div className="min-h-screen bg-background p-7 text-foreground">
-      <header className="mb-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
-        <div className="min-w-0">
-          <h1 className="text-3xl font-medium leading-9">开发环境控制中心</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-            查看本机开发工具链的资产、空间占用和风险信号。
-          </p>
-        </div>
-        <div className="flex min-w-0 flex-col gap-2 xl:items-end">
-          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-            <div className="grid grid-cols-2 gap-1 rounded-md bg-muted p-1 sm:flex sm:items-center">
+    <div className="telemetry-shell bg-background text-foreground">
+      <a className="skip-link" href="#main-content">跳到主内容</a>
+      <div className="telemetry-frame">
+        <header>
+          <div className="telemetry-rail">
+            <samp className="truncate">LOCALHOST / DEVELOPMENT ASSET CONTROL</samp>
+            <samp className="truncate">{activeView === "cleanup" ? "PROJECT DATA CHANNEL" : scanMeta || activeMeta.code}</samp>
+            <div className="telemetry-status">
+              <output className="telemetry-online">SYSTEM ONLINE</output>
               <Button
-                onClick={onShowHealth}
-                size="sm"
+                aria-label={themeToggleLabel}
+                aria-pressed={theme === "light"}
+                className="telemetry-theme-toggle"
+                onClick={onToggleTheme}
+                size="icon-xs"
+                title={themeToggleLabel}
                 type="button"
-                variant={activeView === "health" ? "secondary" : "ghost"}
+                variant="ghost"
               >
-                <Activity data-icon="inline-start" />
-                体检
-              </Button>
-              <Button
-                onClick={onShowManagers}
-                size="sm"
-                type="button"
-                variant={activeView === "managers" ? "secondary" : "ghost"}
-              >
-                <List data-icon="inline-start" />
-                包管理器
-              </Button>
-              <Button
-                onClick={onShowProjectCleanup}
-                size="sm"
-                type="button"
-                variant={activeView === "cleanup" ? "secondary" : "ghost"}
-              >
-                <Trash2 data-icon="inline-start" />
-                项目清理
-              </Button>
-              <Button
-                onClick={onShowSettings}
-                size="sm"
-                type="button"
-                variant={activeView === "settings" ? "secondary" : "ghost"}
-              >
-                <Settings data-icon="inline-start" />
-                设置
+                {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
               </Button>
             </div>
-            {activeView === "cleanup" ? null : (
-              <>
-                <div className="flex h-9 min-w-36 flex-col justify-center text-right">
-                  <div className="text-xs font-medium leading-4 text-muted-foreground">总占用</div>
-                  <div className="text-xl font-medium leading-5 tabular-nums">{totalBytes}</div>
+          </div>
+
+          <div className="telemetry-header-grid">
+            <div className="telemetry-title-block">
+              <h1 aria-label="Package Control" className="telemetry-title">
+                <span>PKG</span>
+                <span>CONTROL</span>
+              </h1>
+              <p className="telemetry-product-label">开发环境控制中心</p>
+            </div>
+
+            <div className="telemetry-control-block">
+              <dl className="telemetry-readouts">
+                <div className="telemetry-readout">
+                  <dt className="telemetry-readout-label">TOTAL FOOTPRINT / 总占用</dt>
+                  <dd className="telemetry-readout-value telemetry-readout-value--accent">{totalBytes}</dd>
                 </div>
+                <div className="telemetry-readout">
+                  <dt className="telemetry-readout-label">ACTIVE UNIT</dt>
+                  <dd className="telemetry-readout-value">{managerLabel(selectedManager)}</dd>
+                </div>
+                <div className="telemetry-readout">
+                  <dt className="telemetry-readout-label">VIEW CHANNEL</dt>
+                  <dd className="telemetry-readout-value">{activeMeta.label}</dd>
+                </div>
+              </dl>
+              {activeView === "cleanup" ? (
+                <div className="flex min-h-12 items-center bg-card px-4 text-xs text-muted-foreground">
+                  <samp>[ PROJECT SCAN ]</samp>
+                </div>
+              ) : (
                 <Button
+                  className="telemetry-refresh"
                   disabled={scanning}
                   onClick={onRefresh}
                   size="lg"
@@ -92,13 +108,54 @@ export function Shell({
                   <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
                   {scanning ? `正在扫描 ${managerLabel(selectedManager)}...` : `刷新 ${managerLabel(selectedManager)}`}
                 </Button>
-              </>
-            )}
+              )}
+            </div>
           </div>
-          <div className="min-h-5 text-xs text-muted-foreground xl:text-right">{activeView === "cleanup" ? "" : scanMeta}</div>
+
+          <nav aria-label="主导航" className="telemetry-nav">
+            <Button
+              aria-current={activeView === "health" ? "page" : undefined}
+              onClick={onShowHealth}
+              type="button"
+              variant="ghost"
+            >
+              <Activity data-icon="inline-start" />
+              体检
+            </Button>
+            <Button
+              aria-current={activeView === "managers" ? "page" : undefined}
+              onClick={onShowManagers}
+              type="button"
+              variant="ghost"
+            >
+              <List data-icon="inline-start" />
+              包管理器
+            </Button>
+            <Button
+              aria-current={activeView === "cleanup" ? "page" : undefined}
+              onClick={onShowProjectCleanup}
+              type="button"
+              variant="ghost"
+            >
+              <Trash2 data-icon="inline-start" />
+              项目清理
+            </Button>
+            <Button
+              aria-current={activeView === "settings" ? "page" : undefined}
+              onClick={onShowSettings}
+              type="button"
+              variant="ghost"
+            >
+              <Settings data-icon="inline-start" />
+              设置
+            </Button>
+          </nav>
+        </header>
+
+        <div className="telemetry-content" id="main-content">
+          {children}
         </div>
-      </header>
-      {children}
+      </div>
     </div>
   );
 }

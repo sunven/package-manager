@@ -68,7 +68,7 @@ export function ProjectCleanupPage({
   const scanBusy = controller.discovering || controller.pendingMeasurements > 0;
 
   return (
-    <main className="mt-5 grid gap-4">
+    <main className="view-grid">
       {controller.message ? (
         <Alert variant="destructive">
           <AlertTitle>{controller.message.title}</AlertTitle>
@@ -105,11 +105,11 @@ export function ProjectCleanupPage({
           eyebrow="扫描范围"
           title="项目派生数据"
         />
-        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_120px_auto] lg:items-end">
+        <div className="grid gap-2 p-3 md:grid-cols-[minmax(0,1fr)_100px_auto] md:items-end">
           <label className="grid min-w-0 gap-1.5" htmlFor="project-cleanup-root">
             <span className="text-xs font-medium text-muted-foreground">扫描根目录</span>
             {controller.settingsLoading ? (
-              <Skeleton className="h-9 w-full rounded-md" />
+              <Skeleton className="h-9 w-full" />
             ) : (
               <Input
                 id="project-cleanup-root"
@@ -153,7 +153,7 @@ export function ProjectCleanupPage({
         </div>
       </Panel>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section aria-label="项目清理指标" className="stat-grid grid-cols-2 md:grid-cols-4">
         <StatCard label="已验证目录占用" value={formatBytes(metrics.verifiedBytes)} />
         <StatCard label={`待复核 ${metrics.reviewCount} 项`} value={formatBytes(metrics.reviewBytes)} />
         <StatCard label={`已选择 ${controller.selectedIds.size} 项`} value={formatBytes(metrics.selectedBytes)} />
@@ -168,7 +168,7 @@ export function ProjectCleanupPage({
           eyebrow="项目派生数据"
           title="扫描结果"
         />
-        <div className="flex flex-wrap items-center gap-2 border-b p-4">
+        <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 p-2">
           <Input
             aria-label="搜索项目或目录路径"
             className="min-w-56 flex-1"
@@ -239,10 +239,10 @@ export function ProjectCleanupPage({
         </div>
 
         {controller.discovering && !controller.scan ? (
-          <div className="grid gap-2 p-5">
-            <Skeleton className="h-10 w-full rounded-md" />
-            <Skeleton className="h-10 w-full rounded-md" />
-            <Skeleton className="h-10 w-full rounded-md" />
+          <div className="grid gap-2 p-3">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
           </div>
         ) : visibleCandidates.length ? (
           <Table>
@@ -322,7 +322,7 @@ function ProjectDataScanNotice({ controller }: { controller: ProjectCleanupContr
     (candidate) => candidate.kind === "RustTarget",
   );
   return controller.scan ? (
-    <div className="grid gap-2">
+    <div className="grid gap-2 md:grid-cols-2">
       {controller.scan.status === "Partial" ? (
         <Alert>
           <AlertTitle>扫描部分完成</AlertTitle>
@@ -522,7 +522,7 @@ function ProjectCleanupDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        <div className="max-h-64 overflow-y-auto rounded-md border">
+        <div className="max-h-64 overflow-y-auto border bg-muted/20">
           {candidates.map((candidate) => {
             const result = controller.cleanupResults.get(candidate.candidateId);
             const error = controller.cleanupErrors.get(candidate.candidateId);

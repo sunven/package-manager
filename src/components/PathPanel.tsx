@@ -80,19 +80,23 @@ export function PathPanel({
               pendingMaintenance={pendingMaintenance}
             />
           ) : null}
-          {stackedPaths.map((path) => (
-            <PathCard
-              cleanupAvailable={manager.status !== "Missing"}
-              homeDirectory={homeDirectory}
-              key={`${path.kind}-${path.path}`}
-              managerId={manager.id}
-              onCopyPath={onCopyPath}
-              onOpenPath={onOpenPath}
-              onRequestCacheCleanup={onRequestCacheCleanup}
-              path={path}
-              pendingMaintenance={pendingMaintenance}
-            />
-          ))}
+          {stackedPaths.length ? (
+            <div className="grid gap-3 sm:grid-cols-2 min-[1100px]:grid-cols-1">
+              {stackedPaths.map((path) => (
+                <PathCard
+                  cleanupAvailable={manager.status !== "Missing"}
+                  homeDirectory={homeDirectory}
+                  key={`${path.kind}-${path.path}`}
+                  managerId={manager.id}
+                  onCopyPath={onCopyPath}
+                  onOpenPath={onOpenPath}
+                  onRequestCacheCleanup={onRequestCacheCleanup}
+                  path={path}
+                  pendingMaintenance={pendingMaintenance}
+                />
+              ))}
+            </div>
+          ) : null}
         </>
       ) : (
         <EmptyState message="未解析到缓存或存储路径" />
@@ -158,7 +162,11 @@ function InlinePathCard({
 }) {
   const itemCount = paths.length;
   const gridClassName =
-    itemCount >= 3 ? "grid grid-cols-3 gap-3" : itemCount === 2 ? "grid grid-cols-2 gap-3" : "grid grid-cols-1 gap-2";
+    itemCount >= 3
+      ? "grid grid-cols-1 gap-px bg-border sm:grid-cols-3"
+      : itemCount === 2
+        ? "grid grid-cols-1 gap-px bg-border sm:grid-cols-2"
+        : "grid grid-cols-1 gap-px bg-border";
 
   return (
     <div className={gridClassName}>
@@ -210,7 +218,7 @@ function InlinePathCell({
   const pendingCleanup = pendingMaintenance?.kind === "cleanupCache" && pendingMaintenance.managerId === managerId;
 
   return (
-    <div className={`${className} rounded-md border bg-background p-2`}>
+    <div className={`${className} telemetry-cell border bg-background p-2`}>
       <div className="flex min-h-10 items-start justify-between gap-1">
         <div className="flex min-w-0 items-center gap-1">
           <p className="truncate text-xs font-medium text-foreground">{pathLabel(path.label)}</p>
@@ -223,7 +231,7 @@ function InlinePathCell({
         <p className="shrink-0 truncate text-[11px] text-muted-foreground">{detail}</p>
       </div>
       <div className="mt-2 flex items-center gap-1">
-        <code className="h-6 min-w-0 flex-1 truncate rounded-md bg-muted px-1.5 text-[11px] leading-6 text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
+        <code className="terminal-code h-6 min-w-0 flex-1 truncate px-1.5 text-[11px] leading-6 text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
         <IconButton className="size-6 shrink-0" label={`复制 ${pathLabel(path.label)}路径`} onClick={() => onCopyPath(path.path)}>
           <Copy />
         </IconButton>
@@ -246,7 +254,7 @@ function PathNoteTooltip({ label, note }: { label: string; note: string }) {
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button aria-label={label} className="size-5 rounded-full text-muted-foreground hover:text-foreground" size="icon-xs" type="button" variant="ghost">
+          <Button aria-label={label} className="size-5 text-muted-foreground hover:text-foreground" size="icon-xs" type="button" variant="ghost">
             <Info />
           </Button>
         </TooltipTrigger>
@@ -305,7 +313,7 @@ function PathCard({
         </div>
       </CardHeader>
       <CardContent>
-        <code className="block truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
+        <code className="terminal-code block truncate px-2 py-1.5 text-xs text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
         <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">{detail}</div>
         {size.message ? <p className="mt-2 text-xs text-muted-foreground">{formatHomePathsInText(displayMessage(size.message), homeDirectory)}</p> : null}
         <div className="mt-3 flex gap-2">
@@ -359,7 +367,7 @@ function HomebrewCleanupCard({
         <StatusBadge status={status} />
       </CardHeader>
       <CardContent>
-        <code className="block truncate rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">{formatHomePathsInText(cleanup.command.preview, homeDirectory)}</code>
+        <code className="terminal-code block truncate px-2 py-1.5 text-xs text-muted-foreground">{formatHomePathsInText(cleanup.command.preview, homeDirectory)}</code>
         <CleanupBody cleanup={cleanup} homeDirectory={homeDirectory} />
         <div className="mt-3 flex items-center gap-2">
           <TextButton onClick={onCopyCleanupCommand}>
@@ -382,7 +390,7 @@ function HomebrewCleanupCard({
 function CleanupBody({ cleanup, homeDirectory }: { cleanup: HomebrewMaintenance["cleanup"]; homeDirectory: string | null }) {
   if (cleanup.status === "Ready") {
     return cleanup.rawOutput ? (
-      <pre className="mt-3 max-h-40 overflow-auto rounded-md bg-foreground p-3 text-xs leading-5 text-background">{formatHomePathsInText(trimTail(cleanup.rawOutput, 10), homeDirectory)}</pre>
+      <pre className="terminal-code mt-3 max-h-40 overflow-auto p-3 text-xs leading-5">{formatHomePathsInText(trimTail(cleanup.rawOutput, 10), homeDirectory)}</pre>
     ) : (
       <p className="mt-2 text-xs text-muted-foreground">清理预演已完成，没有输出。</p>
     );
@@ -392,7 +400,7 @@ function CleanupBody({ cleanup, homeDirectory }: { cleanup: HomebrewMaintenance[
     return (
       <>
         <p className="mt-2 text-xs text-muted-foreground">{formatHomePathsInText(displayMessage(cleanup.message ?? "清理预演失败"), homeDirectory)}</p>
-        {cleanup.rawOutput ? <pre className="mt-3 max-h-40 overflow-auto rounded-md bg-foreground p-3 text-xs leading-5 text-background">{formatHomePathsInText(trimTail(cleanup.rawOutput, 10), homeDirectory)}</pre> : null}
+        {cleanup.rawOutput ? <pre className="terminal-code mt-3 max-h-40 overflow-auto p-3 text-xs leading-5">{formatHomePathsInText(trimTail(cleanup.rawOutput, 10), homeDirectory)}</pre> : null}
       </>
     );
   }

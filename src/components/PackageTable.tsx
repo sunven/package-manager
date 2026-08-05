@@ -201,7 +201,7 @@ function GlobalModulesBar({
     <div className="flex min-w-0 flex-wrap items-center gap-2 border-b px-4 py-3">
       <span className="shrink-0 text-sm font-medium text-foreground">{label}</span>
       {sizeValue ? <span className="shrink-0 text-sm text-muted-foreground">{sizeValue}</span> : <StatusBadge status={path.size.status} />}
-      <code className="h-6 min-w-48 flex-1 truncate rounded-md bg-muted px-2 text-xs leading-6 text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
+      <code className="terminal-code h-6 min-w-48 flex-1 truncate px-2 text-xs leading-6 text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
       <IconButton className="size-6" label={`复制${label}路径`} onClick={() => onCopyPath(path.path)}>
         <Copy />
       </IconButton>
@@ -338,7 +338,7 @@ function MavenSummary({ health, homeDirectory }: { health: MavenRepositoryHealth
 
   return (
     <div className="flex flex-col gap-2 p-4">
-      <div className="grid grid-cols-5 gap-2.5">
+      <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="构件" value={String(health.artifactCount)} />
         <StatCard label="版本" value={String(health.versionCount)} />
         <StatCard label="快照版" value={String(health.snapshotCount)} />
@@ -361,7 +361,7 @@ function PipSummary({ health, homeDirectory }: { health: PipEnvironmentHealth | 
 
   return (
     <div className="flex flex-col gap-2 p-4">
-      <div className="grid grid-cols-5 gap-2.5">
+      <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="已安装" value={String(health.installedCount)} />
         <StatCard label="可更新" value={outdatedValue} />
         <StatCard label="可编辑" value={String(health.editableCount)} />
@@ -393,7 +393,7 @@ function DockerSummary({
 
   return (
     <div className="flex flex-col gap-2 p-4">
-      <div className="grid grid-cols-5 gap-2.5">
+      <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="镜像" value={String(health.imageCount)} />
         <StatCard label="容器" value={String(health.containerCount)} />
         <StatCard label="运行中" value={String(health.runningContainerCount)} />
@@ -401,7 +401,7 @@ function DockerSummary({
         <StatCard label="清理信号" value={String(health.danglingImageCount + health.unusedImageCount)} />
       </div>
       {diskRows.length ? (
-        <div className="grid grid-cols-4 gap-2.5">
+        <div className="stat-grid grid-cols-2 md:grid-cols-4">
           {diskRows.map((row) => (
             <StatCard key={row.resourceType} label={row.resourceType} value={row.reclaimable || row.size} />
           ))}

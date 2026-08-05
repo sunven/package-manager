@@ -22,12 +22,12 @@ export function ManagerTabs({
   return (
     <Tabs
       onValueChange={(value) => onSelect(value as ManagerId)}
-      orientation="vertical"
+      orientation="horizontal"
       value={selectedManager}
     >
-      <div className="overflow-x-auto overflow-y-hidden">
+      <div className="w-full overflow-x-auto overflow-y-hidden">
         <TabsList
-          className="grid h-auto gap-2 bg-transparent p-0"
+          className="manager-tab-grid grid h-auto bg-transparent"
           style={{
             gridTemplateColumns: `repeat(${columnCount}, minmax(92px, 1fr))`,
             minWidth: `${columnCount * 100}px`,
@@ -41,7 +41,7 @@ export function ManagerTabs({
             const version = manager?.version ?? " ";
             return (
               <TabsTrigger
-                className="h-auto min-h-11 min-w-0 flex-col items-stretch justify-center gap-0.5 rounded-sm bg-background px-2 py-1 text-left shadow-sm ring-1 ring-border transition-all hover:bg-accent hover:text-accent-foreground hover:ring-ring active:translate-y-px data-active:shadow-md data-active:ring-2 data-active:ring-primary data-active:text-foreground"
+                className="manager-tab h-auto min-h-11 min-w-0 flex-col items-stretch justify-center gap-0.5 px-2 py-1 text-left transition-colors active:translate-y-px data-active:text-foreground"
                 key={managerId}
                 value={managerId}
               >
@@ -64,7 +64,7 @@ export function ManagerTabs({
 function StatusDot({ status }: { status: DisplayStatus }) {
   const className =
     status === "Ready"
-      ? "bg-primary"
+      ? "bg-terminal"
       : status === "Failed" || status === "Missing"
         ? "bg-destructive"
         : status === "Unsupported" || status === "Partial" || status === "Scanning" || status === "Pending"
@@ -74,7 +74,7 @@ function StatusDot({ status }: { status: DisplayStatus }) {
   return (
     <span
       aria-label={statusLabels[status]}
-      className={`size-2.5 shrink-0 rounded-full ${className}`}
+      className={`status-dot size-2.5 shrink-0 ${className}`}
       title={statusLabels[status]}
     />
   );

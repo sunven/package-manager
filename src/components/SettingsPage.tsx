@@ -1,5 +1,6 @@
 import { managerLabels, managerOrder } from "../constants";
 import type { DisplayStatus, ManagerId, ManagerSnapshot } from "../types";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Panel, PanelHead, StatusBadge } from "./ui";
 
 export function SettingsPage({
@@ -16,7 +17,7 @@ export function SettingsPage({
   const enabledSet = new Set(enabledManagers);
 
   return (
-    <main className="mt-5 grid gap-4">
+    <main className="view-grid">
       <Panel className="overflow-hidden">
         <PanelHead
           action={
@@ -27,19 +28,20 @@ export function SettingsPage({
           eyebrow="设置"
           title="包管理工具"
         />
-        <div className="divide-y">
-          {managerOrder.map((managerId) => {
+        <div className="flex flex-wrap gap-px bg-border">
+          {managerOrder.map((managerId, index) => {
             const enabled = enabledSet.has(managerId);
             const locked = enabled && enabledManagers.length === 1;
             const manager = managerSnapshots[managerId];
             const status: DisplayStatus = scanningManagers.has(managerId) ? "Scanning" : manager?.status ?? "Not scanned";
-            const version = manager?.version ?? "未扫描";
+            const version = manager?.version ?? null;
 
             return (
               <label
-                className={`grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-5 py-3 ${
+                className={`settings-row grid min-h-10 min-w-0 flex-[1_1_20rem] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 bg-background px-4 py-1.5 transition-colors ${
                   locked ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-muted/60"
                 }`}
+                data-index={String(index + 1).padStart(2, "0")}
                 key={managerId}
               >
                 <span className="grid min-w-0 gap-1">
@@ -47,15 +49,13 @@ export function SettingsPage({
                     <span className="truncate text-sm font-medium">{managerLabels[managerId]}</span>
                     <StatusBadge className="shrink-0" status={status} />
                   </span>
-                  <span className="truncate text-xs text-muted-foreground">{version}</span>
+                  {version ? <span className="truncate text-xs text-muted-foreground">{version}</span> : null}
                 </span>
-                <input
+                <Checkbox
                   aria-label={`启用 ${managerLabels[managerId]}`}
                   checked={enabled}
-                  className="size-4 accent-primary"
                   disabled={locked}
-                  onChange={(event) => onSetManagerEnabled(managerId, event.currentTarget.checked)}
-                  type="checkbox"
+                  onCheckedChange={(checked) => onSetManagerEnabled(managerId, checked === true)}
                 />
               </label>
             );
