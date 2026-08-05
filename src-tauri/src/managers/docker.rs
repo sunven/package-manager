@@ -1,13 +1,21 @@
-use super::*;
+use super::scan_support::{
+    empty_snapshot, finish, home_dir, json_string, package_row, push_signal,
+};
+use crate::command::{envelope, envelope_owned, parse_failure, run_command, run_recorded_command};
+use crate::disk_usage::path_info;
+use crate::types::{
+    AsyncStatus, CommandFailure, CommandRun, DockerDiskUsageRow, DockerResourceHealth, ManagerId,
+    ManagerSnapshot, PackageKind, PackageRow, PackageSignal, PathKind,
+};
+use serde_json::Value;
+use std::path::Path;
+use std::time::Duration;
 
 pub(super) fn scan_docker() -> ManagerSnapshot {
     scan_docker_with_runner_and_home(&run_command, home_dir().as_deref())
 }
 
-pub(super) fn scan_docker_with_runner_and_home<F>(
-    runner: &F,
-    home: Option<&Path>,
-) -> ManagerSnapshot
+fn scan_docker_with_runner_and_home<F>(runner: &F, home: Option<&Path>) -> ManagerSnapshot
 where
     F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
 {
@@ -148,7 +156,7 @@ where
     finish(snapshot)
 }
 
-pub(super) fn push_docker_paths(snapshot: &mut ManagerSnapshot, home: Option<&Path>) {
+fn push_docker_paths(snapshot: &mut ManagerSnapshot, home: Option<&Path>) {
     if let Some(home) = home {
         snapshot.paths.push(path_info(
             "Docker config",
@@ -170,7 +178,7 @@ pub(super) fn push_docker_paths(snapshot: &mut ManagerSnapshot, home: Option<&Pa
     }
 }
 
-pub(super) fn push_docker_commands(snapshot: &mut ManagerSnapshot) {
+fn push_docker_commands(snapshot: &mut ManagerSnapshot) {
     snapshot
         .commands
         .push(envelope("docker", &["system", "df", "-v"], 20_000));
@@ -190,7 +198,7 @@ pub(super) fn push_docker_commands(snapshot: &mut ManagerSnapshot) {
         .push(envelope("docker", &["system", "prune"], 0));
 }
 
-pub(super) fn parse_docker_version(stdout: &str) -> String {
+fn parse_docker_version(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("").trim();
     line.strip_prefix("Docker version ")
         .and_then(|value| value.split(',').next())
@@ -200,7 +208,7 @@ pub(super) fn parse_docker_version(stdout: &str) -> String {
         .to_string()
 }
 
-pub(super) fn parse_docker_images(stdout: &str) -> Result<Vec<PackageRow>, String> {
+fn parse_docker_images(stdout: &str) -> Result<Vec<PackageRow>, String> {
     let mut rows = Vec::new();
     for value in parse_json_lines(stdout)? {
         let repository = json_string(value.get("Repository")).unwrap_or_default();
@@ -237,7 +245,7 @@ pub(super) fn parse_docker_images(stdout: &str) -> Result<Vec<PackageRow>, Strin
     Ok(rows)
 }
 
-pub(super) fn parse_docker_containers(stdout: &str) -> Result<Vec<PackageRow>, String> {
+fn parse_docker_containers(stdout: &str) -> Result<Vec<PackageRow>, String> {
     let mut rows = Vec::new();
     for value in parse_json_lines(stdout)? {
         let id = json_string(value.get("ID")).unwrap_or_else(|| "unknown".to_string());
@@ -264,7 +272,7 @@ pub(super) fn parse_docker_containers(stdout: &str) -> Result<Vec<PackageRow>, S
     Ok(rows)
 }
 
-pub(super) fn parse_docker_volumes(stdout: &str) -> Result<Vec<PackageRow>, String> {
+fn parse_docker_volumes(stdout: &str) -> Result<Vec<PackageRow>, String> {
     let mut rows = Vec::new();
     for value in parse_json_lines(stdout)? {
         let name = json_string(value.get("Name")).unwrap_or_else(|| "unknown".to_string());
@@ -283,7 +291,7 @@ pub(super) fn parse_docker_volumes(stdout: &str) -> Result<Vec<PackageRow>, Stri
     Ok(rows)
 }
 
-pub(super) fn parse_docker_disk_usage(stdout: &str) -> Result<Vec<DockerDiskUsageRow>, String> {
+fn parse_docker_disk_usage(stdout: &str) -> Result<Vec<DockerDiskUsageRow>, String> {
     parse_json_lines(stdout)?
         .into_iter()
         .map(|value| {
@@ -302,7 +310,7 @@ pub(super) fn parse_docker_disk_usage(stdout: &str) -> Result<Vec<DockerDiskUsag
         .collect()
 }
 
-pub(super) fn docker_json_string_any(value: &Value, keys: &[&str]) -> Option<String> {
+fn docker_json_string_any(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         value
             .get(*key)
@@ -316,7 +324,7 @@ pub(super) fn docker_json_string_any(value: &Value, keys: &[&str]) -> Option<Str
     })
 }
 
-pub(super) fn parse_json_lines(stdout: &str) -> Result<Vec<Value>, String> {
+fn parse_json_lines(stdout: &str) -> Result<Vec<Value>, String> {
     stdout
         .lines()
         .map(str::trim)
@@ -325,7 +333,7 @@ pub(super) fn parse_json_lines(stdout: &str) -> Result<Vec<Value>, String> {
         .collect()
 }
 
-pub(super) fn attach_docker_image_actions(rows: &mut [PackageRow]) {
+fn attach_docker_image_actions(rows: &mut [PackageRow]) {
     for row in rows {
         row.actions.push(envelope_owned(
             "docker",
@@ -340,7 +348,7 @@ pub(super) fn attach_docker_image_actions(rows: &mut [PackageRow]) {
     }
 }
 
-pub(super) fn attach_docker_container_actions(rows: &mut [PackageRow]) {
+fn attach_docker_container_actions(rows: &mut [PackageRow]) {
     for row in rows {
         let Some(id) = row
             .source
@@ -364,7 +372,7 @@ pub(super) fn attach_docker_container_actions(rows: &mut [PackageRow]) {
     }
 }
 
-pub(super) fn attach_docker_volume_actions(rows: &mut [PackageRow]) {
+fn attach_docker_volume_actions(rows: &mut [PackageRow]) {
     for row in rows {
         row.actions.push(envelope_owned(
             "docker",
@@ -380,5 +388,192 @@ pub(super) fn attach_docker_volume_actions(rows: &mut [PackageRow]) {
             vec!["volume".to_string(), "rm".to_string(), row.name.clone()],
             0,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        parse_docker_containers, parse_docker_disk_usage, parse_docker_images,
+        parse_docker_volumes, scan_docker_with_runner_and_home,
+    };
+    use crate::command::envelope;
+    use crate::managers::test_support::fake_run;
+    use crate::types::{
+        AsyncStatus, CommandFailure, CommandRun, FailureKind, ManagerStatus, PackageKind,
+        PackageSignal, PathKind,
+    };
+    use std::path::Path;
+    use std::time::Duration;
+
+    #[test]
+    fn parse_docker_images_marks_dangling_and_unused_rows() {
+        let packages = parse_docker_images(
+            r#"{"Repository":"node","Tag":"22-alpine","ID":"sha256:111","Digest":"sha256:aaa","Size":"165MB","Containers":"1"}
+{"Repository":"<none>","Tag":"<none>","ID":"sha256:222","Digest":"<none>","Size":"20MB","Containers":"0"}"#,
+        )
+        .expect("parse docker images");
+
+        assert_eq!(packages.len(), 2);
+        assert_eq!(packages[0].name, "node:22-alpine");
+        assert_eq!(packages[0].version, "165MB");
+        assert_eq!(packages[0].kind, PackageKind::DockerImage);
+        assert_eq!(packages[0].path.as_deref(), Some("sha256:aaa"));
+        assert_eq!(packages[1].name, "sha256:222");
+        assert!(packages[1].signals.contains(&PackageSignal::Dangling));
+        assert!(packages[1].signals.contains(&PackageSignal::Unused));
+    }
+
+    #[test]
+    fn parse_docker_containers_marks_running_and_stopped_rows() {
+        let packages = parse_docker_containers(
+            r#"{"ID":"abc123","Image":"nginx:latest","Names":"web","Status":"Up 2 hours"}
+{"ID":"def456","Image":"redis:7","Names":"cache","Status":"Exited (0) 1 day ago"}"#,
+        )
+        .expect("parse docker containers");
+
+        assert_eq!(packages.len(), 2);
+        assert_eq!(packages[0].name, "cache");
+        assert_eq!(packages[0].path, None);
+        assert!(packages[0].source.contains("container def456"));
+        assert!(packages[0].signals.contains(&PackageSignal::Stopped));
+        assert_eq!(packages[1].name, "web");
+        assert!(packages[1].signals.contains(&PackageSignal::Running));
+    }
+
+    #[test]
+    fn parse_docker_volumes_reads_mountpoints() {
+        let packages = parse_docker_volumes(
+            r#"{"Name":"db-data","Driver":"local","Mountpoint":"/var/lib/docker/volumes/db-data/_data"}"#,
+        )
+        .expect("parse docker volumes");
+
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "db-data");
+        assert_eq!(packages[0].version, "local");
+        assert_eq!(packages[0].kind, PackageKind::DockerVolume);
+        assert_eq!(
+            packages[0].path.as_deref(),
+            Some("/var/lib/docker/volumes/db-data/_data")
+        );
+    }
+
+    #[test]
+    fn parse_docker_disk_usage_reads_json_rows() {
+        let rows = parse_docker_disk_usage(
+            r#"{"Type":"Images","TotalCount":"2","ActiveCount":"1","Size":"185MB","Reclaimable":"20MB (10%)"}
+{"Type":"Build Cache","Total":"4","Active":"0","Size":"1.2GB","Reclaimable":"1.2GB"}"#,
+        )
+        .expect("parse docker disk usage");
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].resource_type, "Images");
+        assert_eq!(rows[0].total_count, "2");
+        assert_eq!(rows[0].active_count, "1");
+        assert_eq!(rows[1].resource_type, "Build Cache");
+        assert_eq!(rows[1].total_count, "4");
+        assert_eq!(rows[1].active_count, "0");
+    }
+
+    #[test]
+    fn scan_docker_collects_resources_paths_and_safe_commands() {
+        let runner = |program: &str,
+                      args: &[&str],
+                      timeout: Duration|
+         -> Result<CommandRun, CommandFailure> {
+            assert_eq!(program, "docker");
+            match args {
+                ["--version"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    "Docker version 28.2.2, build e6534b4\n",
+                )),
+                ["image", "ls", "--all", "--format", "{{json .}}", "--digests"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    r#"{"Repository":"node","Tag":"22-alpine","ID":"sha256:111","Digest":"sha256:aaa","Size":"165MB","Containers":"0"}"#,
+                )),
+                ["container", "ls", "--all", "--format", "{{json .}}"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    r#"{"ID":"abc123","Image":"node:22-alpine","Names":"app","Status":"Exited (0) 1 day ago"}"#,
+                )),
+                ["volume", "ls", "--format", "{{json .}}"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    r#"{"Name":"app-cache","Driver":"local","Mountpoint":"/var/lib/docker/volumes/app-cache/_data"}"#,
+                )),
+                ["system", "df", "--format", "{{json .}}"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    r#"{"Type":"Images","TotalCount":"1","ActiveCount":"0","Size":"165MB","Reclaimable":"165MB (100%)"}"#,
+                )),
+                _ => panic!("unexpected command: {program} {args:?}"),
+            }
+        };
+
+        let snapshot = scan_docker_with_runner_and_home(&runner, Some(Path::new("/Users/sunven")));
+
+        assert_eq!(snapshot.status, ManagerStatus::Ready);
+        assert_eq!(snapshot.version.as_deref(), Some("28.2.2"));
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|path| path.kind == PathKind::DockerDesktopData));
+        assert!(snapshot
+            .commands
+            .iter()
+            .any(|command| command.preview == "docker system prune"));
+        assert_eq!(snapshot.packages.len(), 3);
+
+        let docker = snapshot.docker.expect("docker health");
+        assert_eq!(docker.image_count, 1);
+        assert_eq!(docker.container_count, 1);
+        assert_eq!(docker.volume_count, 1);
+        assert_eq!(docker.unused_image_count, 1);
+        assert_eq!(docker.disk_usage_status, AsyncStatus::Ready);
+        assert_eq!(docker.disk_usage[0].resource_type, "Images");
+
+        let container = snapshot
+            .packages
+            .iter()
+            .find(|package| package.kind == PackageKind::DockerContainer)
+            .expect("container row");
+        assert!(container
+            .actions
+            .iter()
+            .any(|action| action.preview == "docker container rm abc123"));
+    }
+
+    #[test]
+    fn scan_docker_reports_missing_but_keeps_known_paths() {
+        let runner = |program: &str,
+                      args: &[&str],
+                      _timeout: Duration|
+         -> Result<CommandRun, CommandFailure> {
+            assert_eq!(program, "docker");
+            assert_eq!(args, ["--version"]);
+            Err(CommandFailure {
+                kind: FailureKind::MissingBinary,
+                message: "docker is not installed or is not on PATH".to_string(),
+                command: Some(envelope("docker", &["--version"], 5_000)),
+                stdout: String::new(),
+                stderr: "not found".to_string(),
+            })
+        };
+
+        let snapshot = scan_docker_with_runner_and_home(&runner, Some(Path::new("/Users/sunven")));
+
+        assert_eq!(snapshot.status, ManagerStatus::Missing);
+        assert!(snapshot.packages.is_empty());
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|path| path.kind == PathKind::DockerConfig));
     }
 }

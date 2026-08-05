@@ -1,17 +1,25 @@
-use super::*;
+use super::scan_support::{empty_snapshot, expand_tilde, finish, home_dir, package_row};
+use crate::command::{envelope_owned, parse_failure, run_command, run_recorded_command};
+use crate::disk_usage::path_info;
+use crate::types::{
+    CommandFailure, CommandRun, ManagerId, ManagerSnapshot, PackageKind, PackageRow, PathKind,
+};
+use std::env;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub(super) fn scan_cargo() -> ManagerSnapshot {
     scan_cargo_with_runner(&run_command)
 }
 
-pub(super) fn scan_cargo_with_runner<F>(runner: &F) -> ManagerSnapshot
+fn scan_cargo_with_runner<F>(runner: &F) -> ManagerSnapshot
 where
     F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
 {
     scan_cargo_with_runner_and_home(runner, resolve_cargo_home_from_env())
 }
 
-pub(super) fn scan_cargo_with_runner_and_home<F>(runner: &F, cargo_home: PathBuf) -> ManagerSnapshot
+fn scan_cargo_with_runner_and_home<F>(runner: &F, cargo_home: PathBuf) -> ManagerSnapshot
 where
     F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
 {
@@ -76,7 +84,7 @@ where
     finish(snapshot)
 }
 
-pub(super) fn parse_cargo_version(stdout: &str) -> String {
+fn parse_cargo_version(stdout: &str) -> String {
     let line = stdout.lines().next().unwrap_or("").trim();
     line.strip_prefix("cargo ")
         .and_then(|value| value.split_whitespace().next())
@@ -85,12 +93,12 @@ pub(super) fn parse_cargo_version(stdout: &str) -> String {
         .to_string()
 }
 
-pub(super) fn resolve_cargo_home_from_env() -> PathBuf {
+fn resolve_cargo_home_from_env() -> PathBuf {
     let cargo_home = env::var("CARGO_HOME").ok();
     resolve_cargo_home(cargo_home.as_deref(), home_dir().as_deref())
 }
 
-pub(super) fn resolve_cargo_home(cargo_home: Option<&str>, home: Option<&Path>) -> PathBuf {
+fn resolve_cargo_home(cargo_home: Option<&str>, home: Option<&Path>) -> PathBuf {
     if let Some(value) = cargo_home.map(str::trim).filter(|value| !value.is_empty()) {
         return expand_tilde(value, home);
     }
@@ -100,16 +108,13 @@ pub(super) fn resolve_cargo_home(cargo_home: Option<&str>, home: Option<&Path>) 
 }
 
 #[derive(Debug)]
-pub(super) struct CargoInstallEntry {
-    pub(super) name: String,
-    pub(super) version: String,
-    pub(super) binaries: Vec<String>,
+struct CargoInstallEntry {
+    name: String,
+    version: String,
+    binaries: Vec<String>,
 }
 
-pub(super) fn parse_cargo_install_list(
-    stdout: &str,
-    bin_dir: &Path,
-) -> Result<Vec<PackageRow>, String> {
+fn parse_cargo_install_list(stdout: &str, bin_dir: &Path) -> Result<Vec<PackageRow>, String> {
     let mut entries: Vec<CargoInstallEntry> = Vec::new();
     let mut current_index: Option<usize> = None;
     let mut saw_content = false;
@@ -165,7 +170,7 @@ pub(super) fn parse_cargo_install_list(
     Ok(packages)
 }
 
-pub(super) fn parse_cargo_install_header(line: &str) -> Option<CargoInstallEntry> {
+fn parse_cargo_install_header(line: &str) -> Option<CargoInstallEntry> {
     let header = line.strip_suffix(':')?.trim();
     let (name, version) = header.rsplit_once(' ')?;
     let name = name.trim();
@@ -185,7 +190,7 @@ pub(super) fn parse_cargo_install_header(line: &str) -> Option<CargoInstallEntry
     })
 }
 
-pub(super) fn attach_cargo_actions(row: &mut PackageRow) {
+fn attach_cargo_actions(row: &mut PackageRow) {
     row.actions.push(envelope_owned(
         "cargo",
         vec!["install".to_string(), row.name.clone()],
@@ -196,4 +201,148 @@ pub(super) fn attach_cargo_actions(row: &mut PackageRow) {
         vec!["uninstall".to_string(), row.name.clone()],
         0,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_support::fake_run;
+    use super::{parse_cargo_install_list, resolve_cargo_home, scan_cargo_with_runner_and_home};
+    use crate::command::envelope;
+    use crate::types::{CommandFailure, CommandRun, FailureKind, ManagerStatus, PathKind};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    #[test]
+    fn parse_cargo_install_list_reads_single_and_multi_binary_crates() {
+        let packages = parse_cargo_install_list(
+            "ripgrep v14.1.1:\n    rg\ncargo-edit v0.13.4:\n    cargo-add\n    cargo-rm\n",
+            Path::new("/Users/sunven/.cargo/bin"),
+        )
+        .expect("parse cargo install list");
+
+        assert_eq!(packages.len(), 2);
+        assert_eq!(packages[0].name, "cargo-edit");
+        assert_eq!(packages[0].version, "0.13.4");
+        assert_eq!(
+            packages[0].path.as_deref(),
+            Some("/Users/sunven/.cargo/bin/cargo-add")
+        );
+        assert!(packages[0]
+            .actions
+            .iter()
+            .any(|action| action.preview == "cargo install cargo-edit"));
+        assert!(packages[0]
+            .actions
+            .iter()
+            .any(|action| action.preview == "cargo uninstall cargo-edit"));
+        assert_eq!(packages[1].name, "ripgrep");
+        assert_eq!(packages[1].version, "14.1.1");
+        assert_eq!(
+            packages[1].path.as_deref(),
+            Some("/Users/sunven/.cargo/bin/rg")
+        );
+    }
+
+    #[test]
+    fn parse_cargo_install_list_allows_empty_output() {
+        let packages = parse_cargo_install_list("", Path::new("/Users/sunven/.cargo/bin"))
+            .expect("parse empty cargo install list");
+
+        assert!(packages.is_empty());
+    }
+
+    #[test]
+    fn parse_cargo_install_list_rejects_unknown_content() {
+        let error = parse_cargo_install_list(
+            "installed crates:\n  ripgrep",
+            Path::new("/Users/sunven/.cargo/bin"),
+        )
+        .expect_err("parse failure");
+
+        assert!(error.contains("Could not parse cargo install list line"));
+    }
+
+    #[test]
+    fn resolve_cargo_home_uses_env_or_home_fallback() {
+        assert_eq!(
+            resolve_cargo_home(Some("~/rust/cargo"), Some(Path::new("/Users/sunven"))),
+            PathBuf::from("/Users/sunven/rust/cargo")
+        );
+        assert_eq!(
+            resolve_cargo_home(None, Some(Path::new("/Users/sunven"))),
+            PathBuf::from("/Users/sunven/.cargo")
+        );
+        assert_eq!(resolve_cargo_home(None, None), PathBuf::from(".cargo"));
+    }
+
+    #[test]
+    fn scan_cargo_collects_safe_commands_paths_packages_and_actions() {
+        let runner = |program: &str,
+                      args: &[&str],
+                      timeout: Duration|
+         -> Result<CommandRun, CommandFailure> {
+            assert_eq!(program, "cargo");
+            match args {
+                ["--version"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    "cargo 1.88.0 (873a06493 2025-05-10)\n",
+                )),
+                ["install", "--list"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    "ripgrep v14.1.1:\n    rg\n",
+                )),
+                _ => panic!("unexpected command: {program} {args:?}"),
+            }
+        };
+
+        let snapshot =
+            scan_cargo_with_runner_and_home(&runner, PathBuf::from("/Users/sunven/.cargo"));
+
+        assert_eq!(snapshot.status, ManagerStatus::Ready);
+        assert_eq!(snapshot.version.as_deref(), Some("1.88.0"));
+        assert_eq!(snapshot.commands.len(), 2);
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|path| path.kind == PathKind::CargoBin));
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|path| path.kind == PathKind::CargoRegistryCache));
+        assert_eq!(snapshot.packages.len(), 1);
+        assert_eq!(snapshot.packages[0].name, "ripgrep");
+        assert_eq!(
+            snapshot.packages[0].path.as_deref(),
+            Some("/Users/sunven/.cargo/bin/rg")
+        );
+    }
+
+    #[test]
+    fn scan_cargo_reports_missing_without_running_install_list() {
+        let runner = |program: &str,
+                      args: &[&str],
+                      _timeout: Duration|
+         -> Result<CommandRun, CommandFailure> {
+            assert_eq!(program, "cargo");
+            assert_eq!(args, ["--version"]);
+            Err(CommandFailure {
+                kind: FailureKind::MissingBinary,
+                message: "cargo is not installed or is not on PATH".to_string(),
+                command: Some(envelope("cargo", &["--version"], 5_000)),
+                stdout: String::new(),
+                stderr: "not found".to_string(),
+            })
+        };
+
+        let snapshot =
+            scan_cargo_with_runner_and_home(&runner, PathBuf::from("/Users/sunven/.cargo"));
+
+        assert_eq!(snapshot.status, ManagerStatus::Missing);
+        assert!(snapshot.packages.is_empty());
+        assert!(snapshot.paths.iter().any(|path| path.label == "Cargo bin"));
+    }
 }

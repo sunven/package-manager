@@ -1,10 +1,22 @@
-use super::*;
+use super::scan_support::{empty_snapshot, finish, json_string, package_row, push_signal, trimmed};
+use crate::command::{command_failure, envelope_owned, parse_failure, run_command_owned};
+use crate::disk_usage::path_info;
+use crate::types::{
+    AsyncStatus, CommandFailure, CommandRun, FailureKind, ManagerId, ManagerSnapshot, PackageKind,
+    PackageRow, PackageSignal, PathKind, PipCacheInfo, PipEnvironmentHealth, PipEnvironmentKind,
+    PipOutdatedPreview,
+};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::env;
+use std::path::Path;
+use std::time::Duration;
 
 pub(super) fn scan_pip() -> ManagerSnapshot {
     scan_pip_with_runner(&run_command_owned)
 }
 
-pub(super) fn scan_pip_with_runner<F>(runner: &F) -> ManagerSnapshot
+fn scan_pip_with_runner<F>(runner: &F) -> ManagerSnapshot
 where
     F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
 {
@@ -258,7 +270,7 @@ where
     Err("python3 and python are not installed or are not on PATH".to_string())
 }
 
-pub(super) fn detect_python<F>(runner: &F, snapshot: &mut ManagerSnapshot) -> Option<String>
+fn detect_python<F>(runner: &F, snapshot: &mut ManagerSnapshot) -> Option<String>
 where
     F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
 {
@@ -285,7 +297,7 @@ where
     None
 }
 
-pub(super) fn command_stdout_owned<F>(
+fn command_stdout_owned<F>(
     program: &str,
     args: Vec<String>,
     timeout_secs: u64,
@@ -313,10 +325,7 @@ where
     }
 }
 
-pub(super) fn parse_pip_list(
-    stdout: &str,
-    python_executable: &str,
-) -> Result<Vec<PackageRow>, String> {
+fn parse_pip_list(stdout: &str, python_executable: &str) -> Result<Vec<PackageRow>, String> {
     let value: Value = serde_json::from_str(stdout).map_err(|err| err.to_string())?;
     let packages = value
         .as_array()
@@ -339,12 +348,12 @@ pub(super) fn parse_pip_list(
 }
 
 #[derive(Default)]
-pub(super) struct PipInspectEnrichment {
-    pub(super) site_packages: Option<String>,
-    pub(super) user_site: Option<String>,
+struct PipInspectEnrichment {
+    site_packages: Option<String>,
+    user_site: Option<String>,
 }
 
-pub(super) fn enrich_pip_from_inspect(
+fn enrich_pip_from_inspect(
     packages: &mut [PackageRow],
     stdout: &str,
 ) -> Result<PipInspectEnrichment, String> {
@@ -402,11 +411,11 @@ pub(super) fn enrich_pip_from_inspect(
     Ok(enrichment)
 }
 
-pub(super) fn is_user_site(path: &str) -> bool {
+fn is_user_site(path: &str) -> bool {
     path.contains("/.local/") || path.contains("/Library/Python/")
 }
 
-pub(super) fn attach_pip_actions(packages: &mut [PackageRow], python_executable: &str) {
+fn attach_pip_actions(packages: &mut [PackageRow], python_executable: &str) {
     for package in packages {
         package.actions.push(envelope_owned(
             python_executable,
@@ -442,7 +451,7 @@ pub(super) fn attach_pip_actions(packages: &mut [PackageRow], python_executable:
     }
 }
 
-pub(super) fn detect_pip_environment(
+fn detect_pip_environment(
     python_executable: &str,
     site_packages: Option<&str>,
 ) -> PipEnvironmentKind {
@@ -509,7 +518,7 @@ where
     }
 }
 
-pub(super) fn parse_pip_outdated(stdout: &str) -> Result<Vec<String>, String> {
+fn parse_pip_outdated(stdout: &str) -> Result<Vec<String>, String> {
     let value: Value = serde_json::from_str(stdout).map_err(|err| err.to_string())?;
     let packages = value
         .as_array()
@@ -520,4 +529,72 @@ pub(super) fn parse_pip_outdated(stdout: &str) -> Result<Vec<String>, String> {
         .collect::<Vec<_>>();
     names.sort();
     Ok(names)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{enrich_pip_from_inspect, parse_pip_list, parse_pip_outdated};
+    use crate::types::{PackageKind, PackageSignal};
+
+    #[test]
+    fn parse_pip_list_sorts_packages() {
+        let packages = parse_pip_list(
+            r#"[
+                {"name": "requests", "version": "2.32.3"},
+                {"name": "black", "version": "24.4.2"}
+            ]"#,
+            "/usr/bin/python3",
+        )
+        .expect("parse pip list");
+
+        assert_eq!(packages.len(), 2);
+        assert_eq!(packages[0].name, "black");
+        assert_eq!(packages[0].kind, PackageKind::PythonDistribution);
+        assert_eq!(
+            packages[0].source,
+            "/usr/bin/python3 -m pip list --format=json"
+        );
+    }
+
+    #[test]
+    fn enrich_pip_from_inspect_marks_editable_direct_url_and_user_site() {
+        let mut packages = parse_pip_list(
+            r#"[{"name": "local-tool", "version": "0.1.0"}]"#,
+            "/usr/bin/python3",
+        )
+        .expect("parse pip list");
+
+        let enrichment = enrich_pip_from_inspect(
+            &mut packages,
+            r#"{
+                "installed": [{
+                    "metadata": {"name": "local-tool"},
+                    "location": "/Users/sunven/Library/Python/3.12/lib/python/site-packages",
+                    "editable_project_location": "/Users/sunven/github/local-tool",
+                    "direct_url": {"url": "file:///Users/sunven/github/local-tool"}
+                }]
+            }"#,
+        )
+        .expect("inspect enrichment");
+
+        let package = &packages[0];
+        assert!(package.signals.contains(&PackageSignal::Editable));
+        assert!(package.signals.contains(&PackageSignal::DirectUrl));
+        assert!(package.signals.contains(&PackageSignal::UserSite));
+        assert!(package.path.as_deref().unwrap().contains("local-tool"));
+        assert!(enrichment.user_site.is_some());
+    }
+
+    #[test]
+    fn parse_pip_outdated_reads_names() {
+        let outdated = parse_pip_outdated(
+            r#"[
+                {"name": "requests", "version": "2.31.0", "latest_version": "2.32.3"},
+                {"name": "black", "version": "23.0.0", "latest_version": "24.4.2"}
+            ]"#,
+        )
+        .expect("parse outdated");
+
+        assert_eq!(outdated, vec!["black".to_string(), "requests".to_string()]);
+    }
 }

@@ -414,8 +414,17 @@ impl CleanupStepResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::command::envelope;
+    use super::{
+        assert_guarded_path, cleanup_plan, run_cache_cleanup_with_runner,
+        run_cache_cleanup_with_runner_and_deleter, CleanupStep,
+    };
+    use crate::command::{envelope, envelope_owned};
+    use crate::types::{
+        CleanupOutcome, CleanupStepState, CommandFailure, CommandRun, FailureKind, ManagerId,
+    };
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     fn plan_commands(manager: ManagerId) -> Vec<(&'static str, Vec<&'static str>)> {
         cleanup_plan(manager)

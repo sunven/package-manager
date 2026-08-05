@@ -173,3 +173,67 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
         format!("{value:.1} {}", UNITS[unit])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn path_info_defers_size_scan() {
+        let info = path_info("Store", PathKind::Store, "/tmp/package-store".to_string());
+
+        assert_eq!(info.size.status, DiskUsageStatus::Pending);
+        assert_eq!(info.size.bytes, None);
+        assert_eq!(info.size.files, 0);
+        assert_eq!(info.size.directories, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_usage_dedupes_hardlinks() {
+        let root = TempDirGuard::new("disk-usage");
+        let file_a = root.path().join("alpha.txt");
+        let file_b = root.path().join("beta.txt");
+        fs::write(&file_a, b"package manager").expect("write file");
+        fs::hard_link(&file_a, &file_b).expect("create hard link");
+
+        let usage = disk_usage(root.path());
+        let metadata = fs::metadata(&file_a).expect("metadata");
+
+        assert_eq!(usage.status, DiskUsageStatus::Ready);
+        assert_eq!(usage.files, 1);
+        assert_eq!(usage.skipped, 1);
+        assert_eq!(usage.bytes, Some(metadata.blocks().saturating_mul(512)));
+    }
+
+    struct TempDirGuard(PathBuf);
+
+    impl TempDirGuard {
+        fn new(label: &str) -> Self {
+            let suffix = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock before unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "package-manager-control-center-{label}-{stamp}-{suffix}"
+            ));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+}

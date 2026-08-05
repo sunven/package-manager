@@ -1,10 +1,24 @@
-use super::*;
+use super::scan_support::{empty_snapshot, finish, json_string, package_row, push_signal};
+use crate::command::{
+    command_failure, envelope, envelope_owned, parse_failure, run_command, run_recorded_command,
+    run_recorded_stdout,
+};
+use crate::disk_usage::{format_bytes, parse_size, path_info};
+use crate::types::{
+    AsyncStatus, CommandEnvelope, CommandFailure, CommandRun, FailureKind, HomebrewCleanupPreview,
+    HomebrewMaintenance, ManagerId, ManagerSnapshot, ManagerStatus, PackageKind, PackageRow,
+    PackageSignal, PathKind,
+};
+use serde_json::Value;
+use std::collections::HashSet;
+use std::path::Path;
+use std::time::Duration;
 
 pub(super) fn scan_homebrew() -> ManagerSnapshot {
     scan_homebrew_with_runner(&run_command)
 }
 
-pub(super) fn scan_homebrew_with_runner<F>(runner: &F) -> ManagerSnapshot
+fn scan_homebrew_with_runner<F>(runner: &F) -> ManagerSnapshot
 where
     F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
 {
@@ -185,7 +199,23 @@ where
     finish(snapshot)
 }
 
-pub(super) fn parse_homebrew_version(stdout: &str) -> String {
+fn kind_rank(kind: PackageKind) -> u8 {
+    match kind {
+        PackageKind::Generic => 0,
+        PackageKind::Formula => 1,
+        PackageKind::Cask => 2,
+        PackageKind::MavenArtifact => 3,
+        PackageKind::PythonDistribution => 4,
+        PackageKind::DockerImage => 5,
+        PackageKind::DockerContainer => 6,
+        PackageKind::DockerVolume => 7,
+        PackageKind::BunPackage => 8,
+        PackageKind::UvTool => 9,
+        PackageKind::UvPython => 10,
+    }
+}
+
+fn parse_homebrew_version(stdout: &str) -> String {
     stdout
         .lines()
         .next()
@@ -196,18 +226,14 @@ pub(super) fn parse_homebrew_version(stdout: &str) -> String {
         .to_string()
 }
 
-pub(super) fn parse_homebrew_list_versions(
-    stdout: &str,
-    kind: PackageKind,
-    source: &str,
-) -> Vec<PackageRow> {
+fn parse_homebrew_list_versions(stdout: &str, kind: PackageKind, source: &str) -> Vec<PackageRow> {
     stdout
         .lines()
         .filter_map(|line| parse_homebrew_list_versions_line(line, kind, source))
         .collect()
 }
 
-pub(super) fn parse_homebrew_list_versions_line(
+fn parse_homebrew_list_versions_line(
     line: &str,
     kind: PackageKind,
     source: &str,
@@ -233,7 +259,7 @@ pub(super) fn parse_homebrew_list_versions_line(
     ))
 }
 
-pub(super) fn parse_homebrew_outdated(stdout: &str) -> Result<HashSet<String>, String> {
+fn parse_homebrew_outdated(stdout: &str) -> Result<HashSet<String>, String> {
     let value: Value = serde_json::from_str(stdout).map_err(|err| err.to_string())?;
     let mut names = HashSet::new();
 
@@ -256,7 +282,7 @@ pub(super) fn parse_homebrew_outdated(stdout: &str) -> Result<HashSet<String>, S
     Ok(names)
 }
 
-pub(super) fn parse_homebrew_leaves(stdout: &str) -> HashSet<String> {
+fn parse_homebrew_leaves(stdout: &str) -> HashSet<String> {
     stdout
         .lines()
         .map(str::trim)
@@ -265,19 +291,19 @@ pub(super) fn parse_homebrew_leaves(stdout: &str) -> HashSet<String> {
         .collect()
 }
 
-pub(super) fn homebrew_formula_name(value: &Value) -> Option<String> {
+fn homebrew_formula_name(value: &Value) -> Option<String> {
     json_string(value.get("full_name"))
         .or_else(|| json_string(value.get("name")))
         .filter(|name| !name.is_empty())
 }
 
-pub(super) fn homebrew_cask_name(value: &Value) -> Option<String> {
+fn homebrew_cask_name(value: &Value) -> Option<String> {
     json_string(value.get("token"))
         .or_else(|| json_string(value.get("name")))
         .filter(|name| !name.is_empty())
 }
 
-pub(super) fn attach_homebrew_paths(
+fn attach_homebrew_paths(
     packages: &mut [PackageRow],
     cellar: Option<&str>,
     caskroom: Option<&str>,
@@ -322,7 +348,7 @@ pub(super) fn attach_homebrew_paths(
     }
 }
 
-pub(super) fn merge_homebrew_outdated(packages: &mut [PackageRow], outdated: &HashSet<String>) {
+fn merge_homebrew_outdated(packages: &mut [PackageRow], outdated: &HashSet<String>) {
     for package in packages {
         if outdated.contains(&package.name) {
             push_signal(package, PackageSignal::Outdated);
@@ -330,7 +356,7 @@ pub(super) fn merge_homebrew_outdated(packages: &mut [PackageRow], outdated: &Ha
     }
 }
 
-pub(super) fn merge_homebrew_leaves(packages: &mut [PackageRow], leaves: &HashSet<String>) {
+fn merge_homebrew_leaves(packages: &mut [PackageRow], leaves: &HashSet<String>) {
     for package in packages {
         if package.kind == PackageKind::Formula && leaves.contains(&package.name) {
             push_signal(package, PackageSignal::Leaf);
@@ -338,7 +364,7 @@ pub(super) fn merge_homebrew_leaves(packages: &mut [PackageRow], leaves: &HashSe
     }
 }
 
-pub(super) fn attach_homebrew_actions(packages: &mut [PackageRow]) {
+fn attach_homebrew_actions(packages: &mut [PackageRow]) {
     for package in packages {
         match package.kind {
             PackageKind::Formula => {
@@ -401,7 +427,7 @@ pub(super) fn attach_homebrew_actions(packages: &mut [PackageRow]) {
     }
 }
 
-pub(super) fn pending_homebrew_cleanup_preview() -> HomebrewCleanupPreview {
+fn pending_homebrew_cleanup_preview() -> HomebrewCleanupPreview {
     HomebrewCleanupPreview {
         status: AsyncStatus::Pending,
         command: homebrew_cleanup_command(),
@@ -428,7 +454,7 @@ where
     }
 }
 
-pub(super) fn ready_homebrew_cleanup_preview(raw_output: String) -> HomebrewCleanupPreview {
+fn ready_homebrew_cleanup_preview(raw_output: String) -> HomebrewCleanupPreview {
     let reclaimed_bytes = extract_cleanup_reclaimed_bytes(&raw_output);
     HomebrewCleanupPreview {
         status: AsyncStatus::Ready,
@@ -441,7 +467,7 @@ pub(super) fn ready_homebrew_cleanup_preview(raw_output: String) -> HomebrewClea
     }
 }
 
-pub(super) fn failed_homebrew_cleanup_preview(failure: CommandFailure) -> HomebrewCleanupPreview {
+fn failed_homebrew_cleanup_preview(failure: CommandFailure) -> HomebrewCleanupPreview {
     HomebrewCleanupPreview {
         status: AsyncStatus::Failed,
         command: homebrew_cleanup_command(),
@@ -453,11 +479,11 @@ pub(super) fn failed_homebrew_cleanup_preview(failure: CommandFailure) -> Homebr
     }
 }
 
-pub(super) fn homebrew_cleanup_command() -> CommandEnvelope {
+fn homebrew_cleanup_command() -> CommandEnvelope {
     envelope("brew", &["cleanup", "--dry-run"], 30_000)
 }
 
-pub(super) fn extract_cleanup_reclaimed_bytes(output: &str) -> Option<u64> {
+fn extract_cleanup_reclaimed_bytes(output: &str) -> Option<u64> {
     for line in output.lines().rev() {
         if line.to_lowercase().contains("free") {
             if let Some(bytes) = first_size_in_line(line) {
@@ -478,7 +504,7 @@ pub(super) fn extract_cleanup_reclaimed_bytes(output: &str) -> Option<u64> {
     (total > 0).then_some(total)
 }
 
-pub(super) fn first_size_in_line(line: &str) -> Option<u64> {
+fn first_size_in_line(line: &str) -> Option<u64> {
     let chars = line.chars().collect::<Vec<_>>();
     let mut index = 0;
 
@@ -511,4 +537,226 @@ pub(super) fn first_size_in_line(line: &str) -> Option<u64> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        hydrate_homebrew_cleanup_with_runner, parse_homebrew_list_versions,
+        scan_homebrew_with_runner,
+    };
+    use crate::command::envelope;
+    use crate::managers::test_support::{fake_failed_run, fake_run};
+    use crate::types::{
+        AsyncStatus, CommandFailure, CommandRun, FailureKind, ManagerStatus, PackageKind,
+        PackageSignal, PathKind,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn parse_homebrew_list_versions_reads_names_and_versions() {
+        let packages = parse_homebrew_list_versions(
+            "node 24.1.0\npostgresql@16 16.8\nmulti-version 1.0 1.1\nnoversion\n",
+            PackageKind::Formula,
+            "brew list --formula --versions",
+        );
+
+        assert_eq!(packages.len(), 4);
+        assert_eq!(packages[0].name, "node");
+        assert_eq!(packages[0].version, "24.1.0");
+        assert_eq!(packages[1].name, "postgresql@16");
+        assert_eq!(packages[1].version, "16.8");
+        assert_eq!(packages[2].name, "multi-version");
+        assert_eq!(packages[2].version, "1.0 1.1");
+        assert_eq!(packages[3].name, "noversion");
+        assert_eq!(packages[3].version, "unknown");
+    }
+
+    #[test]
+    fn scan_homebrew_merges_outdated_leaves_paths_and_actions() {
+        let runner = |program: &str,
+                      args: &[&str],
+                      timeout: Duration|
+         -> Result<CommandRun, CommandFailure> {
+            match args {
+                ["--version"] => Ok(fake_run(program, args, timeout, "Homebrew 4.4.0\n")),
+                ["list", "--formula", "--versions"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    "node 24.1.0\nripgrep 14.1.1\n",
+                )),
+                ["list", "--cask", "--versions"] => {
+                    Ok(fake_run(program, args, timeout, "docker 4.39.0\n"))
+                }
+                ["outdated", "--json=v2"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    r#"{
+                        "formulae": [{"name": "node"}],
+                        "casks": [{"token": "docker"}]
+                    }"#,
+                )),
+                ["leaves"] => Ok(fake_run(program, args, timeout, "node\n")),
+                ["--prefix"] => Ok(fake_run(program, args, timeout, "/opt/homebrew\n")),
+                ["--cache"] => Ok(fake_run(
+                    program,
+                    args,
+                    timeout,
+                    "/Users/sunven/Library/Caches/Homebrew\n",
+                )),
+                ["--cellar"] => Ok(fake_run(program, args, timeout, "/opt/homebrew/Cellar\n")),
+                _ => panic!("unexpected command: {program} {args:?}"),
+            }
+        };
+
+        let snapshot = scan_homebrew_with_runner(&runner);
+
+        assert_eq!(snapshot.status, ManagerStatus::Ready);
+        assert_eq!(snapshot.version.as_deref(), Some("4.4.0"));
+        assert_eq!(snapshot.packages.len(), 3);
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|path| path.kind == PathKind::Cache));
+        assert!(snapshot
+            .paths
+            .iter()
+            .any(|path| path.kind == PathKind::Cellar));
+
+        let node = snapshot
+            .packages
+            .iter()
+            .find(|package| package.name == "node")
+            .expect("node row");
+        assert!(node.signals.contains(&PackageSignal::Outdated));
+        assert!(node.signals.contains(&PackageSignal::Leaf));
+        assert!(node
+            .actions
+            .iter()
+            .any(|action| action.preview == "brew upgrade node"));
+        assert!(node
+            .actions
+            .iter()
+            .any(|action| action.preview == "brew uses --installed node"));
+
+        let docker = snapshot
+            .packages
+            .iter()
+            .find(|package| package.name == "docker")
+            .expect("docker row");
+        assert_eq!(docker.kind, PackageKind::Cask);
+        assert!(docker.signals.contains(&PackageSignal::Outdated));
+        assert!(!docker.signals.contains(&PackageSignal::Leaf));
+        assert!(docker
+            .actions
+            .iter()
+            .any(|action| action.preview == "brew upgrade --cask docker"));
+
+        let maintenance = snapshot.homebrew.expect("homebrew maintenance");
+        assert_eq!(maintenance.formula_count, 2);
+        assert_eq!(maintenance.cask_count, 1);
+        assert_eq!(maintenance.outdated_count, 2);
+        assert_eq!(maintenance.leaf_count, 1);
+        assert_eq!(maintenance.cleanup.status, AsyncStatus::Pending);
+    }
+
+    #[test]
+    fn scan_homebrew_reports_partial_when_optional_command_fails() {
+        let runner = |program: &str,
+                      args: &[&str],
+                      timeout: Duration|
+         -> Result<CommandRun, CommandFailure> {
+            match args {
+                ["--version"] => Ok(fake_run(program, args, timeout, "Homebrew 4.4.0\n")),
+                ["list", "--formula", "--versions"] => {
+                    Ok(fake_run(program, args, timeout, "node 24.1.0\n"))
+                }
+                ["list", "--cask", "--versions"] => Ok(fake_run(program, args, timeout, "")),
+                ["outdated", "--json=v2"] => {
+                    Ok(fake_failed_run(program, args, timeout, "outdated failed"))
+                }
+                ["leaves"] => Ok(fake_run(program, args, timeout, "")),
+                ["--prefix"] => Ok(fake_run(program, args, timeout, "/opt/homebrew\n")),
+                ["--cache"] => Ok(fake_run(program, args, timeout, "/tmp/homebrew-cache\n")),
+                ["--cellar"] => Ok(fake_run(program, args, timeout, "/opt/homebrew/Cellar\n")),
+                _ => panic!("unexpected command: {program} {args:?}"),
+            }
+        };
+
+        let snapshot = scan_homebrew_with_runner(&runner);
+
+        assert_eq!(snapshot.status, ManagerStatus::Partial);
+        assert_eq!(snapshot.packages.len(), 1);
+        assert_eq!(snapshot.failures.len(), 1);
+        assert!(matches!(
+            snapshot.failures[0].kind,
+            FailureKind::CommandFailed
+        ));
+    }
+
+    #[test]
+    fn scan_homebrew_reports_missing_when_brew_cannot_spawn() {
+        let runner = |program: &str,
+                      args: &[&str],
+                      _timeout: Duration|
+         -> Result<CommandRun, CommandFailure> {
+            assert_eq!(program, "brew");
+            assert_eq!(args, ["--version"]);
+            Err(CommandFailure {
+                kind: FailureKind::MissingBinary,
+                message: "brew is not installed or is not on PATH".to_string(),
+                command: Some(envelope("brew", &["--version"], 5_000)),
+                stdout: String::new(),
+                stderr: "not found".to_string(),
+            })
+        };
+
+        let snapshot = scan_homebrew_with_runner(&runner);
+
+        assert_eq!(snapshot.status, ManagerStatus::Missing);
+        assert!(snapshot.packages.is_empty());
+        assert!(snapshot.homebrew.is_none());
+    }
+
+    #[test]
+    fn hydrate_homebrew_cleanup_preserves_raw_output_and_size() {
+        let runner = |program: &str,
+                      args: &[&str],
+                      timeout: Duration|
+         -> Result<CommandRun, CommandFailure> {
+            assert_eq!(program, "brew");
+            assert_eq!(args, ["cleanup", "--dry-run"]);
+            Ok(fake_run(
+                program,
+                args,
+                timeout,
+                "Would remove: /tmp/a (10MB)\nWould remove: /tmp/b (1.5MB)\n",
+            ))
+        };
+
+        let preview = hydrate_homebrew_cleanup_with_runner(&runner);
+
+        assert_eq!(preview.status, AsyncStatus::Ready);
+        assert!(preview.raw_output.contains("/tmp/a"));
+        assert_eq!(preview.reclaimed_bytes, Some(12_058_624));
+        assert_eq!(preview.command.preview, "brew cleanup --dry-run");
+    }
+
+    #[test]
+    fn hydrate_homebrew_cleanup_failure_returns_failed_preview() {
+        let runner = |program: &str,
+                      args: &[&str],
+                      timeout: Duration|
+         -> Result<CommandRun, CommandFailure> {
+            Ok(fake_failed_run(program, args, timeout, "cleanup failed"))
+        };
+
+        let preview = hydrate_homebrew_cleanup_with_runner(&runner);
+
+        assert_eq!(preview.status, AsyncStatus::Failed);
+        assert!(preview.failure.is_some());
+        assert_eq!(preview.raw_output, "");
+    }
 }

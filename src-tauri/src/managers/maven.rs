@@ -1,10 +1,23 @@
-use super::*;
+use super::scan_support::{
+    empty_snapshot, expand_tilde, finish, home_dir, package_row, push_signal,
+};
+use crate::command::{command_failure, envelope, envelope_owned, push_command, run_command};
+use crate::disk_usage::path_info;
+use crate::types::{
+    CommandFailure, CommandRun, FailureKind, ManagerId, ManagerSnapshot, MavenDuplicateArtifact,
+    MavenRepositoryHealth, PackageKind, PackageRow, PackageSignal, PathKind, RepositoryScanStatus,
+};
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 pub(super) fn scan_maven() -> ManagerSnapshot {
     scan_maven_with_runner(&run_command)
 }
 
-pub(super) fn scan_maven_with_runner<F>(runner: &F) -> ManagerSnapshot
+fn scan_maven_with_runner<F>(runner: &F) -> ManagerSnapshot
 where
     F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
 {
@@ -68,16 +81,16 @@ where
     finish(snapshot)
 }
 
-pub(super) struct MavenLocalRepositoryResolution {
-    pub(super) path: PathBuf,
-    pub(super) message: Option<String>,
+struct MavenLocalRepositoryResolution {
+    path: PathBuf,
+    message: Option<String>,
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct MavenScanLimits {
-    pub(super) max_scan_ms: u128,
-    pub(super) max_version_dirs: usize,
-    pub(super) max_rows_returned: usize,
+struct MavenScanLimits {
+    max_scan_ms: u128,
+    max_version_dirs: usize,
+    max_rows_returned: usize,
 }
 
 impl Default for MavenScanLimits {
@@ -90,20 +103,20 @@ impl Default for MavenScanLimits {
     }
 }
 
-pub(super) struct MavenRepositoryScan {
-    pub(super) packages: Vec<PackageRow>,
-    pub(super) health: MavenRepositoryHealth,
+struct MavenRepositoryScan {
+    packages: Vec<PackageRow>,
+    health: MavenRepositoryHealth,
 }
 
 #[derive(Default)]
-pub(super) struct MavenArtifactAccumulator {
-    pub(super) versions: BTreeSet<String>,
-    pub(super) path: Option<String>,
-    pub(super) file_count: usize,
-    pub(super) snapshot_count: usize,
+struct MavenArtifactAccumulator {
+    versions: BTreeSet<String>,
+    path: Option<String>,
+    file_count: usize,
+    snapshot_count: usize,
 }
 
-pub(super) fn parse_maven_version(stdout: &str) -> String {
+fn parse_maven_version(stdout: &str) -> String {
     stdout
         .lines()
         .find(|line| line.trim_start().starts_with("Apache Maven"))
@@ -112,7 +125,7 @@ pub(super) fn parse_maven_version(stdout: &str) -> String {
         .to_string()
 }
 
-pub(super) fn parse_maven_home(stdout: &str) -> Option<String> {
+fn parse_maven_home(stdout: &str) -> Option<String> {
     stdout.lines().find_map(|line| {
         line.trim()
             .strip_prefix("Maven home:")
@@ -122,9 +135,7 @@ pub(super) fn parse_maven_home(stdout: &str) -> Option<String> {
     })
 }
 
-pub(super) fn resolve_maven_local_repository(
-    maven_home: Option<&str>,
-) -> MavenLocalRepositoryResolution {
+fn resolve_maven_local_repository(maven_home: Option<&str>) -> MavenLocalRepositoryResolution {
     let home = home_dir();
     let user_settings = home.as_ref().map(|home| home.join(".m2/settings.xml"));
     let global_settings = maven_home.map(|home| Path::new(home).join("conf/settings.xml"));
@@ -166,7 +177,7 @@ pub(super) fn resolve_maven_local_repository(
     }
 }
 
-pub(super) fn read_maven_local_repository_setting(path: &Path) -> Result<Option<String>, String> {
+fn read_maven_local_repository_setting(path: &Path) -> Result<Option<String>, String> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -176,9 +187,7 @@ pub(super) fn read_maven_local_repository_setting(path: &Path) -> Result<Option<
         .map_err(|err| format!("Could not parse {}: {err}", path.display()))
 }
 
-pub(super) fn parse_maven_local_repository_setting(
-    contents: &str,
-) -> Result<Option<String>, String> {
+fn parse_maven_local_repository_setting(contents: &str) -> Result<Option<String>, String> {
     let document = roxmltree::Document::parse(contents).map_err(|err| err.to_string())?;
     let root = document.root_element();
     if root.tag_name().name() != "settings" {
@@ -194,7 +203,7 @@ pub(super) fn parse_maven_local_repository_setting(
         .map(str::to_string))
 }
 
-pub(super) fn interpolate_maven_path(value: &str, home: Option<&Path>) -> PathBuf {
+fn interpolate_maven_path(value: &str, home: Option<&Path>) -> PathBuf {
     let home_string = home
         .map(|home| home.display().to_string())
         .unwrap_or_else(|| env::var("HOME").unwrap_or_default());
@@ -204,7 +213,7 @@ pub(super) fn interpolate_maven_path(value: &str, home: Option<&Path>) -> PathBu
     expand_tilde(interpolated.as_str(), home)
 }
 
-pub(super) fn scan_maven_repository(root: &Path, limits: MavenScanLimits) -> MavenRepositoryScan {
+fn scan_maven_repository(root: &Path, limits: MavenScanLimits) -> MavenRepositoryScan {
     let started = Instant::now();
     let mut stack = vec![root.to_path_buf()];
     let mut accumulators: BTreeMap<(String, String), MavenArtifactAccumulator> = BTreeMap::new();
@@ -331,7 +340,7 @@ pub(super) fn scan_maven_repository(root: &Path, limits: MavenScanLimits) -> Mav
     }
 }
 
-pub(super) fn maven_coordinate_from_version_dir(
+fn maven_coordinate_from_version_dir(
     root: &Path,
     path: &Path,
     entries: &[fs::DirEntry],
@@ -371,7 +380,7 @@ pub(super) fn maven_coordinate_from_version_dir(
     Some((group_id, artifact_id, version, file_count))
 }
 
-pub(super) fn attach_maven_actions(row: &mut PackageRow, group_id: &str, artifact_id: &str) {
+fn attach_maven_actions(row: &mut PackageRow, group_id: &str, artifact_id: &str) {
     let coordinate = format!("{group_id}:{artifact_id}");
     if row.version != "unknown" && !row.version.starts_with("multiple ") {
         row.actions.push(envelope_owned(
@@ -393,10 +402,94 @@ pub(super) fn attach_maven_actions(row: &mut PackageRow, group_id: &str, artifac
     ));
 }
 
-pub(super) fn maven_version_summary(versions: &[String]) -> String {
+fn maven_version_summary(versions: &[String]) -> String {
     match versions {
         [] => "unknown".to_string(),
         [version] => version.clone(),
         _ => format!("multiple ({})", versions.len()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_maven_local_repository_setting, scan_maven_repository, MavenScanLimits};
+    use crate::managers::test_support::{temp_dir, write_file};
+    use crate::types::PackageSignal;
+
+    #[test]
+    fn parse_maven_settings_reads_only_top_level_local_repository() {
+        let repository = parse_maven_local_repository_setting(
+            r#"<settings>
+                <servers>
+                  <server>
+                    <username>sunven</username>
+                    <password>secret</password>
+                    <localRepository>/wrong</localRepository>
+                  </server>
+                </servers>
+                <localRepository>${user.home}/.cache/maven</localRepository>
+              </settings>"#,
+        )
+        .expect("parse settings");
+
+        assert_eq!(repository.as_deref(), Some("${user.home}/.cache/maven"));
+    }
+
+    #[test]
+    fn parse_maven_settings_rejects_malformed_xml() {
+        let error = parse_maven_local_repository_setting("<settings>").expect_err("parse failure");
+
+        assert!(!error.is_empty());
+    }
+
+    #[test]
+    fn scan_maven_repository_flags_duplicates_and_snapshots() {
+        let root = temp_dir("maven-repo");
+        write_file(
+            &root.path().join("org/example/tool/1.0.0/tool-1.0.0.pom"),
+            b"<project />",
+        );
+        write_file(
+            &root.path().join("org/example/tool/1.1.0/tool-1.1.0.jar"),
+            b"jar",
+        );
+        write_file(
+            &root
+                .path()
+                .join("org/example/snap/2.0-SNAPSHOT/snap-2.0-SNAPSHOT.pom"),
+            b"<project />",
+        );
+
+        let scan = scan_maven_repository(
+            root.path(),
+            MavenScanLimits {
+                max_scan_ms: 5_000,
+                max_version_dirs: 100,
+                max_rows_returned: 100,
+            },
+        );
+
+        assert_eq!(scan.health.artifact_count, 2);
+        assert_eq!(scan.health.version_count, 3);
+        assert_eq!(scan.health.snapshot_count, 1);
+        assert_eq!(scan.health.duplicate_artifact_count, 1);
+
+        let tool = scan
+            .packages
+            .iter()
+            .find(|package| package.name == "org.example:tool")
+            .expect("tool artifact");
+        assert!(tool.signals.contains(&PackageSignal::DuplicateVersions));
+        assert!(tool
+            .actions
+            .iter()
+            .any(|action| action.preview.contains("dependency:tree")));
+
+        let snap = scan
+            .packages
+            .iter()
+            .find(|package| package.name == "org.example:snap")
+            .expect("snapshot artifact");
+        assert!(snap.signals.contains(&PackageSignal::Snapshot));
     }
 }

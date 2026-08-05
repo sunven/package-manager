@@ -391,3 +391,43 @@ pub(crate) struct CacheCleanupRun {
     pub(crate) steps: Vec<CleanupStepResult>,
     pub(crate) message: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{NpmMaintenanceOperation, PnpmMaintenanceOperation};
+
+    #[test]
+    fn npm_maintenance_operation_accepts_frontend_camel_case_payload() {
+        let operation: NpmMaintenanceOperation = serde_json::from_str(
+            r#"{"kind":"uninstallGlobalPackage","packageName":"@scope/tool"}"#,
+        )
+        .expect("deserialize frontend payload");
+
+        match operation {
+            NpmMaintenanceOperation::UninstallGlobalPackage { package_name } => {
+                assert_eq!(package_name, "@scope/tool");
+            }
+        }
+    }
+
+    #[test]
+    fn pnpm_maintenance_operation_accepts_frontend_camel_case_payload() {
+        let uninstall: PnpmMaintenanceOperation = serde_json::from_str(
+            r#"{"kind":"uninstallGlobalPackage","packageName":"@scope/tool"}"#,
+        )
+        .expect("deserialize pnpm uninstall payload");
+
+        match uninstall {
+            PnpmMaintenanceOperation::UninstallGlobalPackage { package_name } => {
+                assert_eq!(package_name, "@scope/tool");
+            }
+        }
+    }
+
+    #[test]
+    fn pnpm_maintenance_no_longer_accepts_a_store_prune_payload() {
+        assert!(
+            serde_json::from_str::<PnpmMaintenanceOperation>(r#"{"kind":"storePrune"}"#).is_err()
+        );
+    }
+}

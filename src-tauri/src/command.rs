@@ -54,29 +54,6 @@ where
     }
 }
 
-pub(crate) fn command_stdout(
-    program: &str,
-    args: &[&str],
-    timeout_secs: u64,
-    snapshot: &mut ManagerSnapshot,
-) -> Option<String> {
-    match run_command(program, args, Duration::from_secs(timeout_secs)) {
-        Ok(run) if run.exit_code == Some(0) => Some(run.stdout.trim().to_string()),
-        Ok(run) => {
-            snapshot.failures.push(command_failure(
-                FailureKind::CommandFailed,
-                format!("{} failed", envelope_preview(program, args)).as_str(),
-                run,
-            ));
-            None
-        }
-        Err(failure) => {
-            snapshot.failures.push(failure);
-            None
-        }
-    }
-}
-
 pub(crate) fn run_command(
     program: &str,
     args: &[&str],
