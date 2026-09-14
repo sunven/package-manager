@@ -95,7 +95,7 @@ pub(crate) fn disk_usage(path: &Path) -> DiskUsage {
         files: stats.files,
         directories: stats.directories,
         skipped: stats.skipped,
-        message: None,
+        message: stats.first_error,
     }
 }
 
@@ -105,24 +105,41 @@ struct UsageStats {
     files: u64,
     directories: u64,
     skipped: u64,
+    first_error: Option<String>,
+}
+
+impl UsageStats {
+    fn record_error(&mut self, path: &Path, error: std::io::Error) {
+        self.skipped += 1;
+        if self.first_error.is_none() {
+            self.first_error = Some(format!("Could not read {}: {error}", path.display()));
+        }
+    }
 }
 
 fn walk_dir(path: &Path, stats: &mut UsageStats, seen: &mut HashSet<(u64, u64)>) {
     stats.directories += 1;
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
-        Err(_) => {
-            stats.skipped += 1;
+        Err(error) => {
+            stats.record_error(path, error);
             return;
         }
     };
 
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                stats.record_error(path, error);
+                continue;
+            }
+        };
         let entry_path: PathBuf = entry.path();
         let metadata = match fs::symlink_metadata(&entry_path) {
             Ok(metadata) => metadata,
-            Err(_) => {
-                stats.skipped += 1;
+            Err(error) => {
+                stats.record_error(&entry_path, error);
                 continue;
             }
         };

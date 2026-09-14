@@ -1,6 +1,6 @@
 # Package Manager Control Center
 
-一个本机开发环境观察与维护工具。它把多个互不相干的包管理器（npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv）和本地项目派生数据的磁盘占用与健康信号收敛成一套统一词汇，并在此之上提供受约束的维护操作。
+一个本机开发环境观察与维护工具。它把多个互不相干的包管理器（npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv）、本地项目派生数据和编辑器工作区数据的磁盘占用与健康信号收敛成一套统一词汇，并在此之上提供受约束的维护操作。
 
 ## Language
 
@@ -36,15 +36,25 @@ _Avoid_: 缓存（store 与 cache 在 pnpm 中是不同对象）
 Maven 的 `~/.m2/repository`。它在语义上是缓存，但没有任何官方子命令可以清理它。
 _Avoid_: Maven 缓存
 
+**目录占用 (Directory Footprint)**:
+一个被观察目录的文件系统测量占用。hardlink 或 reflink 共享的数据可能仍由其他路径持有，因此目录占用不承诺清理后的物理可回收空间。
+_Avoid_: 可回收空间、实际释放
+
+### 编辑器数据
+
+**工作区存储 (Workspace Storage)**:
+VS Code 为工作区保留的编辑器状态及扩展数据，其占用只包含这部分编辑器数据，不包含对应项目目录的占用。仍有工作区存储的记录不代表当前打开的窗口，也不构成完整的打开历史。
+_Avoid_: 项目大小、项目缓存、可回收空间
+
+**VS Code 占用 (VS Code Storage Overview)**:
+面向用户的工作区存储只读观察能力，逐个存储目录呈现所关联的项目位置和目录占用。无法识别项目或项目路径不存在的记录仍属于观察范围。
+_Avoid_: VS Code 清理、VS Code 缓存清理
+
 ### 项目派生数据
 
 **项目派生数据 (Project-Derived Data)**:
 由本地项目拥有、可从项目定义重新生成的数据，包括构建产物和已安装的项目依赖。它不属于管理器自身的缓存或存储。
 _Avoid_: 管理器缓存、项目缓存
-
-**目录占用 (Directory Footprint)**:
-一个项目派生数据目录的文件系统测量占用。hardlink 或 reflink 共享的数据可能仍由其他路径持有，因此目录占用不承诺清理后的物理可回收空间。
-_Avoid_: 可回收空间、实际释放
 
 **构建产物 (Build Artifact)**:
 由本地项目构建生成、可通过重新构建恢复的项目派生数据。

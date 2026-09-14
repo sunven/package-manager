@@ -3,6 +3,7 @@ mod disk_usage;
 mod managers;
 mod project_cleanup;
 mod types;
+mod vscode_storage;
 
 use crate::command::{run_command, run_command_owned};
 use crate::disk_usage::disk_usage;
@@ -24,6 +25,13 @@ use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+async fn scan_vscode_storage() -> Result<vscode_storage::VscodeStorageScan, String> {
+    tauri::async_runtime::spawn_blocking(vscode_storage::scan_default)
+        .await
+        .map_err(|error| format!("VS Code 占用扫描失败：{error}"))?
+}
 
 #[tauri::command]
 fn get_project_cleanup_settings(
@@ -234,6 +242,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scan_vscode_storage,
             get_project_cleanup_settings,
             choose_project_cleanup_root,
             scan_project_data,

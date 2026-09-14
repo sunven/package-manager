@@ -557,7 +557,7 @@
 
 .telemetry-nav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   padding: 1px 0 0;
   background: var(--border);
