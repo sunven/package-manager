@@ -2,6 +2,7 @@ mod command;
 mod disk_usage;
 mod managers;
 mod project_cleanup;
+mod session_records;
 mod types;
 mod vscode_storage;
 
@@ -25,6 +26,33 @@ use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+async fn remove_session_records_older_than(
+    source: session_records::SessionSourceKind,
+    days: u64,
+) -> Result<session_records::SessionRemovalResult, String> {
+    tauri::async_runtime::spawn_blocking(move || session_records::remove_older_default(source, days))
+        .await
+        .map_err(|error| format!("会话记录移除失败：{error}"))?
+}
+
+#[tauri::command]
+async fn remove_session_record(
+    source: session_records::SessionSourceKind,
+    id: String,
+) -> Result<session_records::SessionRemovalResult, String> {
+    tauri::async_runtime::spawn_blocking(move || session_records::remove_default(source, &id))
+        .await
+        .map_err(|error| format!("会话记录移除失败：{error}"))?
+}
+
+#[tauri::command]
+async fn scan_session_records() -> Result<session_records::SessionRecordScan, String> {
+    tauri::async_runtime::spawn_blocking(session_records::scan_default)
+        .await
+        .map_err(|error| format!("会话记录读取失败：{error}"))?
+}
 
 #[tauri::command]
 async fn scan_vscode_storage() -> Result<vscode_storage::VscodeStorageScan, String> {
@@ -242,6 +270,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            remove_session_record,
+            remove_session_records_older_than,
+            scan_session_records,
             scan_vscode_storage,
             get_project_cleanup_settings,
             choose_project_cleanup_root,

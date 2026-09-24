@@ -2,7 +2,9 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
+import { useSessionRecords } from "./hooks/useSessionRecords";
 import { useVscodeStorage } from "./hooks/useVscodeStorage";
+import { SessionRecordsPage } from "./components/SessionRecordsPage";
 import { VscodeStoragePage } from "./components/VscodeStoragePage";
 import { ProjectCleanupPage } from "./components/ProjectCleanupPage";
 import { DevelopmentHealthPage } from "./components/DevelopmentHealthPage";
@@ -37,8 +39,9 @@ function initialTheme(): Theme {
 export function App() {
   const state = usePackageManagers();
   const projectCleanup = useProjectCleanup();
-  const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "settings">("health");
+  const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "settings">("health");
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
+  const sessionRecords = useSessionRecords(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const { actions, currentManager, scanningManagers, selectedManager } = state;
   const scanning = scanningManagers.has(selectedManager);
@@ -85,6 +88,10 @@ export function App() {
         actions.closePackageActions();
         setActiveView("vscode");
       }}
+      onShowSessionRecords={() => {
+        actions.closePackageActions();
+        setActiveView("sessions");
+      }}
       onShowHealth={() => {
         actions.closePackageActions();
         setActiveView("health");
@@ -120,7 +127,17 @@ export function App() {
         result={state.maintenanceResult}
       />
       <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
-        {activeView === "vscode" ? (
+        {activeView === "sessions" ? (
+          <SessionRecordsPage
+            error={sessionRecords.error}
+            homeDirectory={state.homeDirectory}
+            onRefresh={() => void sessionRecords.refresh()}
+            onRemove={sessionRecords.removeOne}
+            onRemoveOlder={sessionRecords.removeOlder}
+            scan={sessionRecords.scan}
+            scanning={sessionRecords.scanning}
+          />
+        ) : activeView === "vscode" ? (
           <VscodeStoragePage
             error={vscodeStorage.error}
             homeDirectory={state.homeDirectory}

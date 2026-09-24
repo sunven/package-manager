@@ -1,15 +1,16 @@
-import { Activity, Code2, List, Moon, RefreshCw, Settings, Sun, Trash2 } from "lucide-react";
+import { Activity, Code2, List, MessagesSquare, Moon, RefreshCw, Settings, Sun, Trash2 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { managerLabel } from "../utils/format";
 import type { ManagerId } from "../types";
 
-type ViewId = "health" | "managers" | "cleanup" | "vscode" | "settings";
+type ViewId = "health" | "managers" | "cleanup" | "vscode" | "sessions" | "settings";
 
 const viewMeta: Record<ViewId, { code: string; label: string }> = {
   health: { code: "SYS.HEALTH / 01", label: "开发体检" },
   managers: { code: "PKG.INDEX / 02", label: "包管理器" },
   cleanup: { code: "DISK.PURGE / 03", label: "项目清理" },
   vscode: { code: "CODE.STORAGE / 05", label: "VS Code 占用" },
+  sessions: { code: "SESSION.LOG / 06", label: "会话记录" },
   settings: { code: "SYS.CONFIG / 04", label: "系统设置" },
 };
 
@@ -20,6 +21,7 @@ export function Shell({
   onShowHealth,
   onShowProjectCleanup,
   onShowVscodeStorage,
+  onShowSessionRecords,
   onShowManagers,
   onShowSettings,
   onToggleTheme,
@@ -35,6 +37,7 @@ export function Shell({
   onShowHealth: () => void;
   onShowProjectCleanup: () => void;
   onShowVscodeStorage: () => void;
+  onShowSessionRecords: () => void;
   onShowManagers: () => void;
   onShowSettings: () => void;
   onToggleTheme: () => void;
@@ -54,7 +57,7 @@ export function Shell({
         <header>
           <div className="telemetry-rail">
             <samp className="truncate">LOCALHOST / DEVELOPMENT ASSET CONTROL</samp>
-            <samp className="truncate">{activeView === "cleanup" ? "PROJECT DATA CHANNEL" : activeView === "vscode" ? activeMeta.code : scanMeta || activeMeta.code}</samp>
+            <samp className="truncate">{activeView === "cleanup" ? "PROJECT DATA CHANNEL" : activeView === "vscode" || activeView === "sessions" ? activeMeta.code : scanMeta || activeMeta.code}</samp>
             <div className="telemetry-status">
               <output className="telemetry-online">SYSTEM ONLINE</output>
               <Button
@@ -84,21 +87,21 @@ export function Shell({
             <div className="telemetry-control-block">
               <dl className="telemetry-readouts">
                 <div className="telemetry-readout">
-                  <dt className="telemetry-readout-label">{activeView === "vscode" ? "PACKAGE FOOTPRINT / 管理器占用" : "TOTAL FOOTPRINT / 总占用"}</dt>
+                  <dt className="telemetry-readout-label">{activeView === "vscode" || activeView === "sessions" ? "PACKAGE FOOTPRINT / 管理器占用" : "TOTAL FOOTPRINT / 总占用"}</dt>
                   <dd className="telemetry-readout-value telemetry-readout-value--accent">{totalBytes}</dd>
                 </div>
                 <div className="telemetry-readout">
                   <dt className="telemetry-readout-label">ACTIVE UNIT</dt>
-                  <dd className="telemetry-readout-value">{activeView === "vscode" ? "VS Code" : managerLabel(selectedManager)}</dd>
+                  <dd className="telemetry-readout-value">{activeView === "vscode" ? "VS Code" : activeView === "sessions" ? "Codex · Claude" : managerLabel(selectedManager)}</dd>
                 </div>
                 <div className="telemetry-readout">
                   <dt className="telemetry-readout-label">VIEW CHANNEL</dt>
                   <dd className="telemetry-readout-value">{activeMeta.label}</dd>
                 </div>
               </dl>
-              {activeView === "cleanup" || activeView === "vscode" ? (
+              {activeView === "cleanup" || activeView === "vscode" || activeView === "sessions" ? (
                 <div className="flex min-h-12 items-center bg-card px-4 text-xs text-muted-foreground">
-                  <samp>{activeView === "vscode" ? "[ WORKSPACE STORAGE ]" : "[ PROJECT SCAN ]"}</samp>
+                  <samp>{activeView === "vscode" ? "[ WORKSPACE STORAGE ]" : activeView === "sessions" ? "[ SESSION RECORDS ]" : "[ PROJECT SCAN ]"}</samp>
                 </div>
               ) : (
                 <Button
@@ -151,6 +154,15 @@ export function Shell({
             >
               <Code2 data-icon="inline-start" />
               VS Code 占用
+            </Button>
+            <Button
+              aria-current={activeView === "sessions" ? "page" : undefined}
+              onClick={onShowSessionRecords}
+              type="button"
+              variant="ghost"
+            >
+              <MessagesSquare data-icon="inline-start" />
+              会话记录
             </Button>
             <Button
               aria-current={activeView === "settings" ? "page" : undefined}
