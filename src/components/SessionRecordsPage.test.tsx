@@ -38,6 +38,7 @@ describe("SessionRecordsPage", () => {
         onRefresh={() => {}}
         onRemove={async () => ({ moved: 0, failed: 0, message: null })}
         onRemoveOlder={async () => ({ moved: 0, failed: 0, message: null })}
+        onRemoveSelected={async () => ({ moved: 0, failed: 0, message: null })}
         scan={scan}
         scanning={false}
       />,
@@ -48,6 +49,9 @@ describe("SessionRecordsPage", () => {
     expect(html).toContain("1 条");
     expect(html).toContain("使用中，暂不移除");
     expect(html).not.toContain("移入废纸篓</button>");
+    expect(html).toContain("移入废纸篓 0 条");
+    expect(openingTagBefore(html, "移入废纸篓 0 条")).toMatch(/ disabled(?:=|\s|>)/);
+    expect(checkboxTag(html, "选择 修一下登录")).toContain("data-disabled");
     expect(html).toContain("修一下登录");
     expect(html).toContain("~/work/package-manager");
   });
@@ -60,6 +64,7 @@ describe("SessionRecordsPage", () => {
         onRefresh={() => {}}
         onRemove={async () => ({ moved: 1, failed: 0, message: null })}
         onRemoveOlder={async () => ({ moved: 0, failed: 0, message: null })}
+        onRemoveSelected={async () => ({ moved: 0, failed: 0, message: null })}
         scan={{
           ...scan,
           codex: {
@@ -73,6 +78,10 @@ describe("SessionRecordsPage", () => {
 
     expect(html).toContain("可以移走");
     expect(html).toContain("移入废纸篓");
+    expect(html).toContain("移入废纸篓 0 条");
+    expect(openingTagBefore(html, "移入废纸篓 0 条")).toMatch(/ disabled(?:=|\s|>)/);
+    expect(checkboxTag(html, "选择 可以移走")).not.toContain("data-disabled");
+    expect(html).toContain("全选可移除");
   });
 
   it("shows an empty Codex section when the sessions directory is missing", () => {
@@ -83,6 +92,7 @@ describe("SessionRecordsPage", () => {
         onRefresh={() => {}}
         onRemove={async () => ({ moved: 0, failed: 0, message: null })}
         onRemoveOlder={async () => ({ moved: 0, failed: 0, message: null })}
+        onRemoveSelected={async () => ({ moved: 0, failed: 0, message: null })}
         scan={{
           codex: { ...codex, status: "Missing", records: [] },
           claude: scan.claude,
@@ -103,6 +113,7 @@ describe("SessionRecordsPage", () => {
         onRefresh={() => {}}
         onRemove={async () => ({ moved: 0, failed: 0, message: null })}
         onRemoveOlder={async () => ({ moved: 0, failed: 0, message: null })}
+        onRemoveSelected={async () => ({ moved: 0, failed: 0, message: null })}
         initialSource="claude"
         scan={{
           codex,
@@ -122,3 +133,15 @@ describe("SessionRecordsPage", () => {
     expect(html).toContain(">Codex");
   });
 });
+
+function checkboxTag(html: string, label: string) {
+  const marker = `aria-label="${label}"`;
+  const start = html.indexOf(marker);
+  const tagStart = html.lastIndexOf("<", start);
+  return html.slice(tagStart, html.indexOf(">", start) + 1);
+}
+
+function openingTagBefore(html: string, text: string) {
+  const at = html.indexOf(text);
+  return html.slice(html.lastIndexOf("<", at), at);
+}

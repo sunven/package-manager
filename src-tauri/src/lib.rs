@@ -48,6 +48,16 @@ async fn remove_session_record(
 }
 
 #[tauri::command]
+async fn remove_session_records(
+    source: session_records::SessionSourceKind,
+    ids: Vec<String>,
+) -> Result<session_records::SessionRemovalResult, String> {
+    tauri::async_runtime::spawn_blocking(move || session_records::remove_selected_default(source, &ids))
+        .await
+        .map_err(|error| format!("会话记录移除失败：{error}"))?
+}
+
+#[tauri::command]
 async fn scan_session_records() -> Result<session_records::SessionRecordScan, String> {
     tauri::async_runtime::spawn_blocking(session_records::scan_default)
         .await
@@ -271,6 +281,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             remove_session_record,
+            remove_session_records,
             remove_session_records_older_than,
             scan_session_records,
             scan_vscode_storage,

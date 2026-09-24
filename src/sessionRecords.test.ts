@@ -4,7 +4,10 @@ import {
   bulkRemovalRequest,
   groupSessionRecords,
   recordsOlderThan,
+  removableSessionRecords,
   removalResultText,
+  selectedRemovalConfirmText,
+  selectedRemovalRequest,
   sessionSections,
   singleRemovalConfirmText,
   type SessionRecord,
@@ -93,6 +96,26 @@ describe("session record grouping", () => {
     expect(bulkRemovalRequest([records[0]], 7, now)).toBeNull();
     expect(bulkRemovalConfirmText("Claude", 30, 1)).toBe(
       "将 Claude 最后活动时间早于 30 天的 1 条会话记录移入废纸篓？使用中的记录和读不出最后活动时间的记录不在其中。",
+    );
+  });
+
+  it("forms an explicit selection from removable records only", () => {
+    const records = [
+      record({ id: "busy", lastActivityMs: localMs(2026, 9, 24), bytes: 1, inUse: true }),
+      record({ id: "unknown", lastActivityMs: null, bytes: 2 }),
+      record({ id: "recent", lastActivityMs: localMs(2026, 9, 24), bytes: 3 }),
+      record({ id: "old", lastActivityMs: localMs(2026, 1, 1), bytes: 4 }),
+    ];
+
+    expect(removableSessionRecords(records).map((item) => item.id)).toEqual(["unknown", "recent", "old"]);
+    expect(selectedRemovalRequest(records, ["busy", "unknown", "missing"])).toEqual({
+      ids: ["unknown"],
+      count: 1,
+    });
+    expect(selectedRemovalRequest(records, ["busy"])).toBeNull();
+    expect(selectedRemovalRequest(records, [])).toBeNull();
+    expect(selectedRemovalConfirmText("Codex", 2)).toBe(
+      "将选中的 2 条 Codex 会话记录移入废纸篓？动手时仍在使用或已不再是会话记录的会留下。",
     );
   });
 });

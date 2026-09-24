@@ -49,5 +49,11 @@ export function useSessionRecords(active: boolean) {
     return result;
   }, [refresh]);
 
-  return { scan, scanning, error, refresh, removeOne, removeOlder };
+  const removeSelected = useCallback(async (source: SessionSourceId, ids: string[]) => {
+    const result = await invoke<SessionRemovalResult>("remove_session_records", { source, ids });
+    void refresh();
+    return result;
+  }, [refresh]);
+
+  return { scan, scanning, error, refresh, removeOne, removeOlder, removeSelected };
 }

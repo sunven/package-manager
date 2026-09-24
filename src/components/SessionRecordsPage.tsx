@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { ArrowClockwise as RefreshCw } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import {
   AlertDialog,
@@ -14,15 +14,20 @@ import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { CardContent } from "../../components/ui/card";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { formatBytes, formatHomePath } from "../utils/format";
 import {
   bulkRemovalConfirmText,
   bulkRemovalRequest,
   formatSessionActivity,
+  removableSessionRecords,
   removalResultText,
+  selectedRemovalConfirmText,
+  selectedRemovalRequest,
   sessionSections,
   singleRemovalConfirmText,
+  type SessionRecord,
   type SessionRecordScan,
   type SessionRemovalResult,
   type SessionSectionView,
@@ -38,7 +43,10 @@ const sources = [
 
 type PendingRemoval =
   | { kind: "one"; source: SessionSourceId; id: string; title: string }
-  | { kind: "age"; source: SessionSourceId; label: string; days: 7 | 30; count: number };
+  | { kind: "age"; source: SessionSourceId; label: string; days: 7 | 30; count: number }
+  | { kind: "selected"; source: SessionSourceId; label: string; ids: string[]; count: number };
+
+const emptySelection: Record<SessionSourceId, string[]> = { codex: [], claude: [] };
 
 export function SessionRecordsPage({
   scan,
@@ -47,6 +55,7 @@ export function SessionRecordsPage({
   onRefresh,
   onRemove,
   onRemoveOlder,
+  onRemoveSelected,
   nowMs = Date.now(),
   initialSource = "codex",
   homeDirectory,
@@ -57,6 +66,7 @@ export function SessionRecordsPage({
   onRefresh: () => void;
   onRemove: (source: SessionSourceId, id: string) => Promise<SessionRemovalResult>;
   onRemoveOlder: (source: SessionSourceId, days: 7 | 30) => Promise<SessionRemovalResult>;
+  onRemoveSelected: (source: SessionSourceId, ids: string[]) => Promise<SessionRemovalResult>;
   nowMs?: number;
   initialSource?: SessionSourceId;
   homeDirectory: string | null;
@@ -67,6 +77,7 @@ export function SessionRecordsPage({
   const [pending, setPending] = useState<PendingRemoval | null>(null);
   const [removing, setRemoving] = useState(false);
   const [result, setResult] = useState<SessionRemovalResult | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Record<SessionSourceId, string[]>>(emptySelection);
 
   return (
     <main className="view-grid" aria-busy={scanning}>
@@ -81,7 +92,7 @@ export function SessionRecordsPage({
             </Button>
           }
         />
-        <CardContent className="flex flex-col gap-3 p-4">
+        <CardContent className="flex flex-col gap-2 p-3">
           <p className="text-sm text-muted-foreground">
             Codex 和 Claude 留在本机的对话文件。这些占用是记录离开原目录后的体积，物理空间要等废纸篓清空才释放。
           </p>
@@ -109,7 +120,9 @@ export function SessionRecordsPage({
                 ? singleRemovalConfirmText(pending.title)
                 : pending?.kind === "age"
                   ? bulkRemovalConfirmText(pending.label, pending.days, pending.count)
-                  : ""}
+                  : pending?.kind === "selected"
+                    ? selectedRemovalConfirmText(pending.label, pending.count)
+                    : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -128,8 +141,19 @@ export function SessionRecordsPage({
                   setRemoving(true);
                   const action = current.kind === "one"
                     ? onRemove(current.source, current.id)
-                    : onRemoveOlder(current.source, current.days);
-                  void action.then(setResult).finally(() => {
+                    : current.kind === "age"
+                      ? onRemoveOlder(current.source, current.days)
+                      : onRemoveSelected(current.source, current.ids);
+                  void action.then((next) => {
+                    if (current.kind === "selected") {
+                      const submitted = new Set(current.ids);
+                      setSelectedIds((existing) => ({
+                        ...existing,
+                        [current.source]: existing[current.source].filter((id) => !submitted.has(id)),
+                      }));
+                    }
+                    setResult(next);
+                  }).finally(() => {
                     setPending(null);
                     setRemoving(false);
                   });
@@ -175,6 +199,9 @@ export function SessionRecordsPage({
                 homeDirectory={homeDirectory}
                 label={source.label}
                 nowMs={nowMs}
+                onClearSelection={() => {
+                  setSelectedIds((current) => ({ ...current, [source.key]: [] }));
+                }}
                 onRequestAgeRemoval={(days, count) => {
                   setResult(null);
                   setPending({ kind: "age", source: source.key, label: source.label, days, count });
@@ -183,7 +210,38 @@ export function SessionRecordsPage({
                   setResult(null);
                   setPending({ kind: "one", source: source.key, id, title });
                 }}
+                onRequestSelectedRemoval={(ids, count) => {
+                  setResult(null);
+                  setPending({ kind: "selected", source: source.key, label: source.label, ids, count });
+                }}
+                onSelectAll={() => {
+                  setSelectedIds((current) => ({
+                    ...current,
+                    [source.key]: removableSessionRecords(data?.records ?? []).map((record) => record.id),
+                  }));
+                }}
+                onSetGroupSelected={(records, selected) => {
+                  const groupIds = removableSessionRecords(records).map((record) => record.id);
+                  setSelectedIds((current) => {
+                    const next = new Set(current[source.key]);
+                    for (const id of groupIds) {
+                      if (selected) next.add(id);
+                      else next.delete(id);
+                    }
+                    return { ...current, [source.key]: [...next] };
+                  });
+                }}
+                onSetRecordSelected={(id, selected) => {
+                  setSelectedIds((current) => {
+                    const next = new Set(current[source.key]);
+                    if (selected) next.add(id);
+                    else next.delete(id);
+                    return { ...current, [source.key]: [...next] };
+                  });
+                }}
                 onToggle={(groupKey) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: !current[`${source.key}:${groupKey}`] }))}
+                removing={removing}
+                selectedIds={selectedIds[source.key]}
                 source={data ?? null}
                 sourceKey={source.key}
                 view={view ?? null}
@@ -207,8 +265,15 @@ function SourceSection({
   sourceKey,
   onToggle,
   nowMs,
+  onClearSelection,
   onRequestAgeRemoval,
   onRequestRemoval,
+  onRequestSelectedRemoval,
+  onSelectAll,
+  onSetGroupSelected,
+  onSetRecordSelected,
+  removing,
+  selectedIds,
 }: {
   source: SessionSourceScan | null;
   view: SessionSectionView | null;
@@ -220,9 +285,21 @@ function SourceSection({
   sourceKey: string;
   onToggle: (groupKey: string) => void;
   nowMs: number;
+  onClearSelection: () => void;
   onRequestAgeRemoval: (days: 7 | 30, count: number) => void;
   onRequestRemoval: (id: string, title: string) => void;
+  onRequestSelectedRemoval: (ids: string[], count: number) => void;
+  onSelectAll: () => void;
+  onSetGroupSelected: (records: SessionRecord[], selected: boolean) => void;
+  onSetRecordSelected: (id: string, selected: boolean) => void;
+  removing: boolean;
+  selectedIds: readonly string[];
 }) {
+  const records = source?.records ?? [];
+  const removable = removableSessionRecords(records);
+  const selected = selectedRemovalRequest(records, selectedIds);
+  const selectedCount = selected?.count ?? 0;
+  const selectedSet = new Set(selected?.ids ?? []);
   return (
     <Panel className="overflow-hidden">
       <PanelHead
@@ -234,7 +311,7 @@ function SourceSection({
               const request = bulkRemovalRequest(source?.records ?? [], days, nowMs);
               return (
                 <Button
-                  disabled={request === null}
+                  disabled={removing || request === null}
                   key={days}
                   onClick={() => {
                     if (request) onRequestAgeRemoval(request.days, request.count);
@@ -250,11 +327,11 @@ function SourceSection({
           </span>
         }
       />
-      <CardContent className="flex flex-col gap-3 p-4">
+      <CardContent className="flex flex-col gap-2 p-3">
         <p className="break-all text-xs text-muted-foreground">
           {source ? formatHomePath(source.directory, homeDirectory) : fallbackPath}
         </p>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-2">
           <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
           <StatCard label="离开原目录的体积" value={view ? formatBytes(view.bytes) : "—"} />
         </div>
@@ -273,28 +350,69 @@ function SourceSection({
       ) : null}
       {view?.empty ? (
         <EmptyState message={emptyMessage} />
-      ) : (
+      ) : view ? (
         <div className="flex flex-col">
+          <div className="flex flex-wrap gap-2 border-b px-4 py-2">
+            <Button
+              disabled={removing || removable.length === 0 || selectedCount === removable.length}
+              onClick={onSelectAll}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              全选可移除
+            </Button>
+            <Button disabled={removing || selectedCount === 0} onClick={onClearSelection} size="sm" type="button" variant="outline">
+              清空
+            </Button>
+            <Button
+              disabled={removing || selected === null}
+              onClick={() => {
+                if (selected) onRequestSelectedRemoval(selected.ids, selected.count);
+              }}
+              size="sm"
+              type="button"
+              variant="destructive"
+            >
+              {`移入废纸篓 ${selectedCount} 条`}
+            </Button>
+          </div>
           {view?.groups.map((group) => {
             const collapseKey = `${sourceKey}:${group.key}`;
             const isCollapsed = collapsed[collapseKey] ?? false;
+            const groupRemovable = removableSessionRecords(group.records);
+            const groupAllSelected = groupRemovable.length > 0 && groupRemovable.every((record) => selectedSet.has(record.id));
             return (
               <section key={collapseKey}>
-                <button
-                  aria-expanded={!isCollapsed}
-                  className="flex w-full items-center justify-between gap-3 border-b bg-muted/40 px-4 py-2 text-left"
-                  onClick={() => onToggle(group.key)}
-                  type="button"
-                >
-                  <span className="text-sm font-medium">{group.label}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {group.count} 条 · {formatBytes(group.bytes)}
-                  </span>
-                </button>
+                <div className="flex items-center gap-3 border-b bg-muted/40 px-4 py-2">
+                  <Checkbox
+                    aria-label={`选择${group.label}的可移除会话记录`}
+                    checked={groupAllSelected}
+                    disabled={removing || groupRemovable.length === 0}
+                    onCheckedChange={(checked) => onSetGroupSelected(group.records, checked === true)}
+                  />
+                  <button
+                    aria-expanded={!isCollapsed}
+                    className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                    onClick={() => onToggle(group.key)}
+                    type="button"
+                  >
+                    <span className="text-sm font-medium">{group.label}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {group.count} 条 · {formatBytes(group.bytes)}
+                    </span>
+                  </button>
+                </div>
                 {isCollapsed ? null : (
                   <ul className="divide-y">
                     {group.records.map((record) => (
-                      <li className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto]" key={record.id}>
+                      <li className="grid items-center gap-3 px-4 py-3 sm:grid-cols-[auto_minmax(0,1.4fr)_minmax(0,1fr)_auto]" key={record.id}>
+                        <Checkbox
+                          aria-label={`选择 ${record.title}`}
+                          checked={!record.inUse && selectedSet.has(record.id)}
+                          disabled={removing || record.inUse}
+                          onCheckedChange={(checked) => onSetRecordSelected(record.id, checked === true)}
+                        />
                         <span className="min-w-0">
                           <span className="block truncate text-sm font-medium">{record.title}</span>
                           <span className="mt-1 block truncate text-xs text-muted-foreground">
@@ -309,6 +427,7 @@ function SourceSection({
                         <span className="flex items-center justify-end gap-2">
                           {record.inUse ? <Badge variant="outline">使用中，暂不移除</Badge> : (
                             <Button
+                              disabled={removing}
                               onClick={() => onRequestRemoval(record.id, record.title)}
                               size="sm"
                               type="button"
@@ -327,7 +446,7 @@ function SourceSection({
             );
           })}
         </div>
-      )}
+      ) : null}
     </Panel>
   );
 }

@@ -58,6 +58,23 @@ export function bulkRemovalConfirmText(sourceLabel: string, days: number, count:
   return `将 ${sourceLabel} 最后活动时间早于 ${days} 天的 ${count} 条会话记录移入废纸篓？使用中的记录和读不出最后活动时间的记录不在其中。`;
 }
 
+export function removableSessionRecords(records: SessionRecord[]) {
+  return records.filter((record) => !record.inUse);
+}
+
+export function selectedRemovalRequest(records: SessionRecord[], selectedIds: ReadonlySet<string> | readonly string[]) {
+  const selected = selectedIds instanceof Set ? selectedIds : new Set(selectedIds);
+  const ids = removableSessionRecords(records)
+    .map((record) => record.id)
+    .filter((id) => selected.has(id));
+  if (ids.length === 0) return null;
+  return { ids, count: ids.length };
+}
+
+export function selectedRemovalConfirmText(sourceLabel: string, count: number) {
+  return `将选中的 ${count} 条 ${sourceLabel} 会话记录移入废纸篓？动手时仍在使用或已不再是会话记录的会留下。`;
+}
+
 export type SessionSectionView = {
   groups: SessionRecordGroup[];
   count: number;

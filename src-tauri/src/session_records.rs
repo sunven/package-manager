@@ -282,6 +282,69 @@ pub(crate) fn remove_older_than(
     }
 }
 
+pub(crate) fn remove_selected_default(
+    source: SessionSourceKind,
+    ids: &[String],
+) -> Result<SessionRemovalResult, String> {
+    if ids.is_empty() {
+        return Ok(SessionRemovalResult {
+            moved: 0,
+            failed: 0,
+            message: None,
+        });
+    }
+    let directory = match source {
+        SessionSourceKind::Codex => codex_sessions_dir()?,
+        SessionSourceKind::Claude => claude_projects_dir()?,
+    };
+    let open_paths = match open_files_under(&directory) {
+        Ok(paths) => paths,
+        Err(message) => {
+            return Ok(SessionRemovalResult {
+                moved: 0,
+                failed: 1,
+                message: Some(message),
+            });
+        }
+    };
+    Ok(remove_selected(
+        &directory,
+        ids,
+        &|path| open_paths.contains(path),
+        &mut move_path_to_trash,
+    ))
+}
+
+pub(crate) fn remove_selected(
+    directory: &Path,
+    ids: &[String],
+    is_open: &dyn Fn(&Path) -> bool,
+    trash: &mut dyn FnMut(&Path) -> Result<(), String>,
+) -> SessionRemovalResult {
+    let mut seen = HashSet::new();
+    let mut moved = 0;
+    let mut failed = 0;
+    let mut message = None;
+    for id in ids {
+        if !seen.insert(id.as_str()) {
+            continue;
+        }
+        let result = remove_one(directory, id, is_open, trash);
+        moved += result.moved;
+        if result.failed > 0 {
+            failed += result.failed;
+            if message.is_none() {
+                message = result.message;
+            }
+        }
+    }
+    SessionRemovalResult {
+        moved,
+        failed,
+        message,
+    }
+}
+
 pub(crate) fn remove_one(
     directory: &Path,
     id: &str,
@@ -1229,6 +1292,99 @@ mod tests {
         assert_eq!(trash_error.failed, 1);
         assert_eq!(trash_error.moved, 0);
         assert!(chat.exists());
+    }
+
+    #[test]
+    fn empty_selected_removal_does_not_touch_a_source() {
+        let result = remove_selected_default(SessionSourceKind::Codex, &[]).unwrap();
+        assert_eq!(result.moved, 0);
+        assert_eq!(result.failed, 0);
+        assert!(result.message.is_none());
+    }
+
+    #[test]
+    fn selected_removal_trashes_only_requested_files() {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions();
+        write_codex(&sessions.join("recent.jsonl"), "2026-09-24T03:00:00Z");
+        write_codex(&sessions.join("old.jsonl"), "2020-01-01T00:00:00Z");
+        write_codex(&sessions.join("keep.jsonl"), "2020-01-01T00:00:00Z");
+        write_codex(&sessions.join("busy.jsonl"), "2020-01-01T00:00:00Z");
+        let chat = sessions.join("chat.jsonl");
+        fs::write(&chat, b"{}\n").unwrap();
+        symlink(&chat, sessions.join("alias.jsonl")).unwrap();
+        let outside = fixture.0.join("secret.jsonl");
+        fs::write(&outside, b"{}\n").unwrap();
+        let trash_dir = fixture.0.join("trash");
+        let mut calls = Vec::new();
+
+        let result = remove_selected(
+            &sessions,
+            &[
+                "recent.jsonl".to_string(),
+                "old.jsonl".to_string(),
+                "busy.jsonl".to_string(),
+                "alias.jsonl".to_string(),
+                "../secret.jsonl".to_string(),
+                "recent.jsonl".to_string(),
+                "gone.jsonl".to_string(),
+            ],
+            &|path| path.ends_with("busy.jsonl"),
+            &mut |path| {
+                calls.push(path.file_name().unwrap().to_string_lossy().into_owned());
+                fs::create_dir_all(&trash_dir).unwrap();
+                let name = path.file_name().unwrap();
+                fs::rename(path, trash_dir.join(name)).map_err(|error| error.to_string())
+            },
+        );
+
+        assert_eq!(result.moved, 2);
+        assert_eq!(result.failed, 0);
+        assert!(result.message.is_none());
+        assert_eq!(calls, vec!["recent.jsonl".to_string(), "old.jsonl".to_string()]);
+        assert!(trash_dir.join("recent.jsonl").is_file());
+        assert!(trash_dir.join("old.jsonl").is_file());
+        assert!(sessions.join("keep.jsonl").is_file());
+        assert!(sessions.join("busy.jsonl").is_file());
+        assert!(chat.is_file());
+        assert!(fs::symlink_metadata(sessions.join("alias.jsonl"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(outside.is_file());
+    }
+
+    #[test]
+    fn selected_removal_continues_after_a_trash_failure() {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions();
+        for name in ["a.jsonl", "b.jsonl", "c.jsonl"] {
+            fs::write(sessions.join(name), b"{}\n").unwrap();
+        }
+        let trash_dir = fixture.0.join("trash");
+
+        let result = remove_selected(
+            &sessions,
+            &["a.jsonl".to_string(), "b.jsonl".to_string(), "c.jsonl".to_string()],
+            &|_| false,
+            &mut |path| {
+                if path.ends_with("b.jsonl") {
+                    return Err("废纸篓拒绝".to_string());
+                }
+                fs::create_dir_all(&trash_dir).unwrap();
+                let name = path.file_name().unwrap();
+                fs::rename(path, trash_dir.join(name)).map_err(|error| error.to_string())
+            },
+        );
+
+        assert_eq!(result.moved, 2);
+        assert_eq!(result.failed, 1);
+        assert_eq!(result.message.as_deref(), Some("废纸篓拒绝"));
+        assert!(!sessions.join("a.jsonl").exists());
+        assert!(sessions.join("b.jsonl").is_file());
+        assert!(!sessions.join("c.jsonl").exists());
+        assert!(trash_dir.join("a.jsonl").is_file());
+        assert!(trash_dir.join("c.jsonl").is_file());
     }
 
     fn write_codex(path: &Path, timestamp: &str) {

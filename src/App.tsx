@@ -134,6 +134,7 @@ export function App() {
             onRefresh={() => void sessionRecords.refresh()}
             onRemove={sessionRecords.removeOne}
             onRemoveOlder={sessionRecords.removeOlder}
+            onRemoveSelected={sessionRecords.removeSelected}
             scan={sessionRecords.scan}
             scanning={sessionRecords.scanning}
           />
