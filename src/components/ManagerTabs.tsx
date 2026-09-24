@@ -41,7 +41,7 @@ export function ManagerTabs({
             const version = manager?.version ?? " ";
             return (
               <TabsTrigger
-                className="manager-tab h-auto min-h-11 min-w-0 flex-col items-stretch justify-center gap-0.5 px-2 py-1 text-left transition-colors active:translate-y-px data-active:text-foreground"
+                className="manager-tab h-auto min-h-0 min-w-0 flex-col items-stretch justify-center gap-0.5 px-2 py-1 text-left transition-colors active:translate-y-px data-active:text-foreground"
                 key={managerId}
                 value={managerId}
               >

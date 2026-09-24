@@ -52,7 +52,7 @@ export function App() {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    const themeColor = theme === "dark" ? "#0a0a0a" : "#f3f4f1";
+    const themeColor = theme === "dark" ? "#1c1b19" : "#f7f6f3";
 
     root.dataset.theme = theme;
     root.classList.toggle("dark", theme === "dark");
@@ -63,6 +63,14 @@ export function App() {
       window.localStorage.setItem(THEME_STORAGE_KEY, theme);
     } catch {
       // The selected theme still applies for the current session.
+    }
+
+    if ("__TAURI_INTERNALS__" in window) {
+      void import("@tauri-apps/api/window")
+        .then(({ getCurrentWindow }) => getCurrentWindow().setTheme(theme))
+        .catch(() => {
+          // The page theme still applies when the native window theme cannot be set.
+        });
     }
   }, [theme]);
 
@@ -206,7 +214,7 @@ export function App() {
                 />
               </Panel>
 
-              <aside className="grid gap-4 min-[1100px]:sticky min-[1100px]:top-4">
+              <aside className="grid gap-2 min-[1100px]:sticky min-[1100px]:top-2">
                 <PathPanel
                   homeDirectory={state.homeDirectory}
                   manager={currentManager}

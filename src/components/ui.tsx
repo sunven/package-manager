@@ -38,7 +38,7 @@ export function PanelHead({
   action?: ReactNode;
 }) {
   return (
-    <CardHeader className="industrial-panel-head border-b py-4">
+    <CardHeader className="industrial-panel-head border-b py-0">
       <CardDescription className="text-xs font-medium uppercase">{eyebrow}</CardDescription>
       <CardTitle className="truncate">{title}</CardTitle>
       {action ? <CardAction>{action}</CardAction> : null}
@@ -61,7 +61,7 @@ export function StatCard({ label, value }: { label: string; value: string }) {
 
 export function EmptyState({ message }: { message: string }) {
   return (
-    <Empty className="industrial-empty-state min-h-40 px-5 py-8">
+    <Empty className="industrial-empty-state h-auto flex-none gap-0 px-3 py-2">
       <EmptyDescription>{message}</EmptyDescription>
     </Empty>
   );

@@ -1,4 +1,4 @@
-import { Copy, ExternalLink, FolderOpen, RefreshCw, Square, Trash2, X } from "lucide-react";
+import { ArrowClockwise as RefreshCw, ArrowSquareOut as ExternalLink, Copy, FolderOpen, Square, Trash as Trash2, X } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";

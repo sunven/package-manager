@@ -1,4 +1,4 @@
-import { ChevronDown, Copy, ExternalLink, Terminal, Trash2 } from "lucide-react";
+import { ArrowSquareOut as ExternalLink, CaretDown as ChevronDown, Copy, TerminalWindow as Terminal, Trash as Trash2 } from "@phosphor-icons/react";
 import { Button } from "../../components/ui/button";
 import {
   DropdownMenu,

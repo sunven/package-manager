@@ -12,7 +12,7 @@ export function MessageBanner({
   if (!message) return null;
 
   return (
-    <Alert className="mb-4" variant={message.tone === "bad" ? "destructive" : "default"}>
+    <Alert className="mb-2" variant={message.tone === "bad" ? "destructive" : "default"}>
       <AlertTitle>{message.title}</AlertTitle>
       <AlertDescription>{formatHomePathsInText(displayMessage(message.message), homeDirectory)}</AlertDescription>
     </Alert>

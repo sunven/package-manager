@@ -1,4 +1,4 @@
-import { Copy, ExternalLink, Trash2 } from "lucide-react";
+import { ArrowSquareOut as ExternalLink, Copy, Trash as Trash2 } from "@phosphor-icons/react";
 import { environmentKindLabels, homebrewFilterLabels, mavenFilterLabels, packageKindLabels, pipFilterLabels, signalLabels } from "../constants";
 import type {
   HomebrewFilter,
@@ -111,7 +111,7 @@ export function PackageTable(props: PackageTableProps) {
 
   if (manager.status === "Unsupported") {
     return (
-      <div className="px-5 py-8">
+      <div className="px-4 py-4">
         <p className="font-medium text-foreground">Yarn 现代版本不提供全局软件包列表。</p>
         <p className="mt-2 text-sm text-muted-foreground">{formatHomePathsInText(displayMessage(manager.unsupportedReason ?? "当前状态不支持扫描"), homeDirectory)}</p>
       </div>
@@ -337,7 +337,7 @@ function MavenSummary({ health, homeDirectory }: { health: MavenRepositoryHealth
   const scanStatus = health.repositoryScanStatus.partial ? "部分可用" : "就绪";
 
   return (
-    <div className="flex flex-col gap-2 p-4">
+    <div className="flex flex-col gap-2 p-3">
       <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="构件" value={String(health.artifactCount)} />
         <StatCard label="版本" value={String(health.versionCount)} />
@@ -360,7 +360,7 @@ function PipSummary({ health, homeDirectory }: { health: PipEnvironmentHealth | 
   const outdatedValue = health.outdatedStatus === "Ready" ? String(health.outdatedCount) : health.outdatedStatus === "Pending" ? "等待中" : "失败";
 
   return (
-    <div className="flex flex-col gap-2 p-4">
+    <div className="flex flex-col gap-2 p-3">
       <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="已安装" value={String(health.installedCount)} />
         <StatCard label="可更新" value={outdatedValue} />
@@ -392,7 +392,7 @@ function DockerSummary({
   const cleanupCopy = cleanupAvailable ? cleanupCopyFor("Docker") : null;
 
   return (
-    <div className="flex flex-col gap-2 p-4">
+    <div className="flex flex-col gap-2 p-3">
       <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="镜像" value={String(health.imageCount)} />
         <StatCard label="容器" value={String(health.containerCount)} />

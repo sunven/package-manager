@@ -1,3 +1,4 @@
+import { IconContext } from "@phosphor-icons/react";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
@@ -10,6 +11,8 @@ if (!app) {
 
 ReactDOM.createRoot(app).render(
   <React.StrictMode>
-    <App />
+    <IconContext.Provider value={{ color: "currentColor", size: "1em", weight: "bold" }}>
+      <App />
+    </IconContext.Provider>
   </React.StrictMode>,
 );

@@ -1,4 +1,4 @@
-import { Copy, ExternalLink, Info, Trash2 } from "lucide-react";
+import { ArrowSquareOut as ExternalLink, Copy, Info, Trash as Trash2 } from "@phosphor-icons/react";
 import { pathKindLabels } from "../constants";
 import type { HomebrewMaintenance, ManagerSnapshot, PathInfo } from "../types";
 import type { MaintenanceRequest } from "../state";
@@ -44,7 +44,7 @@ export function PathPanel({
 }) {
   if (!manager) {
     return (
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
         <EmptyState message={scanning ? "正在扫描路径..." : "尚未扫描"} />
       </div>
     );
@@ -53,7 +53,7 @@ export function PathPanel({
   const { inlinePaths, stackedPaths } = splitPaths(manager);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       {manager.id === "Homebrew" ? (
         <HomebrewCleanupCard
           cleanupReady={cleanupReady(manager)}
@@ -81,7 +81,7 @@ export function PathPanel({
             />
           ) : null}
           {stackedPaths.length ? (
-            <div className="grid gap-3 sm:grid-cols-2 min-[1100px]:grid-cols-1">
+            <div className="grid gap-2 sm:grid-cols-2 min-[1100px]:grid-cols-1">
               {stackedPaths.map((path) => (
                 <PathCard
                   cleanupAvailable={manager.status !== "Missing"}

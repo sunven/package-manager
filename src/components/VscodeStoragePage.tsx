@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { ArrowClockwise as RefreshCw } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
@@ -70,7 +70,7 @@ export function VscodeStoragePage({
             </Button>
           }
         />
-        <CardContent className="flex flex-col gap-3 p-4">
+        <CardContent className="flex flex-col gap-2 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline">只读</Badge>
             <p className="text-sm text-muted-foreground">VS Code 为工作区保留的数据，仅统计 workspaceStorage。</p>
@@ -97,7 +97,7 @@ export function VscodeStoragePage({
         </Alert>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="工作区存储" value={scan ? `${scan.workspaces.length} 个` : "—"} />
         <StatCard label="存储占用" value={formatFootprint(summary?.bytes ?? null, summary?.complete ?? false)} />
         <StatCard label="路径不存在" value={summary ? `${summary.missingCount} 个` : "—"} />
@@ -119,7 +119,7 @@ export function VscodeStoragePage({
           title="工作区记录"
           action={<Badge variant="secondary">{workspaces.length} / {scan?.workspaces.length ?? 0}</Badge>}
         />
-        <CardContent className="flex flex-col gap-3 p-4">
+        <CardContent className="flex flex-col gap-2 p-3">
           <Input
             aria-label="搜索工作区"
             className="max-w-lg"
@@ -131,7 +131,7 @@ export function VscodeStoragePage({
           <p className="text-xs text-muted-foreground">按占用从大到小排列。路径不存在或未识别的记录也计入汇总。</p>
         </CardContent>
         {scanning && !scan ? (
-          <div className="flex flex-col gap-2 p-4" aria-label="正在加载工作区">
+          <div className="flex flex-col gap-2 p-3" aria-label="正在加载工作区">
             <Skeleton className="h-14 w-full" />
             <Skeleton className="h-14 w-full" />
             <Skeleton className="h-14 w-full" />

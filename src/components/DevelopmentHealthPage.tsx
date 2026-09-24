@@ -1,5 +1,5 @@
-import type { LucideIcon } from "lucide-react";
-import { Activity, ArrowRight, Boxes, HardDrive, ShieldAlert, Wrench } from "lucide-react";
+import type { Icon } from "@phosphor-icons/react";
+import { ArrowRight, HardDrives as HardDrive, Package as Boxes, Pulse as Activity, ShieldWarning as ShieldAlert, Wrench } from "@phosphor-icons/react";
 import type { DevelopmentHealthSummary, HealthRecommendation, HealthTone } from "../developmentHealth";
 import type { ManagerId } from "../types";
 import { formatBytes, formatHomePath, managerLabel, pathLabel } from "../utils/format";
@@ -52,7 +52,7 @@ export function DevelopmentHealthPage({
         />
       </section>
 
-      <section className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+      <section className="grid items-start gap-2 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
         <Panel className="overflow-hidden">
           <PanelHead
             action={<span className="whitespace-nowrap text-xs font-medium text-muted-foreground">{health.recommendations.length} 项</span>}
@@ -99,7 +99,7 @@ export function DevelopmentHealthPage({
         </Panel>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+      <section className="grid items-start gap-2 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <Panel className="overflow-hidden">
           <PanelHead
             action={<span className="whitespace-nowrap text-xs font-medium text-muted-foreground">{signalCount} 个</span>}
@@ -132,7 +132,7 @@ export function DevelopmentHealthPage({
           <div className="flex flex-wrap gap-px bg-border p-px">
             {health.managerStatuses.map((manager) => (
               <button
-                className="telemetry-cell grid min-h-14 min-w-40 flex-[1_1_11rem] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 bg-background px-3 py-2 text-left transition-colors hover:bg-foreground hover:text-background"
+                className="telemetry-cell grid min-h-14 min-w-40 flex-[1_1_11rem] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 bg-background px-3 py-2 text-left transition-colors hover:bg-[var(--surface-hover)]"
                 key={manager.managerId}
                 onClick={() => onOpenManager(manager.managerId)}
                 type="button"
@@ -158,17 +158,17 @@ function MetricTile({
   value,
 }: {
   detail: string;
-  icon: LucideIcon;
+  icon: Icon;
   label: string;
   value: string;
 }) {
   return (
-    <div className="telemetry-metric grid min-h-28 min-w-0 grid-rows-[auto_1fr]">
+    <div className="telemetry-metric grid min-w-0">
       <div className="flex min-w-0 items-center justify-between gap-3">
         <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
-        <Icon className="size-4 shrink-0 text-primary" />
+        <Icon className="size-4 shrink-0 text-muted-foreground" />
       </div>
-      <div className="mt-3 min-w-0 self-end">
+      <div className="mt-1.5 min-w-0 self-end">
         <strong className="block truncate text-2xl font-medium leading-8 tabular-nums">{value}</strong>
         <span className="mt-1 block truncate text-xs text-muted-foreground">{detail}</span>
       </div>
@@ -214,9 +214,9 @@ function RecommendationRow({
 
 function ToneBadge({ tone }: { tone: HealthTone }) {
   const config = {
-    risk: "border-destructive bg-destructive/10 text-destructive",
-    review: "border-muted-foreground bg-muted text-foreground",
-    safe: "border-primary bg-primary/10 text-primary",
+    risk: "tone-risk",
+    review: "tone-review",
+    safe: "tone-safe",
   }[tone];
   const label = tone === "risk" ? "风险" : tone === "review" ? "复核" : "维护";
 
