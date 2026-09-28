@@ -27,7 +27,7 @@ export function ManagerTabs({
     >
       <div className="w-full overflow-x-auto overflow-y-hidden">
         <TabsList
-          className="manager-tab-grid grid h-auto bg-transparent"
+          className="manager-tab-grid grid h-auto w-full items-stretch bg-transparent"
           style={{
             gridTemplateColumns: `repeat(${columnCount}, minmax(92px, 1fr))`,
             minWidth: `${columnCount * 100}px`,
@@ -41,16 +41,18 @@ export function ManagerTabs({
             const version = manager?.version ?? " ";
             return (
               <TabsTrigger
-                className="manager-tab h-auto min-h-0 min-w-0 flex-col items-stretch justify-center gap-0.5 px-2 py-1 text-left transition-colors active:translate-y-px data-active:text-foreground"
+                className="manager-tab h-auto min-h-0 min-w-0 flex-col items-stretch justify-center px-3 py-0 text-left text-xs"
                 key={managerId}
                 value={managerId}
               >
-                <span className="flex min-w-0 items-center justify-between gap-1.5 text-xs leading-4">
-                  <span className="min-w-0 truncate font-medium">{managerName}</span>
-                  <StatusDot status={status} />
-                </span>
-                <span className="min-w-0 truncate text-[10px] leading-3 text-muted-foreground tabular-nums" title={manager?.version ?? undefined}>
-                  {version}
+                <span className="manager-tab-copy">
+                  <span className="flex min-w-0 items-center justify-between gap-1.5 leading-4">
+                    <span className="min-w-0 truncate font-medium">{managerName}</span>
+                    <StatusDot status={status} />
+                  </span>
+                  <span className="min-w-0 truncate font-mono text-[0.68rem] leading-4 text-muted-foreground tabular-nums" title={manager?.version ?? undefined}>
+                    {version}
+                  </span>
                 </span>
               </TabsTrigger>
             );

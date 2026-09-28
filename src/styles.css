@@ -49,7 +49,6 @@
   --dialog-overlay: rgb(20 18 16 / 64%);
   --noise-opacity: 0.04;
   --noise-blend-mode: overlay;
-  --manager-active-muted: #a39e94;
   --terminal-soft: #edf3ec;
   --pastel-red: #fdebec;
   --pastel-red-text: #9f2f2d;
@@ -104,7 +103,6 @@
   --dialog-overlay: rgb(47 52 55 / 36%);
   --noise-opacity: 0.04;
   --noise-blend-mode: multiply;
-  --manager-active-muted: #787774;
   --terminal-soft: #edf3ec;
 }
 
@@ -238,8 +236,6 @@
   [data-slot="card"],
   [data-slot="card-header"],
   [data-slot="card-footer"],
-  [data-slot="tabs-list"],
-  [data-slot="tabs-trigger"],
   [data-slot="toggle"],
   [data-slot="toggle-group"],
   [data-slot="toggle-group-item"],
@@ -851,34 +847,75 @@
 .manager-tab-grid {
   width: 100% !important;
   height: auto !important;
-  gap: 1px !important;
-  padding: 1px !important;
-  background: var(--border) !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
 }
 
 .manager-tab {
   height: auto !important;
   min-height: 0 !important;
-  padding-block: 0.2rem !important;
+  padding-block: 0.4rem 0.55rem !important;
   border: 0 !important;
-  background: var(--surface-strong) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
   box-shadow: none !important;
 }
 
+.manager-tab::after {
+  content: none !important;
+}
+
 .manager-tab:hover {
-  background: var(--muted) !important;
+  background: transparent !important;
+  color: var(--foreground);
 }
 
 .manager-tab[data-state="active"],
 .manager-tab[data-active] {
-  background: var(--foreground) !important;
-  color: var(--background) !important;
-  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--foreground) !important;
 }
 
-.manager-tab[data-state="active"] .text-muted-foreground,
-.manager-tab[data-active] .text-muted-foreground {
-  color: var(--manager-active-muted) !important;
+.manager-tab-copy {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.manager-tab-copy::after {
+  position: absolute;
+  right: 0;
+  bottom: -0.55rem;
+  left: 0;
+  height: 1px;
+  background: var(--foreground);
+  opacity: 0;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  content: "";
+}
+
+.manager-tab:hover .manager-tab-copy::after {
+  opacity: 0.45;
+  transform: scaleX(1);
+}
+
+.manager-tab[data-state="active"] .manager-tab-copy::after,
+.manager-tab[data-active] .manager-tab-copy::after {
+  opacity: 1;
+  transform: scaleX(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="tabs-trigger"],
+  [data-slot="tabs-trigger"]::after,
+  .manager-tab-copy::after {
+    transition: none;
+  }
 }
 
 .status-dot {

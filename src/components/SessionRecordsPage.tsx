@@ -176,13 +176,15 @@ export function SessionRecordsPage({
       ) : null}
 
       <Tabs onValueChange={(value) => setActiveSource(value as SessionSourceId)} value={activeSource}>
-        <TabsList>
+        <TabsList className="w-full">
           {sources.map((source) => {
             const count = sections?.[source.key].count;
             return (
               <TabsTrigger key={source.key} value={source.key}>
                 {source.label}
-                {count === undefined ? "" : ` ${count}`}
+                {count === undefined ? null : (
+                  <span className="font-mono text-[0.68rem] tabular-nums text-muted-foreground">{count}</span>
+                )}
               </TabsTrigger>
             );
           })}
