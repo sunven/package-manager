@@ -15,7 +15,7 @@ import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel } from
 import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, type IndexedPackage } from "../utils/filters";
 import { cleanupCopyFor } from "../cleanupCopy";
 import { cx } from "../utils/classNames";
-import { EmptyState, IconButton, SignalBadge, StatCard, StatusBadge } from "./ui";
+import { EmptyState, IconButton, SignalBadge, SkeletonRows, StatCard, StatusBadge } from "./ui";
 import { PackageActions } from "./PackageActions";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
@@ -49,7 +49,8 @@ interface PackageTableProps {
 export function PackageTable(props: PackageTableProps) {
   const { homeDirectory, manager, scanning } = props;
   if (!manager) {
-    return <EmptyState message={scanning ? "正在扫描软件包..." : "尚未扫描"} />;
+    if (scanning) return <SkeletonRows label="正在扫描软件包" />;
+    return <EmptyState message="尚未扫描" />;
   }
 
   if (manager.id === "Homebrew") {

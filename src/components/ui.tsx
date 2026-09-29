@@ -67,6 +67,16 @@ export function EmptyState({ message }: { message: string }) {
   );
 }
 
+export function SkeletonRows({ label }: { label: string }) {
+  return (
+    <div aria-busy="true" aria-label={label} className="studio-skeleton" role="status">
+      <span />
+      <span />
+      <span />
+    </div>
+  );
+}
+
 export function StatusBadge({ status, className }: { status: DisplayStatus; className?: string }) {
   return (
     <Badge className={cn("status-badge", status === "Ready" && "status-badge--ready", className)} variant={statusVariant(status)}>
