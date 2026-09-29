@@ -124,13 +124,16 @@ export function countedSizePath(kind: PathKind) {
     kind === "BunCache" ||
     kind === "UvTools" ||
     kind === "UvPythonInstallations" ||
-    kind === "UvCache"
+    kind === "UvCache" ||
+    kind === "FvmVersions" ||
+    kind === "FvmGitCache"
   );
 }
 
 export function actionLabel(action: CommandEnvelope) {
   const [firstArg, secondArg] = action.args;
   const command = action.args.join(" ");
+  if (action.program === "fvm" && firstArg === "global") return "复制设为全局默认命令";
   if (command.includes("dependency:get")) return "复制获取依赖命令";
   if (command.includes("dependency:tree")) return "复制依赖树命令";
   if (command.includes("pip show")) return "复制查看命令";

@@ -212,6 +212,7 @@ fn kind_rank(kind: PackageKind) -> u8 {
         PackageKind::BunPackage => 8,
         PackageKind::UvTool => 9,
         PackageKind::UvPython => 10,
+        PackageKind::FlutterVersion => 11,
     }
 }
 
@@ -343,7 +344,8 @@ fn attach_homebrew_paths(
             | PackageKind::DockerVolume
             | PackageKind::BunPackage
             | PackageKind::UvTool
-            | PackageKind::UvPython => {}
+            | PackageKind::UvPython
+            | PackageKind::FlutterVersion => {}
         }
     }
 }
@@ -422,7 +424,8 @@ fn attach_homebrew_actions(packages: &mut [PackageRow]) {
             | PackageKind::DockerVolume
             | PackageKind::BunPackage
             | PackageKind::UvTool
-            | PackageKind::UvPython => {}
+            | PackageKind::UvPython
+            | PackageKind::FlutterVersion => {}
         }
     }
 }

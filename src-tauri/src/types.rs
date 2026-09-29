@@ -64,6 +64,7 @@ pub(crate) enum PackageKind {
     BunPackage,
     UvTool,
     UvPython,
+    FlutterVersion,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -113,6 +114,8 @@ pub(crate) enum PathKind {
     UvTools,
     UvPythonInstallations,
     UvCache,
+    FvmVersions,
+    FvmGitCache,
     Prefix,
     Cellar,
     Caskroom,
@@ -330,6 +333,7 @@ pub(crate) enum ManagerId {
     Docker,
     Bun,
     Uv,
+    Fvm,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]

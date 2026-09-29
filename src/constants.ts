@@ -11,7 +11,7 @@ import type {
   PipFilter,
 } from "./types";
 
-export const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Nvm", "Homebrew", "Maven", "Pip", "Cargo", "Docker", "Bun", "Uv"];
+export const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Nvm", "Homebrew", "Maven", "Pip", "Cargo", "Docker", "Bun", "Uv", "Fvm"];
 
 export const managerLabels: Record<ManagerId, string> = {
   Npm: "npm",
@@ -25,6 +25,7 @@ export const managerLabels: Record<ManagerId, string> = {
   Docker: "Docker",
   Bun: "Bun",
   Uv: "uv",
+  Fvm: "FVM",
 };
 
 export const statusLabels: Record<DisplayStatus, string> = {
@@ -62,6 +63,8 @@ export const pathKindLabels: Record<PathKind, string> = {
   UvTools: "uv 工具目录",
   UvPythonInstallations: "uv Python 目录",
   UvCache: "uv 缓存",
+  FvmVersions: "FVM 版本目录",
+  FvmGitCache: "FVM git 缓存",
   Prefix: "安装前缀",
   Cellar: "软件目录",
   Caskroom: "应用目录",
@@ -82,6 +85,7 @@ export const packageKindLabels: Record<PackageKind, string> = {
   BunPackage: "Bun 全局包",
   UvTool: "uv 工具",
   UvPython: "uv Python",
+  FlutterVersion: "Flutter 版本",
 };
 
 export const signalLabels: Record<PackageSignal, string> = {

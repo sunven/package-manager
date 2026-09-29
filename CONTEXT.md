@@ -6,6 +6,10 @@
 
 ### 管理器与扫描
 
+**Flutter 版本 (Flutter Version)**:
+FVM 管理的单个 Flutter SDK 安装，每个自带其对应 Dart。包列表每行即一个 Flutter 版本。
+_Avoid_: Flutter 包、Dart 版本、FVM 包
+
 **管理器 (Manager)**:
 一个被本工具观察的本机包管理器或运行时版本管理器。
 _Avoid_: 包管理工具、工具链

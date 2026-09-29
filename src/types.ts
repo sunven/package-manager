@@ -1,4 +1,4 @@
-export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Nvm" | "Homebrew" | "Maven" | "Pip" | "Cargo" | "Docker" | "Bun" | "Uv";
+export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Nvm" | "Homebrew" | "Maven" | "Pip" | "Cargo" | "Docker" | "Bun" | "Uv" | "Fvm";
 export type ManagerStatus = "Ready" | "Missing" | "Unsupported" | "Partial" | "Failed";
 export type DiskUsageStatus = "Pending" | "Ready" | "Missing" | "PermissionDenied" | "Error";
 export type PathKind =
@@ -22,6 +22,8 @@ export type PathKind =
   | "UvTools"
   | "UvPythonInstallations"
   | "UvCache"
+  | "FvmVersions"
+  | "FvmGitCache"
   | "Prefix"
   | "Cellar"
   | "Caskroom"
@@ -39,7 +41,8 @@ export type PackageKind =
   | "DockerVolume"
   | "BunPackage"
   | "UvTool"
-  | "UvPython";
+  | "UvPython"
+  | "FlutterVersion";
 export type PackageSignal =
   | "Current"
   | "Outdated"

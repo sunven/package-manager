@@ -1,6 +1,6 @@
 # Package Manager Control Center
 
-一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun 和 uv 的包、缓存/仓库占用情况，清理本地 Rust 项目构建产物，以及查看 Homebrew、Maven、pip、Docker 的维护信号。
+一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv 和 FVM 的包、缓存/仓库占用情况，清理本地 Rust 项目构建产物，以及查看 Homebrew、Maven、pip、Docker 的维护信号。
 
 当前目标是 **observe first, then act**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；其中 8 个管理器支持确认后执行 allowlisted 的缓存清理。
 
@@ -10,7 +10,7 @@
 
 ## 功能
 
-- 扫描 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv。
+- 扫描 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv、FVM。
 - 查看全局安装的包名、版本、包路径。
 - 查看 cache / store / global modules 等路径。
 - 统计 cache / store 总占用空间。
@@ -26,11 +26,13 @@
 - Docker 支持镜像/容器/卷清单、运行中容器数、dangling 与未使用镜像统计、`docker system df` 的 reclaimable 空间、config/buildx/Desktop data 路径。
 - Bun 支持全局包列表、Bun 安装目录与缓存目录。
 - uv 支持已安装工具、uv 管理的 Python 版本、tools/pythons/cache 三个路径。
+- FVM 支持已安装 Flutter 版本清单（含捆绑 Dart 版本）、全局默认标记、未引用标记、版本目录与 git 缓存路径。
 - 复制路径、复制扫描命令、复制包名版本。
 - 复制 Homebrew 维护命令，如 `brew upgrade <formula>`、`brew upgrade --cask <cask>`、`brew cleanup --dry-run`。
 - 复制 Maven/pip 维护命令，如 `mvn dependency:tree -Dincludes=...`、`python3 -m pip show <pkg>`、`python3 -m pip install --upgrade <pkg>`。
 - 复制 Cargo 维护命令，如 `cargo install <crate>`、`cargo uninstall <crate>`。
 - 复制 nvm 切换命令，如 `nvm use <version>`。
+- 复制 FVM 全局默认命令，如 `fvm global <version>`（仅复制，不执行 `fvm use`）。
 - 确认后执行全局包卸载：`npm uninstall -g <pkg>`、`pnpm remove --global <pkg>`。
 - 确认后执行缓存清理，覆盖 8 个管理器：
   - npm：`npm cache clean --force`，然后带护栏删除 `_npx` 目录
@@ -52,7 +54,7 @@
 - 不做后台自动刷新。启动时扫描一次，之后手动刷新。
 - 不做 per-package size，只展示 manager/path 级别总大小。
 - 只有 npm 和 pnpm 支持确认后卸载全局包；其他管理器不做 uninstall。
-- 缓存清理覆盖 8 个管理器。**nvm、Maven、Cargo 的管理器缓存没有清理能力，这是有意的架构决定**，不是遗漏：三者都没有官方子命令能清自己的缓存，做它们就意味着本工具自己 `rm -rf` 推导出来的路径。Rust 项目构建产物是独立功能，不计入 Cargo 管理器缓存或健康汇总。
+- 缓存清理覆盖 8 个管理器。**nvm、Maven、Cargo、FVM 的管理器缓存没有清理能力，这是有意的架构决定**，不是遗漏：nvm、Maven、Cargo 都没有官方子命令能清自己的缓存，做它们就意味着本工具自己 `rm -rf` 推导出来的路径；FVM 的 `fvm remove` 删除的是用户安装的 SDK（按卸载对待，需单独安全论证），`fvm destroy` 则超出本工具的能力范围。Rust 项目构建产物是独立功能，不计入 Cargo 管理器缓存或健康汇总。
 - Rust 构建产物 v1 只认 `Cargo.toml` 同级、非符号链接且根级包含 `CACHEDIR.TAG` 或 `.rustc_info.json` 的 `target`；不解析自定义或共享 `target-dir`。
 - Homebrew 清理有意超出「只清缓存」的范围：`brew cleanup` 会连带删除已安装 formula 的旧版本（当前版本不受影响）。理由和边界见 [ADR-0002](./docs/adr/0002-homebrew-cleanup-exceeds-cache-scope.md)。
 - 不做跨管理器的批量清理，也不在健康页直接执行。
@@ -60,6 +62,7 @@
 - Docker 只清构建缓存和 dangling 镜像；不做 `docker image prune -a`、不做 `docker system prune`、不删容器、不删卷。
 - Yarn 2+ 没有 npm/pnpm/Yarn Classic 等价的全局包列表，因此不伪装出一个全局列表。
 - nvm 是 Node 版本管理器，v1 只展示已安装的 Node runtime 版本，不把每个 Node 版本里的 npm 全局包混入 nvm tab。
+- FVM 是 Flutter 版本管理器，v1 只展示已安装的 Flutter 版本、全局默认标记和版本目录占用，不执行 `fvm install/use/remove`，不提供清理方案，不扫描项目级 `.fvmrc`/`.fvm`。
 - Homebrew leaves 只标记为 review candidate，不等于“安全删除”。
 - Maven v1 是本地仓库健康检查，不是全局 Java 包管理器。
 - pip v1 只扫描当前 Python interpreter，不递归发现全机器所有 virtualenv。
@@ -200,7 +203,7 @@ Docker cleanup plan:
 docker builder prune -f
 docker image prune -f
 
-nvm / Maven / Cargo: no cleanup plan (ADR-0001)
+nvm / Maven / Cargo / FVM: no cleanup plan (ADR-0001)
 
 Rust build artifact cleanup:
 cargo clean --offline --manifest-path <Cargo.toml> --target-dir <target>
@@ -218,6 +221,10 @@ python3 -m pip list --outdated --format=json
 
 cargo --version
 cargo install --list
+
+fvm --version
+fvm api context
+fvm api list
 ```
 
 如果命令缺失、失败、输出无法解析或超时，界面会显示诊断信息。
@@ -225,6 +232,8 @@ cargo install --list
 Homebrew 扫描会禁用 auto-update，避免只读扫描触发 Homebrew 更新。`brew cleanup --dry-run` 不阻塞首屏扫描；Homebrew tab 先展示已安装、outdated、leaves 和路径，再单独加载 cleanup dry-run 预览。
 
 nvm 扫描不运行 `nvm` 命令，因为 nvm 通常是 shell function，不是可直接 spawn 的二进制；后端只读取 `NVM_DIR` 或 `~/.nvm` 下的 `versions/node/v*` 目录，并为每个 Node 版本提供复制 `nvm use <version>` 的命令。
+
+FVM 扫描使用机器可读的 `fvm api list`（版本清单、引用项目、未引用版本）和 `fvm api context`（版本目录、git 缓存、全局链接），不解析人类表格。全局默认通过读取全局链接指向判定，链接缺失仅表示未设置全局默认。项目级 `.fvmrc`/`.fvm` 不在扫描范围内。
 
 Maven 扫描只运行 `mvn --version` 做检测；本地仓库路径优先从 `~/.m2/settings.xml` 和 Maven home 的 `conf/settings.xml` 读取顶层 `localRepository`，不会运行可能下载插件的 `mvn help:evaluate`。扫描本地仓库时有时间、version 目录数、返回行数上限，超限会显示 partial 状态。
 
@@ -262,7 +271,7 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 
 清理的执行边界：
 
-- 管理器缓存只暴露 `run_cache_cleanup(managerId)`。前端能传的只有一个 11 值枚举，**在语法上无法表达"执行哪条命令"**，allowlist 因此是类型系统的性质而不是约定。
+- 管理器缓存只暴露 `run_cache_cleanup(managerId)`。前端能传的只有一个 12 值枚举，**在语法上无法表达"执行哪条命令"**，allowlist 因此是类型系统的性质而不是约定。
 - 构建产物清理只接受后端当前扫描会话中的 candidate ID，不接受前端提供路径或 Cargo 参数；重扫会使旧会话立即失效。
 - 结构化 args，不拼 shell string。
 - 清理专用 300 秒超时，与扫描的 5–15 秒、卸载的 30 秒分开——避免"缓存很大"被误报成"超时"，而超时会 kill 子进程、留下删了一半的状态。
@@ -322,7 +331,7 @@ cd src-tauri && cargo test
 pnpm test
 ```
 
-`cargo test` 当前覆盖（74 项）：
+`cargo test` 当前覆盖（124 项）：
 
 - npm 无 dependencies 时返回空列表
 - npm 正常解析和排序
@@ -345,8 +354,9 @@ pnpm test
 - Cargo install-list 解析、Cargo Home 推导、Cargo Missing/Ready 状态
 - Cargo registry/git 路径计数规则和前端标签
 - nvm 目录推导、Node 版本目录解析、缺失目录状态和前端标签
+- FVM api list/context 解析、全局默认 Current 标记、未引用 Unused 标记、Missing/Partial/Ready 状态
 - 8 个清理方案的精确 `(program, args)`（table-driven）
-- nvm / Maven / Cargo 解析为「无清理方案」，且不执行任何命令
+- nvm / Maven / Cargo / FVM 解析为「无清理方案」，且不执行任何命令
 - uv 参数不含 `--force` / `clean` / `--ci`
 - Docker 参数不含 `-a` / `--all` / `system` / `--volumes` / `container` / `volume`
 - Homebrew 参数恰为 `cleanup`，不含额外 prune 开关
@@ -356,7 +366,7 @@ pnpm test
 - pip 在内部解析解释器、`python3` → `python` 回退、解析失败时 pip 不运行
 - 清理步骤使用 300 秒超时而非扫描超时
 
-`pnpm test` 当前覆盖（73 项），清理相关部分：
+`pnpm test` 当前覆盖（109 项），清理相关部分：
 
 - 清理文案表：无方案管理器缺席、按钮只挂在拥有它的路径卡片上
 - 全清型显示实测占用；prune 型（pnpm / uv）不显示数字并给出说明
@@ -366,6 +376,7 @@ pnpm test
 - 部分完成渲染为 warn 而非失败，弹窗保持打开
 - Yarn 2+ 在 `Unsupported` 下仍有清理入口；管理器 `Missing` 时没有
 - 健康页建议只跳转、不执行，也没有批量入口
+- FVM 只读：版本清单紧凑表格、版本目录与 git 缓存内联路径、文案表缺席且路径卡片无清理入口、存量偏好自动补启用
 
 ## 后续候选
 

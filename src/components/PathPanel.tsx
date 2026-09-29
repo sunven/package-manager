@@ -16,6 +16,7 @@ const nvmInlinePathKinds: PathInfo["kind"][] = ["NvmDir", "NvmNodeVersions"];
 const dockerInlinePathKinds: PathInfo["kind"][] = ["DockerConfig", "DockerBuildx", "DockerDesktopData"];
 const bunInlinePathKinds: PathInfo["kind"][] = ["BunInstall", "BunCache"];
 const uvInlinePathKinds: PathInfo["kind"][] = ["UvTools", "UvPythonInstallations", "UvCache"];
+const fvmInlinePathKinds: PathInfo["kind"][] = ["FvmVersions", "FvmGitCache"];
 const hiddenPathKinds: PathInfo["kind"][] = ["GlobalModules", "GlobalDir"];
 const npmPathNotes: Partial<Record<PathInfo["kind"], string>> = {
   Cache: "npm 缓存已包含 npx 缓存；总占用只统计 npm 缓存，避免重复计算。",
@@ -125,7 +126,9 @@ function splitPaths(manager: ManagerSnapshot | null): { inlinePaths: PathInfo[];
                 ? bunInlinePathKinds
                 : manager.id === "Uv"
                   ? uvInlinePathKinds
-                  : [];
+                  : manager.id === "Fvm"
+                    ? fvmInlinePathKinds
+                    : [];
 
   if (!inlinePathKinds.length) {
     return { inlinePaths: [], stackedPaths: manager.paths.filter((path) => !hiddenPathKinds.includes(path.kind)) };

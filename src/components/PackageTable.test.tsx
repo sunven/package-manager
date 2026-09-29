@@ -5,10 +5,10 @@ import type { ManagerSnapshot } from "../types";
 
 const noop = () => {};
 
-function packageManager(id: "Npm" | "Pnpm" | "Nvm", signals: ManagerSnapshot["packages"][number]["signals"] = []): ManagerSnapshot {
+function packageManager(id: "Npm" | "Pnpm" | "Nvm" | "Fvm", signals: ManagerSnapshot["packages"][number]["signals"] = []): ManagerSnapshot {
   return {
     id,
-    label: id === "Npm" ? "npm" : id === "Pnpm" ? "pnpm" : "nvm",
+    label: id === "Npm" ? "npm" : id === "Pnpm" ? "pnpm" : id === "Nvm" ? "nvm" : "FVM",
     status: "Ready",
     version: "10.0.0",
     packages: [
@@ -93,5 +93,22 @@ describe("PackageTable", () => {
     const html = renderPackageTable(packageManager("Nvm", ["Current"]));
 
     expect(html).toContain("当前版本");
+  });
+
+  it("shows FVM versions with compact table columns", () => {
+    const html = renderPackageTable(packageManager("Fvm"));
+
+    expect(html).toContain("名称");
+    expect(html).toContain("版本");
+    expect(html).toContain("操作");
+    expect(html).not.toContain(">来源</th>");
+    expect(html).not.toContain(">路径</th>");
+  });
+
+  it("shows an FVM-specific empty message instead of the global package one", () => {
+    const html = renderPackageTable({ ...packageManager("Fvm"), packages: [] });
+
+    expect(html).toContain("未找到已安装的 Flutter 版本");
+    expect(html).not.toContain("未找到全局软件包");
   });
 });

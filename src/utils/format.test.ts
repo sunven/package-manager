@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countedSizePath, formatHomePath, formatHomePathsInText, pathLabel } from "./format";
+import { actionLabel, countedSizePath, formatHomePath, formatHomePathsInText, pathLabel } from "./format";
 
 describe("path formatting", () => {
   it("labels npx cache paths", () => {
@@ -29,6 +29,17 @@ describe("path formatting", () => {
     expect(pathLabel("Node versions")).toBe("Node 版本目录");
     expect(countedSizePath("NvmDir")).toBe(true);
     expect(countedSizePath("NvmNodeVersions")).toBe(false);
+  });
+
+  it("counts both FVM paths: versions and git cache are siblings, not nested", () => {
+    expect(countedSizePath("FvmVersions")).toBe(true);
+    expect(countedSizePath("FvmGitCache")).toBe(true);
+  });
+
+  it("labels the FVM global-default copy action", () => {
+    expect(
+      actionLabel({ program: "fvm", args: ["global", "3.47.5"], preview: "fvm global 3.47.5", timeoutMs: 0 }),
+    ).toBe("复制设为全局默认命令");
   });
 
   it("formats displayed paths under the home directory with tilde", () => {

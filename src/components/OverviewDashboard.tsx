@@ -418,6 +418,7 @@ const markGlyph: Record<ManagerId, string> = {
   Docker: "d",
   Bun: "bu",
   Uv: "uv",
+  Fvm: "fv",
 };
 
 function matchingPackages(manager: ManagerSnapshot, query: string) {
@@ -437,6 +438,7 @@ function packageDetail(pkg: PackageRow) {
 function emptyPackageMessage(manager: ManagerSnapshot) {
   if (manager.status === "Unsupported") return manager.unsupportedReason ?? "这个管理器不提供全局包清单";
   if (manager.id === "Cargo") return "未找到通过 cargo install 安装的二进制 crate";
+  if (manager.id === "Fvm") return "未找到已安装的 Flutter 版本";
   return "未找到全局软件包";
 }
 

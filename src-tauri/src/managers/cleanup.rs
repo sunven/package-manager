@@ -53,9 +53,11 @@ impl GuardedTarget {
 /// This table is the entire allowlist. `run_cache_cleanup` accepts only a
 /// `ManagerId`, so nothing outside this table is reachable from the frontend.
 ///
-/// `Nvm`, `Maven`, and `Cargo` are absent on purpose: none of them ships a
-/// command that cleans its own cache, and cleaning them would mean deleting
-/// directories ourselves. See ADR-0001 before adding them.
+/// `Nvm`, `Maven`, `Cargo`, and `Fvm` are absent on purpose: the first three
+/// ship no command that cleans their own cache, and cleaning them would mean
+/// deleting directories ourselves. `Fvm` is absent because removing an SDK
+/// version is an uninstall, not cache cleanup. See ADR-0001 before adding
+/// any of them.
 pub(crate) fn cleanup_plan(manager: ManagerId) -> &'static [CleanupStep] {
     match manager {
         // `npm cache clean --force` does not touch `_npx`, hence the second step.
@@ -109,7 +111,7 @@ pub(crate) fn cleanup_plan(manager: ManagerId) -> &'static [CleanupStep] {
         ManagerId::Pip => &[CleanupStep::PipCommand {
             args: &["cache", "purge"],
         }],
-        ManagerId::Nvm | ManagerId::Maven | ManagerId::Cargo => &[],
+        ManagerId::Nvm | ManagerId::Maven | ManagerId::Cargo | ManagerId::Fvm => &[],
     }
 }
 
@@ -535,8 +537,13 @@ mod tests {
     }
 
     #[test]
-    fn nvm_maven_and_cargo_have_no_cleanup_plan() {
-        for manager in [ManagerId::Nvm, ManagerId::Maven, ManagerId::Cargo] {
+    fn nvm_maven_cargo_and_fvm_have_no_cleanup_plan() {
+        for manager in [
+            ManagerId::Nvm,
+            ManagerId::Maven,
+            ManagerId::Cargo,
+            ManagerId::Fvm,
+        ] {
             assert!(
                 cleanup_plan(manager).is_empty(),
                 "{manager:?} must have no cleanup plan — see ADR-0001"

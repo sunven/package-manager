@@ -124,12 +124,12 @@ export function PackageTable(props: PackageTableProps) {
     return (
       <>
         <GlobalModulesBar homeDirectory={homeDirectory} onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
-        <EmptyState message={manager.id === "Cargo" ? "未找到通过 cargo install 安装的二进制 crate" : "未找到全局软件包"} />
+        <EmptyState message={manager.id === "Cargo" ? "未找到通过 cargo install 安装的二进制 crate" : manager.id === "Fvm" ? "未找到已安装的 Flutter 版本" : "未找到全局软件包"} />
       </>
     );
   }
 
-  const usesCompactTable = manager.id === "Npm" || manager.id === "Pnpm" || manager.id === "Nvm";
+  const usesCompactTable = manager.id === "Npm" || manager.id === "Pnpm" || manager.id === "Nvm" || manager.id === "Fvm";
   const showSourceColumn = !usesCompactTable;
   const showPathColumn = !usesCompactTable;
   const heading = usesCompactTable ? ["名称", "版本", "操作"] : ["名称", "版本", "来源", "路径", "操作"];

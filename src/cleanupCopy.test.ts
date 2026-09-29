@@ -96,9 +96,9 @@ function snapshotWithPath(
 
 describe("cleanup copy table", () => {
   it("offers no cleanup for managers that have no plan", () => {
-    // nvm, Maven and Cargo ship no command that cleans their own cache, so the
-    // app must not offer to clean them at all. See ADR-0001.
-    for (const managerId of ["Nvm", "Maven", "Cargo"] as const) {
+    // nvm, Maven, Cargo and FVM ship no command that cleans their own cache,
+    // so the app must not offer to clean them at all. See ADR-0001.
+    for (const managerId of ["Nvm", "Maven", "Cargo", "Fvm"] as const) {
       expect(cleanupCopyFor(managerId)).toBeNull();
       expect(hasCleanupPlan(managerId)).toBe(false);
     }

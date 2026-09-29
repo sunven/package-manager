@@ -166,4 +166,16 @@ describe("PathPanel", () => {
     expect(html).toContain("nvm 目录");
     expect(html).not.toContain("清理");
   });
+
+  it("renders FVM versions and git cache inline with no cleanup affordance", () => {
+    // FVM v1 is read-only observation with no cleanup plan. Both paths render
+    // as inline cards and must stay button-free.
+    const versions = render(manager("Fvm", "FvmVersions", "FVM versions"));
+    const gitCache = render(manager("Fvm", "FvmGitCache", "FVM git cache"));
+
+    expect(versions).toContain("FVM versions");
+    expect(versions).not.toContain("清理");
+    expect(gitCache).toContain("FVM git cache");
+    expect(gitCache).not.toContain("清理");
+  });
 });

@@ -67,6 +67,7 @@ const initialCounters: NumberByManager = {
   Docker: 0,
   Bun: 0,
   Uv: 0,
+  Fvm: 0,
 };
 
 export interface PackageManagerActions {

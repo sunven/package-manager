@@ -2,6 +2,7 @@ mod bun;
 mod cargo;
 mod cleanup;
 mod docker;
+mod fvm;
 mod homebrew;
 mod maven;
 mod node;
@@ -42,5 +43,6 @@ fn scan_single_manager(manager: ManagerId) -> ManagerSnapshot {
         ManagerId::Docker => docker::scan_docker(),
         ManagerId::Bun => bun::scan_bun(),
         ManagerId::Uv => uv::scan_uv(),
+        ManagerId::Fvm => fvm::scan_fvm(),
     }
 }
