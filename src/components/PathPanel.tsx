@@ -44,9 +44,9 @@ export function PathPanel({
 }) {
   if (!manager) {
     return (
-      <div className="flex flex-col gap-2">
+      <section className="studio-card studio-side-card">
         <EmptyState message={scanning ? "正在扫描路径..." : "尚未扫描"} />
-      </div>
+      </section>
     );
   }
 

@@ -65,6 +65,15 @@ async fn scan_session_records() -> Result<session_records::SessionRecordScan, St
 }
 
 #[tauri::command]
+async fn scan_session_source(
+    source: session_records::SessionSourceKind,
+) -> Result<session_records::SessionSourceScan, String> {
+    tauri::async_runtime::spawn_blocking(move || session_records::scan_source_default(source))
+        .await
+        .map_err(|error| format!("会话记录读取失败：{error}"))?
+}
+
+#[tauri::command]
 async fn scan_vscode_storage() -> Result<vscode_storage::VscodeStorageScan, String> {
     tauri::async_runtime::spawn_blocking(vscode_storage::scan_default)
         .await
@@ -284,6 +293,7 @@ pub fn run() {
             remove_session_records,
             remove_session_records_older_than,
             scan_session_records,
+            scan_session_source,
             scan_vscode_storage,
             get_project_cleanup_settings,
             choose_project_cleanup_root,

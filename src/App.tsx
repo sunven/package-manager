@@ -7,7 +7,7 @@ import { useVscodeStorage } from "./hooks/useVscodeStorage";
 import { SessionRecordsPage } from "./components/SessionRecordsPage";
 import { VscodeStoragePage } from "./components/VscodeStoragePage";
 import { ProjectCleanupPage } from "./components/ProjectCleanupPage";
-import { DevelopmentHealthPage } from "./components/DevelopmentHealthPage";
+import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ManagerTabs } from "./components/ManagerTabs";
 import { cleanupPreviewDetails, cleanupReclaimable } from "./cleanupCopy";
 import { MaintenanceConfirmationBanner } from "./components/MaintenanceConfirmationBanner";
@@ -43,6 +43,7 @@ export function App() {
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [query, setQuery] = useState("");
   const { actions, currentManager, scanningManagers, selectedManager } = state;
   const scanning = scanningManagers.has(selectedManager);
   const developmentHealth = useMemo(
@@ -52,7 +53,7 @@ export function App() {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    const themeColor = theme === "dark" ? "#1c1b19" : "#f7f6f3";
+    const themeColor = theme === "dark" ? "#101722" : "#e7eef8";
 
     root.dataset.theme = theme;
     root.classList.toggle("dark", theme === "dark");
@@ -87,7 +88,8 @@ export function App() {
   return (
     <Shell
       activeView={activeView}
-      onRefresh={() => void actions.refresh()}
+      managerCount={state.enabledManagers.length}
+      managerSnapshots={state.managerSnapshots}
       onShowProjectCleanup={() => {
         actions.closePackageActions();
         setActiveView("cleanup");
@@ -110,10 +112,7 @@ export function App() {
         setActiveView("settings");
       }}
       onToggleTheme={() => setTheme((currentTheme) => currentTheme === "dark" ? "light" : "dark")}
-      scanMeta={state.scanMeta}
       scanning={scanning}
-      selectedManager={selectedManager}
-      totalBytes={state.overview.totalBytes}
       theme={theme}
     >
       <MessageBanner homeDirectory={state.homeDirectory} message={state.uiMessage} />
@@ -139,12 +138,12 @@ export function App() {
           <SessionRecordsPage
             error={sessionRecords.error}
             homeDirectory={state.homeDirectory}
-            onRefresh={() => void sessionRecords.refresh()}
+            onRefresh={(source) => void sessionRecords.refresh(source)}
             onRemove={sessionRecords.removeOne}
             onRemoveOlder={sessionRecords.removeOlder}
             onRemoveSelected={sessionRecords.removeSelected}
             scan={sessionRecords.scan}
-            scanning={sessionRecords.scanning}
+            scanningSources={sessionRecords.scanningSources}
           />
         ) : activeView === "vscode" ? (
           <VscodeStoragePage
@@ -168,14 +167,35 @@ export function App() {
             scanningManagers={state.scanningManagers}
           />
         ) : activeView === "health" ? (
-          <DevelopmentHealthPage
+          <OverviewDashboard
+            enabledManagers={state.enabledManagers}
             health={developmentHealth}
             homeDirectory={state.homeDirectory}
+            managerSnapshots={state.managerSnapshots}
+            menuOpenIndex={state.openPackageActionMenuIndex}
+            onCopyCommand={(payload) => void actions.copyCommand(payload)}
+            onCopyPackage={(index) => void actions.copyPackage(index)}
+            onCopyPackageAction={(index, actionIndex) => void actions.copyPackageAction(index, actionIndex)}
+            onCopyPath={(path) => void actions.copyPath(path)}
             onOpenManager={(managerId) => {
               actions.closePackageActions();
               actions.selectManager(managerId);
               setActiveView("managers");
             }}
+            onOpenPackage={(index) => void actions.openPackage(index)}
+            onOpenPath={(path) => void actions.openPath(path)}
+            onQueryChange={setQuery}
+            onRefresh={() => void actions.refresh()}
+            onRequestPackageUninstall={actions.requestPackageUninstall}
+            onSelectManager={actions.selectManager}
+            onSelectPackage={actions.selectPackage}
+            onShowManagers={() => setActiveView("managers")}
+            onToggleActions={actions.togglePackageActions}
+            pendingMaintenance={state.maintenancePending}
+            query={query}
+            scanningManagers={state.scanningManagers}
+            selectedManager={selectedManager}
+            selectedPackageIndex={state.selectedPackageIndex}
           />
         ) : (
           <>

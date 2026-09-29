@@ -55,6 +55,16 @@ pub(crate) fn scan_default() -> Result<SessionRecordScan, String> {
     })
 }
 
+pub(crate) fn scan_source_default(source: SessionSourceKind) -> Result<SessionSourceScan, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("会话记录目前只支持 macOS".to_string());
+    }
+    Ok(match source {
+        SessionSourceKind::Codex => scan_source(codex_sessions_dir(), RecordFormat::Codex),
+        SessionSourceKind::Claude => scan_source(claude_projects_dir(), RecordFormat::Claude),
+    })
+}
+
 fn scan_source(directory: Result<PathBuf, String>, format: RecordFormat) -> SessionSourceScan {
     let directory = match directory {
         Ok(directory) => directory,

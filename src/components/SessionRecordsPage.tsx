@@ -1,4 +1,4 @@
-import { ArrowClockwise as RefreshCw } from "@phosphor-icons/react";
+import { ArrowClockwise as RefreshCw, Trash } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import {
   AlertDialog,
@@ -26,6 +26,7 @@ import {
   selectedRemovalConfirmText,
   selectedRemovalRequest,
   sessionSections,
+  type SessionSort,
   singleRemovalConfirmText,
   type SessionRecord,
   type SessionRecordScan,
@@ -34,7 +35,7 @@ import {
   type SessionSourceId,
   type SessionSourceScan,
 } from "../sessionRecords";
-import { EmptyState, Panel, PanelHead, StatCard } from "./ui";
+import { EmptyState, Panel, StatCard } from "./ui";
 
 const sources = [
   { key: "codex" as const, label: "Codex", empty: "没有 Codex 会话记录", fallback: "~/.codex/sessions" },
@@ -50,7 +51,7 @@ const emptySelection: Record<SessionSourceId, string[]> = { codex: [], claude: [
 
 export function SessionRecordsPage({
   scan,
-  scanning,
+  scanningSources,
   error,
   onRefresh,
   onRemove,
@@ -61,9 +62,9 @@ export function SessionRecordsPage({
   homeDirectory,
 }: {
   scan: SessionRecordScan | null;
-  scanning: boolean;
+  scanningSources: Record<SessionSourceId, boolean>;
   error: string | null;
-  onRefresh: () => void;
+  onRefresh: (source: SessionSourceId) => void;
   onRemove: (source: SessionSourceId, id: string) => Promise<SessionRemovalResult>;
   onRemoveOlder: (source: SessionSourceId, days: 7 | 30) => Promise<SessionRemovalResult>;
   onRemoveSelected: (source: SessionSourceId, ids: string[]) => Promise<SessionRemovalResult>;
@@ -71,7 +72,8 @@ export function SessionRecordsPage({
   initialSource?: SessionSourceId;
   homeDirectory: string | null;
 }) {
-  const sections = useMemo(() => (scan ? sessionSections(scan) : null), [scan]);
+  const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time" });
+  const sections = useMemo(() => (scan ? sessionSections(scan, sorts) : null), [scan, sorts]);
   const [activeSource, setActiveSource] = useState<SessionSourceId>(initialSource);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [pending, setPending] = useState<PendingRemoval | null>(null);
@@ -80,25 +82,7 @@ export function SessionRecordsPage({
   const [selectedIds, setSelectedIds] = useState<Record<SessionSourceId, string[]>>(emptySelection);
 
   return (
-    <main className="view-grid" aria-busy={scanning}>
-      <Panel>
-        <PanelHead
-          eyebrow="SESSION RECORDS"
-          title="会话记录"
-          action={
-            <Button disabled={scanning} onClick={onRefresh} size="sm" type="button" variant="outline">
-              <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
-              {scanning ? "读取中" : "刷新"}
-            </Button>
-          }
-        />
-        <CardContent className="flex flex-col gap-2 p-3">
-          <p className="text-sm text-muted-foreground">
-            Codex 和 Claude 留在本机的对话文件。这些占用是记录离开原目录后的体积，物理空间要等废纸篓清空才释放。
-          </p>
-        </CardContent>
-      </Panel>
-
+    <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude}>
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>会话记录读取失败</AlertTitle>
@@ -241,9 +225,13 @@ export function SessionRecordsPage({
                     return { ...current, [source.key]: [...next] };
                   });
                 }}
+                onRefresh={() => onRefresh(source.key)}
+                onSortChange={(next) => setSorts((current) => ({ ...current, [source.key]: next }))}
                 onToggle={(groupKey) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: !current[`${source.key}:${groupKey}`] }))}
                 removing={removing}
+                scanning={scanningSources[source.key]}
                 selectedIds={selectedIds[source.key]}
+                sort={sorts[source.key]}
                 source={data ?? null}
                 sourceKey={source.key}
                 view={view ?? null}
@@ -267,15 +255,19 @@ function SourceSection({
   sourceKey,
   onToggle,
   nowMs,
+  onSortChange,
   onClearSelection,
   onRequestAgeRemoval,
   onRequestRemoval,
+  onRefresh,
   onRequestSelectedRemoval,
   onSelectAll,
   onSetGroupSelected,
   onSetRecordSelected,
   removing,
+  scanning,
   selectedIds,
+  sort,
 }: {
   source: SessionSourceScan | null;
   view: SessionSectionView | null;
@@ -287,15 +279,19 @@ function SourceSection({
   sourceKey: string;
   onToggle: (groupKey: string) => void;
   nowMs: number;
+  onSortChange: (sort: SessionSort) => void;
   onClearSelection: () => void;
   onRequestAgeRemoval: (days: 7 | 30, count: number) => void;
   onRequestRemoval: (id: string, title: string) => void;
+  onRefresh: () => void;
   onRequestSelectedRemoval: (ids: string[], count: number) => void;
   onSelectAll: () => void;
   onSetGroupSelected: (records: SessionRecord[], selected: boolean) => void;
   onSetRecordSelected: (id: string, selected: boolean) => void;
   removing: boolean;
+  scanning: boolean;
   selectedIds: readonly string[];
+  sort: SessionSort;
 }) {
   const records = source?.records ?? [];
   const removable = removableSessionRecords(records);
@@ -304,35 +300,43 @@ function SourceSection({
   const selectedSet = new Set(selected?.ids ?? []);
   return (
     <Panel className="overflow-hidden">
-      <PanelHead
-        eyebrow={label.toUpperCase()}
-        title={label}
-        action={
-          <span className="flex gap-2">
-            {([7, 30] as const).map((days) => {
-              const request = bulkRemovalRequest(source?.records ?? [], days, nowMs);
-              return (
-                <Button
-                  disabled={removing || request === null}
-                  key={days}
-                  onClick={() => {
-                    if (request) onRequestAgeRemoval(request.days, request.count);
-                  }}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  {`移除 ${days} 天前`}
-                </Button>
-              );
-            })}
-          </span>
-        }
-      />
-      <CardContent className="flex flex-col gap-2 p-3">
-        <p className="break-all text-xs text-muted-foreground">
+      <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
+        <p className="min-w-0 break-all text-xs text-muted-foreground">
           {source ? formatHomePath(source.directory, homeDirectory) : fallbackPath}
         </p>
+        <span className="flex shrink-0 gap-2">
+          <span aria-label="排序" className="flex gap-1" role="group">
+            <Button aria-pressed={sort === "time"} onClick={() => onSortChange("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>
+              按时间
+            </Button>
+            <Button aria-pressed={sort === "size"} onClick={() => onSortChange("size")} size="sm" type="button" variant={sort === "size" ? "secondary" : "outline"}>
+              按大小
+            </Button>
+          </span>
+          <Button disabled={scanning || removing} onClick={onRefresh} size="sm" type="button" variant="outline">
+            <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
+            {scanning ? "读取中" : "刷新"}
+          </Button>
+          {([7, 30] as const).map((days) => {
+            const request = bulkRemovalRequest(source?.records ?? [], days, nowMs);
+            return (
+              <Button
+                disabled={removing || request === null}
+                key={days}
+                onClick={() => {
+                  if (request) onRequestAgeRemoval(request.days, request.count);
+                }}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {`移除 ${days} 天前`}
+              </Button>
+            );
+          })}
+        </span>
+      </div>
+      <CardContent className="flex flex-col gap-2 p-3">
         <div className="grid gap-2 sm:grid-cols-2">
           <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
           <StatCard label="离开原目录的体积" value={view ? formatBytes(view.bytes) : "—"} />
@@ -423,22 +427,24 @@ function SourceSection({
                               : "没有工作目录"}
                           </span>
                         </span>
-                        <span className="text-sm text-muted-foreground">
-                          {record.lastActivityMs === null ? "没有最后活动时间" : formatSessionActivity(record.lastActivityMs)}
+                        <span className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                          <span>{record.lastActivityMs === null ? "没有最后活动时间" : formatSessionActivity(record.lastActivityMs)}</span>
+                          <span className="font-medium tabular-nums text-foreground">{formatBytes(record.bytes)}</span>
                         </span>
-                        <span className="flex items-center justify-end gap-2">
+                        <span className="flex items-center justify-end">
                           {record.inUse ? <Badge variant="outline">使用中，暂不移除</Badge> : (
                             <Button
+                              aria-label="移入废纸篓"
                               disabled={removing}
                               onClick={() => onRequestRemoval(record.id, record.title)}
-                              size="sm"
+                              size="icon-sm"
+                              title="移入废纸篓"
                               type="button"
                               variant="outline"
                             >
-                              移入废纸篓
+                              <Trash aria-hidden="true" />
                             </Button>
                           )}
-                          <span className="text-sm font-medium tabular-nums">{formatBytes(record.bytes)}</span>
                         </span>
                       </li>
                     ))}

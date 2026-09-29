@@ -93,17 +93,23 @@ export type SessionRecordGroup = {
 
 const NO_LAST_ACTIVITY_KEY = "none";
 
-export function sessionSections(scan: SessionRecordScan) {
+export type SessionSort = "time" | "size";
+
+export function sessionSections(
+  scan: SessionRecordScan,
+  sort: SessionSort | Partial<Record<SessionSourceId, SessionSort>> = "time",
+) {
+  const mode = (source: SessionSourceId) => (typeof sort === "string" ? sort : sort[source] ?? "time");
   return {
-    codex: sectionView(scan.codex),
-    claude: sectionView(scan.claude),
+    codex: sectionView(scan.codex, mode("codex")),
+    claude: sectionView(scan.claude, mode("claude")),
   };
 }
 
-function sectionView(source: SessionSourceScan): SessionSectionView {
+function sectionView(source: SessionSourceScan, sort: SessionSort): SessionSectionView {
   const bytes = source.records.reduce((sum, record) => sum + record.bytes, 0);
   return {
-    groups: groupSessionRecords(source.records),
+    groups: groupSessionRecords(source.records, sort),
     count: source.records.length,
     bytes,
     empty: source.records.length === 0,
@@ -111,7 +117,8 @@ function sectionView(source: SessionSourceScan): SessionSectionView {
   };
 }
 
-export function groupSessionRecords(records: SessionRecord[]): SessionRecordGroup[] {
+export function groupSessionRecords(records: SessionRecord[], sort: SessionSort = "time"): SessionRecordGroup[] {
+  if (sort === "size") return [sizeGroup(records)];
   const groups = new Map<string, SessionRecordGroup>();
   for (const record of records) {
     const key = record.lastActivityMs === null ? NO_LAST_ACTIVITY_KEY : monthKey(record.lastActivityMs);
@@ -142,6 +149,20 @@ export function groupSessionRecords(records: SessionRecord[]): SessionRecordGrou
     if (right.key === NO_LAST_ACTIVITY_KEY) return -1;
     return right.key.localeCompare(left.key);
   });
+}
+
+function sizeGroup(records: SessionRecord[]): SessionRecordGroup {
+  const sorted = [...records].sort((left, right) => {
+    if (left.bytes !== right.bytes) return right.bytes - left.bytes;
+    return left.title.localeCompare(right.title);
+  });
+  return {
+    key: "size",
+    label: "按大小",
+    count: sorted.length,
+    bytes: sorted.reduce((sum, record) => sum + record.bytes, 0),
+    records: sorted,
+  };
 }
 
 export function formatSessionActivity(lastActivityMs: number) {

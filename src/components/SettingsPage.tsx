@@ -28,7 +28,7 @@ export function SettingsPage({
           eyebrow="设置"
           title="包管理工具"
         />
-        <div className="flex flex-wrap gap-px bg-border">
+        <div className="grid grid-cols-1 gap-px bg-border min-[720px]:grid-cols-2 min-[1100px]:grid-cols-3">
           {managerOrder.map((managerId, index) => {
             const enabled = enabledSet.has(managerId);
             const locked = enabled && enabledManagers.length === 1;
@@ -38,7 +38,7 @@ export function SettingsPage({
 
             return (
               <label
-                className={`settings-row grid min-h-10 min-w-0 flex-[1_1_20rem] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 bg-background px-4 py-1.5 transition-colors ${
+                className={`settings-row grid min-h-10 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 bg-background px-4 py-1.5 transition-colors ${
                   locked ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-muted/60"
                 }`}
                 data-index={String(index + 1).padStart(2, "0")}

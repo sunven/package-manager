@@ -52,6 +52,37 @@ describe("session record grouping", () => {
     });
   });
 
+  it("sorts every record by size and keeps equal sizes in title order", () => {
+    const groups = groupSessionRecords([
+      record({ id: "small", title: "小", lastActivityMs: localMs(2026, 9, 2), bytes: 10 }),
+      record({ id: "zeta", title: "后", lastActivityMs: null, bytes: 40 }),
+      record({ id: "alpha", title: "前", lastActivityMs: localMs(2026, 5, 1), bytes: 40 }),
+      record({ id: "busy", title: "使用中", lastActivityMs: localMs(2026, 8, 1), bytes: 5, inUse: true }),
+    ], "size");
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ key: "size", label: "按大小", count: 4, bytes: 95 });
+    expect(groups[0].records.map((item) => item.id)).toEqual(["alpha", "zeta", "small", "busy"]);
+  });
+
+  it("sorts each source on its own", () => {
+    const scan = {
+      codex: source([
+        record({ id: "later-small", lastActivityMs: localMs(2026, 9, 3), bytes: 1 }),
+        record({ id: "earlier-large", lastActivityMs: localMs(2026, 9, 1), bytes: 9 }),
+      ]),
+      claude: source([
+        record({ id: "later-small", lastActivityMs: localMs(2026, 8, 3), bytes: 1 }),
+        record({ id: "earlier-large", lastActivityMs: localMs(2026, 8, 1), bytes: 9 }),
+      ]),
+    };
+
+    const sections = sessionSections(scan, { codex: "size", claude: "time" });
+
+    expect(sections.codex.groups[0].records.map((item) => item.id)).toEqual(["earlier-large", "later-small"]);
+    expect(sections.claude.groups[0].records.map((item) => item.id)).toEqual(["later-small", "earlier-large"]);
+  });
+
   it("keeps one source when the other is empty or failed", () => {
     const codex = source([record({ id: "codex", lastActivityMs: localMs(2026, 9, 2), bytes: 40 })]);
     const failed: SessionSourceScan = {

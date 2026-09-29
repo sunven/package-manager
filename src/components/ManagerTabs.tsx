@@ -2,6 +2,7 @@ import { statusLabels } from "../constants";
 import type { DisplayStatus } from "../types";
 import type { ManagerId, ManagerSnapshot } from "../types";
 import { managerLabel } from "../utils/format";
+import { ManagerMark } from "./OverviewDashboard";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 
 export function ManagerTabs({
@@ -17,43 +18,28 @@ export function ManagerTabs({
   scanningManagers: Set<ManagerId>;
   selectedManager: ManagerId;
 }) {
-  const columnCount = Math.max(managerIds.length, 1);
-
   return (
     <Tabs
       onValueChange={(value) => onSelect(value as ManagerId)}
       orientation="horizontal"
       value={selectedManager}
     >
-      <div className="w-full overflow-x-auto overflow-y-hidden">
-        <TabsList
-          className="manager-tab-grid grid h-auto w-full items-stretch bg-transparent"
-          style={{
-            gridTemplateColumns: `repeat(${columnCount}, minmax(92px, 1fr))`,
-            minWidth: `${columnCount * 100}px`,
-          }}
-        >
+      <div className="studio-manager-scroll">
+        <TabsList className="studio-manager-tabs">
           {managerIds.map((managerId) => {
             const manager = managerSnapshots[managerId];
             const managerName = manager?.label ?? managerLabel(managerId);
             const scanning = scanningManagers.has(managerId);
             const status = scanning ? "Scanning" : manager?.status ?? "Not scanned";
-            const version = manager?.version ?? " ";
+            const version = manager?.version?.trim() || statusLabels[status];
             return (
-              <TabsTrigger
-                className="manager-tab h-auto min-h-0 min-w-0 flex-col items-stretch justify-center px-3 py-0 text-left text-xs"
-                key={managerId}
-                value={managerId}
-              >
-                <span className="manager-tab-copy">
-                  <span className="flex min-w-0 items-center justify-between gap-1.5 leading-4">
-                    <span className="min-w-0 truncate font-medium">{managerName}</span>
-                    <StatusDot status={status} />
-                  </span>
-                  <span className="min-w-0 truncate font-mono text-[0.68rem] leading-4 text-muted-foreground tabular-nums" title={manager?.version ?? undefined}>
-                    {version}
-                  </span>
+              <TabsTrigger className="studio-manager-tab" key={managerId} value={managerId}>
+                <ManagerMark id={managerId} />
+                <span className="studio-manager-tab-copy">
+                  <strong>{managerName}</strong>
+                  <small>{version}</small>
                 </span>
+                <StatusDot status={status} />
               </TabsTrigger>
             );
           })}
@@ -75,7 +61,7 @@ function StatusDot({ status }: { status: DisplayStatus }) {
 
   return (
     <span
-      aria-label={statusLabels[status]}
+      aria-hidden="true"
       className={`status-dot size-2.5 shrink-0 ${className}`}
       title={statusLabels[status]}
     />

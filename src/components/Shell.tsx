@@ -1,23 +1,30 @@
-import { ArrowClockwise as RefreshCw, Chats as MessagesSquare, Code as Code2, Gear as Settings, List, Moon, Pulse as Activity, Sun, Trash as Trash2 } from "@phosphor-icons/react";
-import { Button } from "../../components/ui/button";
-import { managerLabel } from "../utils/format";
-import type { ManagerId } from "../types";
+import {
+  Chats as MessagesSquare,
+  Code as Code2,
+  Cube,
+  Gear as Settings,
+  House,
+  Moon,
+  Package,
+  Sun,
+  Trash as Trash2,
+} from "@phosphor-icons/react";
+import type { ManagerId, ManagerSnapshot } from "../types";
 
 type ViewId = "health" | "managers" | "cleanup" | "vscode" | "sessions" | "settings";
 
-const viewMeta: Record<ViewId, { code: string; label: string }> = {
-  health: { code: "体检", label: "开发体检" },
-  managers: { code: "管理器", label: "包管理器" },
-  cleanup: { code: "项目派生数据", label: "项目清理" },
-  vscode: { code: "工作区存储", label: "VS Code 占用" },
-  sessions: { code: "会话记录", label: "会话记录" },
-  settings: { code: "设置", label: "系统设置" },
-};
+const views: { id: ViewId; label: string; icon: typeof House }[] = [
+  { id: "health", label: "总览", icon: House },
+  { id: "managers", label: "包管理器", icon: Package },
+  { id: "cleanup", label: "项目清理", icon: Trash2 },
+  { id: "vscode", label: "VS Code 占用", icon: Code2 },
+  { id: "sessions", label: "会话记录", icon: MessagesSquare },
+  { id: "settings", label: "设置", icon: Settings },
+];
 
 export function Shell({
   children,
   activeView,
-  onRefresh,
   onShowHealth,
   onShowProjectCleanup,
   onShowVscodeStorage,
@@ -25,15 +32,13 @@ export function Shell({
   onShowManagers,
   onShowSettings,
   onToggleTheme,
-  scanMeta,
   scanning,
-  selectedManager,
-  totalBytes,
   theme,
+  managerCount,
+  managerSnapshots,
 }: {
   children: React.ReactNode;
   activeView: ViewId;
-  onRefresh: () => void;
   onShowHealth: () => void;
   onShowProjectCleanup: () => void;
   onShowVscodeStorage: () => void;
@@ -41,154 +46,152 @@ export function Shell({
   onShowManagers: () => void;
   onShowSettings: () => void;
   onToggleTheme: () => void;
-  scanMeta: string;
   scanning: boolean;
-  selectedManager: ManagerId;
-  totalBytes: string;
   theme: "dark" | "light";
+  managerCount: number;
+  managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
 }) {
-  const activeMeta = viewMeta[activeView];
-  const themeToggleLabel = theme === "dark" ? "切换到浅色主题" : "切换到深色主题";
+  const handlers: Record<ViewId, () => void> = {
+    health: onShowHealth,
+    managers: onShowManagers,
+    cleanup: onShowProjectCleanup,
+    vscode: onShowVscodeStorage,
+    sessions: onShowSessionRecords,
+    settings: onShowSettings,
+  };
 
   return (
-    <div className="telemetry-shell bg-background text-foreground">
-      <div aria-hidden="true" className="telemetry-ambient" />
+    <div className="studio-shell">
       <a className="skip-link" href="#main-content">跳到主内容</a>
-      <div className="telemetry-frame">
-        <nav aria-label="主导航" className="telemetry-titlebar" data-tauri-drag-region="deep">
-          <div className="telemetry-titlebar-drag" data-tauri-drag-region />
-          <div className="telemetry-nav">
-            <Button
-              aria-current={activeView === "health" ? "page" : undefined}
-              onClick={onShowHealth}
-              size="xs"
-              type="button"
-              variant="ghost"
-            >
-              <Activity data-icon="inline-start" />
-              体检
-            </Button>
-            <Button
-              aria-current={activeView === "managers" ? "page" : undefined}
-              onClick={onShowManagers}
-              size="xs"
-              type="button"
-              variant="ghost"
-            >
-              <List data-icon="inline-start" />
-              包管理器
-            </Button>
-            <Button
-              aria-current={activeView === "cleanup" ? "page" : undefined}
-              onClick={onShowProjectCleanup}
-              size="xs"
-              type="button"
-              variant="ghost"
-            >
-              <Trash2 data-icon="inline-start" />
-              项目清理
-            </Button>
-            <Button
-              aria-current={activeView === "vscode" ? "page" : undefined}
-              onClick={onShowVscodeStorage}
-              size="xs"
-              type="button"
-              variant="ghost"
-            >
-              <Code2 data-icon="inline-start" />
-              VS Code 占用
-            </Button>
-            <Button
-              aria-current={activeView === "sessions" ? "page" : undefined}
-              onClick={onShowSessionRecords}
-              size="xs"
-              type="button"
-              variant="ghost"
-            >
-              <MessagesSquare data-icon="inline-start" />
-              会话记录
-            </Button>
+      <header className="studio-topbar" data-tauri-drag-region="deep">
+        <div className="studio-brand">
+          <span aria-hidden="true" className="studio-logo">
+            <Cube weight="fill" />
+          </span>
+          <div className="studio-brand-copy">
+            <h1>包管理器控制中心</h1>
+            <p>统一管理你的开发环境与依赖包</p>
           </div>
-          <div className="telemetry-titlebar-end">
-            <div className="telemetry-titlebar-drag" data-tauri-drag-region />
-            <Button
-              aria-current={activeView === "settings" ? "page" : undefined}
-              onClick={onShowSettings}
-              size="xs"
+        </div>
+        <div className="studio-top-actions">
+          <div aria-label="主题" className="studio-theme" role="group">
+            <button
+              aria-pressed={theme === "light"}
+              onClick={() => {
+                if (theme !== "light") onToggleTheme();
+              }}
+              title="浅色主题"
               type="button"
-              variant="ghost"
             >
-              <Settings data-icon="inline-start" />
-              设置
-            </Button>
+              <Sun aria-hidden="true" />
+            </button>
+            <button
+              aria-pressed={theme === "dark"}
+              onClick={() => {
+                if (theme !== "dark") onToggleTheme();
+              }}
+              title="深色主题"
+              type="button"
+            >
+              <Moon aria-hidden="true" />
+            </button>
           </div>
-        </nav>
-        <header>
-          <div className="telemetry-header-grid">
-            <div className="telemetry-title-block">
-              <p className="telemetry-product-label">
-                <samp>本机开发环境</samp>
-                <samp className="telemetry-context">{activeView === "cleanup" || activeView === "vscode" || activeView === "sessions" ? activeMeta.code : scanMeta || activeMeta.code}</samp>
-              </p>
-              <h1 aria-label="Package Control" className="telemetry-title">
-                <span>控制中心</span>
-              </h1>
-            </div>
+          <p className="studio-online">
+            <span aria-hidden="true" />
+            {scanning ? "扫描中" : "已连接"}
+          </p>
+          <button
+            aria-current={activeView === "settings" ? "page" : undefined}
+            aria-label="设置"
+            className="studio-icon-button"
+            onClick={onShowSettings}
+            title="设置"
+            type="button"
+          >
+            <Settings aria-hidden="true" />
+          </button>
+        </div>
+      </header>
 
-            <div className="telemetry-control-block">
-              <dl className="telemetry-readouts">
-                <div className="telemetry-readout">
-                  <dt className="telemetry-readout-label">{activeView === "vscode" || activeView === "sessions" ? "管理器占用" : "总占用"}</dt>
-                  <dd className="telemetry-readout-value telemetry-readout-value--accent">{totalBytes}</dd>
-                </div>
-                <div className="telemetry-readout">
-                  <dt className="telemetry-readout-label">当前对象</dt>
-                  <dd className="telemetry-readout-value">{activeView === "vscode" ? "VS Code" : activeView === "sessions" ? "Codex · Claude" : managerLabel(selectedManager)}</dd>
-                </div>
-                <div className="telemetry-readout">
-                  <dt className="telemetry-readout-label">当前视图</dt>
-                  <dd className="telemetry-readout-value">{activeMeta.label}</dd>
-                </div>
-              </dl>
-              <div className="telemetry-actions">
-                <output className="telemetry-online">就绪</output>
-                <Button
-                  aria-label={themeToggleLabel}
-                  aria-pressed={theme === "light"}
-                  className="telemetry-theme-toggle"
-                  onClick={onToggleTheme}
-                  size="icon-xs"
-                  title={themeToggleLabel}
+      <div className="studio-body">
+        <aside className="studio-sidebar">
+          <nav aria-label="主导航" className="studio-nav">
+            {views.map((view) => {
+              const Icon = view.icon;
+              const current = activeView === view.id;
+              return (
+                <button
+                  aria-current={current ? "page" : undefined}
+                  className="studio-nav-item"
+                  key={view.id}
+                  onClick={handlers[view.id]}
                   type="button"
-                  variant="ghost"
                 >
-                  {theme === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-                </Button>
-                {activeView === "cleanup" || activeView === "vscode" || activeView === "sessions" ? (
-                  <div className="telemetry-channel">
-                    <samp>{activeView === "vscode" ? "工作区存储" : activeView === "sessions" ? "会话记录" : "项目扫描"}</samp>
-                  </div>
-                ) : (
-                  <Button
-                    className="telemetry-refresh"
-                    disabled={scanning}
-                    onClick={onRefresh}
-                    size="sm"
-                    type="button"
-                  >
-                    <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
-                    {scanning ? `正在扫描 ${managerLabel(selectedManager)}...` : `刷新 ${managerLabel(selectedManager)}`}
-                  </Button>
-                )}
-              </div>
-            </div>
+                  <Icon aria-hidden="true" weight={current ? "fill" : "regular"} />
+                  <span>{view.label}</span>
+                  {view.id === "managers" ? <em>{managerCount}</em> : null}
+                </button>
+              );
+            })}
+          </nav>
+          <section aria-label="环境信息" className="studio-env">
+            <h2>环境信息</h2>
+            <ul>
+              {environmentRows(managerSnapshots).map((row) => (
+                <li key={row.label}>
+                  <span aria-hidden="true" className="studio-env-dot" data-tone={row.tone} />
+                  <span>{row.label}</span>
+                  <strong>{row.value}</strong>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <div aria-hidden="true" className="studio-slogan">
+            <p>Better Dev<br />Better Life</p>
+            <SloganMark />
           </div>
-        </header>
-
-        <div className="telemetry-content" id="main-content">
+        </aside>
+        <div className="studio-main" id="main-content">
           {children}
         </div>
       </div>
     </div>
+  );
+}
+
+function environmentRows(snapshots: Partial<Record<ManagerId, ManagerSnapshot>>) {
+  const optional = [
+    fact("npm", snapshots.Npm?.version, "npm"),
+    fact("Python", snapshots.Pip?.pip?.pythonVersion, "python"),
+    fact("nvm", snapshots.Nvm?.version, "node"),
+    fact("Maven", snapshots.Maven?.version, "maven"),
+  ].flatMap((row) => (row ? [row] : []));
+
+  return [...optional.slice(0, 3), { label: "系统", value: systemLabel(), tone: "os" }];
+}
+
+function fact(label: string, value: string | null | undefined, tone: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return { label, value: trimmed, tone };
+}
+
+function systemLabel() {
+  if (typeof navigator === "undefined") return "本机";
+  const ua = navigator.userAgent || "";
+  if (/Mac/.test(ua)) return "macOS";
+  if (/Win/.test(ua)) return "Windows";
+  if (/Linux/.test(ua)) return "Linux";
+  return "本机";
+}
+
+function SloganMark() {
+  return (
+    <svg fill="none" viewBox="0 0 88 72" xmlns="http://www.w3.org/2000/svg">
+      <path d="M44 8 76 26 44 44 12 26 44 8Z" fill="#d7e6ff" />
+      <path d="M44 44 76 26 76 48 44 66 44 44Z" fill="#8eb4f5" />
+      <path d="M12 26 44 44 44 66 12 48 12 26Z" fill="#b9d2fb" />
+      <path d="M44 22 62 32 44 42 26 32 44 22Z" fill="#4d7fe8" />
+    </svg>
   );
 }

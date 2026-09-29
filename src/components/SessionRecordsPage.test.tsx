@@ -40,11 +40,12 @@ describe("SessionRecordsPage", () => {
         onRemoveOlder={async () => ({ moved: 0, failed: 0, message: null })}
         onRemoveSelected={async () => ({ moved: 0, failed: 0, message: null })}
         scan={scan}
-        scanning={false}
+        scanningSources={{ codex: false, claude: false }}
       />,
     );
 
-    expect(html).toContain("物理空间要等废纸篓清空才释放");
+    expect(html).toContain("刷新");
+    expect(html).not.toContain("SESSION RECORDS");
     expect(html).toContain("2026年9月");
     expect(html).toContain("1 条");
     expect(html).toContain("使用中，暂不移除");
@@ -72,7 +73,7 @@ describe("SessionRecordsPage", () => {
             records: [{ ...codex.records[0], id: "free.jsonl", title: "可以移走", inUse: false }],
           },
         }}
-        scanning={false}
+        scanningSources={{ codex: false, claude: false }}
       />,
     );
 
@@ -97,7 +98,7 @@ describe("SessionRecordsPage", () => {
           codex: { ...codex, status: "Missing", records: [] },
           claude: scan.claude,
         }}
-        scanning={false}
+        scanningSources={{ codex: false, claude: false }}
       />,
     );
 
@@ -124,7 +125,7 @@ describe("SessionRecordsPage", () => {
             records: [],
           },
         }}
-        scanning={false}
+        scanningSources={{ codex: false, claude: false }}
       />,
     );
 
