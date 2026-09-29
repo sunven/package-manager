@@ -45,7 +45,7 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { EmptyState, IconButton, Panel, PanelHead, StatCard } from "./ui";
+import { EmptyState, IconButton, Panel, PanelHead } from "./ui";
 
 export function ProjectCleanupPage({
   homeDirectory,
@@ -203,18 +203,19 @@ export function ProjectCleanupPage({
         </div>
       </Panel>
 
-      <section aria-label="项目清理指标" className="stat-grid grid-cols-2 md:grid-cols-4">
-        <StatCard label="已验证目录占用" value={formatBytes(view.totals.verifiedBytes)} />
-        <StatCard label={`待复核 ${view.totals.reviewCount} 项`} value={formatBytes(view.totals.reviewBytes)} />
-        <StatCard label={`已选择 ${view.totals.selectedCount} 项`} value={formatBytes(view.totals.selectedBytes)} />
-        <StatCard label="本轮已清理" value={formatBytes(view.totals.cleanedBytes)} />
-      </section>
-
       <ProjectDataScanNotice view={view} />
 
       <Panel className="overflow-hidden">
         <PanelHead
-          action={<span className="text-xs font-medium text-muted-foreground">{visibleCandidates.length} 项</span>}
+          action={
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span>{visibleCandidates.length} 项</span>
+              <span>已验证 <strong className="font-medium tabular-nums text-foreground">{formatBytes(view.totals.verifiedBytes)}</strong></span>
+              <span>待复核 {view.totals.reviewCount} 项 <strong className="font-medium tabular-nums text-foreground">{formatBytes(view.totals.reviewBytes)}</strong></span>
+              <span>已选择 {view.totals.selectedCount} 项 <strong className="font-medium tabular-nums text-foreground">{formatBytes(view.totals.selectedBytes)}</strong></span>
+              <span>本轮已清理 <strong className="font-medium tabular-nums text-foreground">{formatBytes(view.totals.cleanedBytes)}</strong></span>
+            </div>
+          }
           eyebrow="项目派生数据"
           title="扫描结果"
         />

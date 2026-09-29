@@ -2227,14 +2227,14 @@
 }
 
 .studio-manager-scroll {
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
   padding-bottom: 2px;
 }
 
 .studio-manager-tabs {
   display: flex !important;
-  width: max-content !important;
+  flex-wrap: wrap !important;
+  width: auto !important;
   height: auto !important;
   gap: 8px !important;
   border: 0 !important;
