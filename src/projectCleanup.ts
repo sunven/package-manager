@@ -4,7 +4,12 @@ import type {
 } from "./types";
 
 export type ProjectDataSort = "size" | "modified" | "path";
+export type ProjectDataSortDir = "asc" | "desc";
 export type ProjectDataFilter = "all" | ProjectDataKind;
+
+export function defaultSortDir(sort: ProjectDataSort): ProjectDataSortDir {
+  return sort === "path" ? "asc" : "desc";
+}
 
 export function projectName(path: string) {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -16,8 +21,10 @@ export function filterAndSortProjectData<T extends ProjectDataCandidate>(
   query: string,
   sort: ProjectDataSort,
   kind: ProjectDataFilter = "all",
+  dir: ProjectDataSortDir = defaultSortDir(sort),
 ): T[] {
   const needle = query.trim().toLocaleLowerCase();
+  const sign = dir === "asc" ? 1 : -1;
   return candidates
     .filter((candidate) => {
       if (kind !== "all" && candidate.kind !== kind) return false;
@@ -25,10 +32,17 @@ export function filterAndSortProjectData<T extends ProjectDataCandidate>(
       return `${candidate.projectPath}\n${candidate.directoryPath}`.toLocaleLowerCase().includes(needle);
     })
     .sort((left, right) => {
-      if (sort === "path") return left.projectPath.localeCompare(right.projectPath);
+      if (sort === "path") return sign * left.projectPath.localeCompare(right.projectPath);
       if (sort === "modified") {
-        return (right.measurement.latestModifiedMs ?? 0) - (left.measurement.latestModifiedMs ?? 0);
+        // 未测量的条目始终沉底，不随方向翻转。
+        const leftRank = left.measurement.latestModifiedMs === null ? 1 : 0;
+        const rightRank = right.measurement.latestModifiedMs === null ? 1 : 0;
+        if (leftRank !== rightRank) return leftRank - rightRank;
+        return sign * ((left.measurement.latestModifiedMs ?? 0) - (right.measurement.latestModifiedMs ?? 0));
       }
-      return (right.measurement.bytes ?? -1) - (left.measurement.bytes ?? -1);
+      const leftRank = left.measurement.bytes === null ? 1 : 0;
+      const rightRank = right.measurement.bytes === null ? 1 : 0;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return sign * ((left.measurement.bytes ?? 0) - (right.measurement.bytes ?? 0));
     });
 }

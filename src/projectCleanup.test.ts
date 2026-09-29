@@ -6,8 +6,8 @@ import type { ProjectDataCandidate } from "./types";
 
 function candidate(
   candidateId: string,
-  bytes: number,
-  latestModifiedMs: number,
+  bytes: number | null,
+  latestModifiedMs: number | null,
   status: ProjectDataCandidate["status"] = "Ready",
   kind: ProjectDataCandidate["kind"] = "RustTarget",
 ): ProjectDataCandidate {
@@ -21,7 +21,7 @@ function candidate(
     measurement: {
       status: "Ready",
       bytes,
-      human: `${bytes} B`,
+      human: bytes === null ? null : `${bytes} B`,
       files: 1,
       directories: 1,
       skipped: 0,
@@ -52,5 +52,45 @@ describe("project data list policy", () => {
     expect(
       filterAndSortProjectData(rows, "", "size", "NodeModules").map((row) => row.candidateId),
     ).toEqual(["large"]);
+  });
+
+  it("supports ascending order for size and modified", () => {
+    const rows = [
+      candidate("small", 100, 20),
+      candidate("large", 500, 10),
+    ];
+
+    expect(filterAndSortProjectData(rows, "", "size", "all", "asc").map((row) => row.candidateId)).toEqual([
+      "small",
+      "large",
+    ]);
+    expect(filterAndSortProjectData(rows, "", "modified", "all", "asc").map((row) => row.candidateId)).toEqual([
+      "large",
+      "small",
+    ]);
+  });
+
+  it("keeps unmeasured entries last regardless of direction", () => {
+    const rows = [
+      candidate("ghost", null, null),
+      candidate("small", 100, 20),
+      candidate("large", 500, 10),
+    ];
+
+    expect(filterAndSortProjectData(rows, "", "size", "all", "desc").map((row) => row.candidateId)).toEqual([
+      "large",
+      "small",
+      "ghost",
+    ]);
+    expect(filterAndSortProjectData(rows, "", "size", "all", "asc").map((row) => row.candidateId)).toEqual([
+      "small",
+      "large",
+      "ghost",
+    ]);
+    expect(filterAndSortProjectData(rows, "", "modified", "all", "asc").map((row) => row.candidateId)).toEqual([
+      "large",
+      "small",
+      "ghost",
+    ]);
   });
 });

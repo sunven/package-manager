@@ -1,13 +1,15 @@
-import { ArrowClockwise as RefreshCw, ArrowSquareOut as ExternalLink, Copy, FolderOpen, Square, Trash as Trash2, X } from "@phosphor-icons/react";
-import { useMemo, useState } from "react";
+import { ArrowClockwise as RefreshCw, ArrowDown, ArrowSquareOut as ExternalLink, ArrowUp, CaretUpDown, Copy, FolderOpen, Square, Trash as Trash2, X } from "@phosphor-icons/react";
+import { Fragment, useMemo, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
 import {
   projectName,
+  defaultSortDir,
   filterAndSortProjectData,
-  type ProjectDataFilter,
   type ProjectDataSort,
+  type ProjectDataSortDir,
 } from "../projectCleanup";
+import type { ProjectDataKind } from "../types";
 import type {
   CleanupBatchView,
   ProjectCleanupCandidateView,
@@ -42,7 +44,7 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
-import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
+import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { EmptyState, IconButton, Panel, PanelHead, StatCard } from "./ui";
 
 export function ProjectCleanupPage({
@@ -56,16 +58,25 @@ export function ProjectCleanupPage({
 }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<ProjectDataSort>("size");
-  const [kind, setKind] = useState<ProjectDataFilter>("all");
+  const [sortDir, setSortDir] = useState<ProjectDataSortDir>("desc");
+  const [kind, setKind] = useState<ProjectDataKind>("RustTarget");
   const [message, setMessage] = useState<UiMessage | null>(null);
   const candidates = view.scan.session?.candidates ?? [];
+  const rustTotal = useMemo(
+    () => candidates.filter((candidate) => candidate.kind === "RustTarget").length,
+    [candidates],
+  );
+  const nodeTotal = useMemo(
+    () => candidates.filter((candidate) => candidate.kind === "NodeModules").length,
+    [candidates],
+  );
   const orderedCandidates = useMemo(
-    () => filterAndSortProjectData(candidates, "", sort, "all"),
-    [candidates, sort],
+    () => filterAndSortProjectData(candidates, "", sort, "all", sortDir),
+    [candidates, sort, sortDir],
   );
   const visibleCandidates = useMemo(
-    () => filterAndSortProjectData(candidates, query, sort, kind),
-    [candidates, kind, query, sort],
+    () => filterAndSortProjectData(candidates, query, sort, kind, sortDir),
+    [candidates, kind, query, sort, sortDir],
   );
   const selectableVisibleIds = visibleCandidates
     .filter((candidate) => candidate.cleanability.kind === "cleanable")
@@ -78,6 +89,15 @@ export function ProjectCleanupPage({
   const batchRunning = view.batch?.phase === "running";
   const workflowFailure = view.settings.failure ?? view.scan.failure;
   const displayedMessage = message ?? (workflowFailure ? failureMessage(workflowFailure) : null);
+
+  const cycleSort = (key: ProjectDataSort) => {
+    if (key === sort) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSort(key);
+      setSortDir(defaultSortDir(key));
+    }
+  };
 
   const report = (outcome: WorkflowOutcome<unknown>, title: string) => {
     if (outcome.kind === "failed") {
@@ -106,52 +126,25 @@ export function ProjectCleanupPage({
       ) : null}
 
       <Panel>
-        <PanelHead
-          action={
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button
-                disabled={!view.settings.rootId || scanBusy || batchRunning}
-                onClick={() => void workflow.openRoot().then((outcome) => report(outcome, "打开扫描根目录失败"))}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                <ExternalLink data-icon="inline-start" />
-                打开
-              </Button>
-              <Button
-                disabled={scanBusy || Boolean(view.batch)}
-                onClick={() => void workflow.chooseRoot().then((outcome) => report(outcome, "无法选择扫描根目录"))}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                <FolderOpen data-icon="inline-start" />
-                选择目录
-              </Button>
-            </div>
-          }
-          eyebrow="扫描范围"
-          title="项目派生数据"
-        />
-        <div className="grid gap-2 p-3 md:grid-cols-[minmax(0,1fr)_100px_auto] md:items-end">
-          <label className="grid min-w-0 gap-1.5" htmlFor="project-cleanup-root">
-            <span className="text-xs font-medium text-muted-foreground">扫描根目录</span>
-            {view.settings.phase === "loading" ? (
-              <Skeleton className="h-9 w-full" />
-            ) : (
-              <Input
-                id="project-cleanup-root"
-                readOnly
-                title={view.settings.rootPath ?? undefined}
-                value={view.settings.rootPath ? formatHomePath(view.settings.rootPath, homeDirectory) : "尚未选择"}
-              />
-            )}
-          </label>
-          <label className="grid gap-1.5" htmlFor="project-cleanup-depth">
-            <span className="text-xs font-medium text-muted-foreground">最大深度</span>
+        <div className="flex items-center gap-2 p-2.5">
+          <span className="shrink-0 text-sm font-medium">扫描范围</span>
+          {view.settings.phase === "loading" ? (
+            <Skeleton className="h-9 min-w-0 flex-1" />
+          ) : (
+            <Input
+              aria-label="扫描根目录"
+              className="min-w-0 flex-1"
+              id="project-cleanup-root"
+              readOnly
+              title={view.settings.rootPath ?? undefined}
+              value={view.settings.rootPath ? formatHomePath(view.settings.rootPath, homeDirectory) : "尚未选择"}
+            />
+          )}
+          <label className="flex shrink-0 items-center gap-1" htmlFor="project-cleanup-depth">
+            <span className="shrink-0 text-xs text-muted-foreground">深度</span>
             <Input
               aria-describedby="project-cleanup-depth-range"
+              className="w-16"
               disabled={scanBusy || Boolean(view.batch)}
               id="project-cleanup-depth"
               max={32}
@@ -162,29 +155,51 @@ export function ProjectCleanupPage({
             />
             <span className="sr-only" id="project-cleanup-depth-range">范围 0 到 32</span>
           </label>
-          <div className="flex gap-2">
-            {scanBusy ? (
-              <Button
-                disabled={Boolean(view.batch)}
-                onClick={() => report(workflow.requestScanStop(), "无法取消扫描")}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                <X data-icon="inline-start" />
-                取消扫描
-              </Button>
-            ) : null}
+          {scanBusy ? (
             <Button
-              disabled={!view.settings.rootId || scanBusy || Boolean(view.batch)}
-              onClick={() => void workflow.startScan().then((outcome) => report(outcome, "项目派生数据扫描失败"))}
+              className="shrink-0"
+              disabled={Boolean(view.batch)}
+              onClick={() => report(workflow.requestScanStop(), "无法取消扫描")}
               size="sm"
               type="button"
+              variant="outline"
             >
-              <RefreshCw data-icon="inline-start" />
-              扫描
+              <X data-icon="inline-start" />
+              取消扫描
             </Button>
-          </div>
+          ) : null}
+          <Button
+            className="shrink-0"
+            disabled={!view.settings.rootId || scanBusy || Boolean(view.batch)}
+            onClick={() => void workflow.startScan().then((outcome) => report(outcome, "项目派生数据扫描失败"))}
+            size="sm"
+            type="button"
+          >
+            <RefreshCw data-icon="inline-start" />
+            扫描
+          </Button>
+          <Button
+            className="shrink-0"
+            disabled={!view.settings.rootId || scanBusy || batchRunning}
+            onClick={() => void workflow.openRoot().then((outcome) => report(outcome, "打开扫描根目录失败"))}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <ExternalLink data-icon="inline-start" />
+            打开
+          </Button>
+          <Button
+            className="shrink-0"
+            disabled={scanBusy || Boolean(view.batch)}
+            onClick={() => void workflow.chooseRoot().then((outcome) => report(outcome, "无法选择扫描根目录"))}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <FolderOpen data-icon="inline-start" />
+            选择目录
+          </Button>
         </div>
       </Panel>
 
@@ -203,46 +218,36 @@ export function ProjectCleanupPage({
           eyebrow="项目派生数据"
           title="扫描结果"
         />
-        <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 p-2">
-          <Input
-            aria-label="搜索项目或目录路径"
-            className="min-w-56 flex-1"
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="搜索项目或目录路径"
-            type="search"
-            value={query}
-          />
-          <ToggleGroup
-            aria-label="候选类型"
-            onValueChange={(value) => {
-              if (value === "all" || value === "RustTarget" || value === "NodeModules") {
-                setKind(value);
-              }
-            }}
-            spacing={0}
-            type="single"
-            value={kind}
-            variant="outline"
-          >
-            <ToggleGroupItem value="all">全部</ToggleGroupItem>
-            <ToggleGroupItem value="RustTarget">Rust target</ToggleGroupItem>
-            <ToggleGroupItem value="NodeModules">Node node_modules</ToggleGroupItem>
-          </ToggleGroup>
-          <ToggleGroup
-            aria-label="结果排序"
-            onValueChange={(value) => {
-              if (value === "size" || value === "modified" || value === "path") setSort(value);
-            }}
-            spacing={0}
-            type="single"
-            value={sort}
-            variant="outline"
-          >
-            <ToggleGroupItem value="size">占用</ToggleGroupItem>
-            <ToggleGroupItem value="modified">活跃</ToggleGroupItem>
-            <ToggleGroupItem value="path">路径</ToggleGroupItem>
-          </ToggleGroup>
-          <Button
+        <Tabs
+          onValueChange={(value) => {
+            if (value === "RustTarget" || value === "NodeModules") {
+              setKind(value);
+            }
+          }}
+          value={kind}
+        >
+          <div className="border-b px-2 pt-2">
+            <TabsList aria-label="候选类型">
+              <TabsTrigger value="RustTarget">
+                Rust target
+                <span className="font-mono text-[0.68rem] tabular-nums text-muted-foreground">{rustTotal}</span>
+              </TabsTrigger>
+              <TabsTrigger value="NodeModules">
+                Node node_modules
+                <span className="font-mono text-[0.68rem] tabular-nums text-muted-foreground">{nodeTotal}</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 p-2">
+            <Input
+              aria-label="搜索项目或目录路径"
+              className="min-w-56 flex-1"
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              placeholder="搜索项目或目录路径"
+              type="search"
+              value={query}
+            />
+            <Button
             disabled={!selectableVisibleIds.length || allVisibleSelected || Boolean(view.batch)}
             onClick={() => report(workflow.setSelected(selectableVisibleIds, true), "无法选择可清理候选")}
             size="sm"
@@ -303,11 +308,52 @@ export function ProjectCleanupPage({
                     }}
                   />
                 </TableHead>
-                <TableHead>项目</TableHead>
-                <TableHead>类型</TableHead>
-                <TableHead>目录路径</TableHead>
-                <TableHead className="text-right">占用</TableHead>
-                <TableHead>最近活跃</TableHead>
+                <TableHead
+                  aria-sort={sort === "path" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                >
+                  <Button
+                    aria-label="按路径排序"
+                    className="-ml-2"
+                    onClick={() => cycleSort("path")}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    目录路径
+                    <SortDirIcon active={sort === "path"} dir={sortDir} />
+                  </Button>
+                </TableHead>
+                <TableHead
+                  aria-sort={sort === "size" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                  className="text-right"
+                >
+                  <Button
+                    aria-label="按占用排序"
+                    className="ml-auto"
+                    onClick={() => cycleSort("size")}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    占用
+                    <SortDirIcon active={sort === "size"} dir={sortDir} />
+                  </Button>
+                </TableHead>
+                <TableHead
+                  aria-sort={sort === "modified" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                >
+                  <Button
+                    aria-label="按最近活跃排序"
+                    className="-ml-2"
+                    onClick={() => cycleSort("modified")}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    最近活跃
+                    <SortDirIcon active={sort === "modified"} dir={sortDir} />
+                  </Button>
+                </TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead className="text-right">操作</TableHead>
               </TableRow>
@@ -332,11 +378,14 @@ export function ProjectCleanupPage({
               query
                 ? "没有匹配的项目派生数据"
                 : view.scan.session
-                  ? "扫描范围内没有发现项目派生数据"
+                  ? kind === "RustTarget"
+                    ? "扫描范围内没有发现 Rust target"
+                    : "扫描范围内没有发现 Node node_modules"
                   : "选择根目录后开始扫描"
             }
           />
         )}
+        </Tabs>
       </Panel>
 
       <ProjectCleanupDialog
@@ -391,6 +440,13 @@ function ProjectDataScanNotice({ view }: { view: ProjectCleanupView }) {
   ) : null;
 }
 
+function SortDirIcon({ active, dir }: { active: boolean; dir: ProjectDataSortDir }) {
+  if (!active) return <CaretUpDown aria-hidden="true" className="text-muted-foreground" data-icon="inline-end" />;
+  return dir === "asc"
+    ? <ArrowUp aria-hidden="true" data-icon="inline-end" />
+    : <ArrowDown aria-hidden="true" data-icon="inline-end" />;
+}
+
 function ProjectDataRow({
   batch,
   candidate,
@@ -407,6 +463,7 @@ function ProjectDataRow({
   workflow: ProjectCleanupWorkflow;
 }) {
   const selectable = candidate.cleanability.kind === "cleanable";
+  const displayName = rowProjectName(candidate);
   const active = batch?.phase === "running"
     && batch.candidates.some(
       (item) => item.candidateId === candidate.candidateId && item.state.kind === "running",
@@ -416,7 +473,7 @@ function ProjectDataRow({
     <TableRow data-state={candidate.selected ? "selected" : undefined}>
       <TableCell>
         <Checkbox
-          aria-label={`选择 ${projectName(candidate.projectPath)}`}
+          aria-label={`选择 ${displayName}`}
           checked={candidate.selected}
           disabled={!selectable || Boolean(batch)}
           onCheckedChange={(checked) => report(
@@ -425,20 +482,9 @@ function ProjectDataRow({
           )}
         />
       </TableCell>
-      <TableCell className="max-w-56 whitespace-normal">
-        <span className="block truncate font-medium" title={candidate.projectPath}>
-          {projectName(candidate.projectPath)}
-        </span>
-        <span className="mt-1 block truncate text-xs text-muted-foreground" title={candidate.projectPath}>
-          {formatHomePath(candidate.projectPath, homeDirectory)}
-        </span>
-      </TableCell>
-      <TableCell>
-        <Badge variant="outline">{candidateTypeLabel(candidate)}</Badge>
-      </TableCell>
-      <TableCell className="max-w-80 whitespace-normal">
+      <TableCell className="max-w-96 whitespace-normal">
         <span className="block truncate text-xs text-muted-foreground" title={candidate.directoryPath}>
-          {formatHomePath(candidate.directoryPath, homeDirectory)}
+          {highlightPathName(formatHomePath(candidate.directoryPath, homeDirectory), displayName)}
         </span>
       </TableCell>
       <TableCell className="text-right tabular-nums">
@@ -628,7 +674,7 @@ function ProjectCleanupDialog({
               <div className="grid gap-1 border-b px-3 py-2 last:border-b-0" key={candidate.candidateId}>
                 <div className="flex min-w-0 items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium">{projectName(candidate.projectPath)}</span>
+                    <span className="truncate text-sm font-medium">{rowProjectName(candidate)}</span>
                     <Badge variant="outline">{candidateTypeLabel(candidate)}</Badge>
                   </div>
                   <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -716,6 +762,33 @@ function candidateDirectoryName(candidate: Pick<ProjectCleanupCandidateView, "ki
 
 function candidateTypeLabel(candidate: Pick<ProjectCleanupCandidateView, "kind">) {
   return candidate.kind === "RustTarget" ? "Rust target" : "Node node_modules";
+}
+
+function highlightPathName(formattedPath: string, name: string) {
+  if (!name) return formattedPath;
+  const tokens = formattedPath.split(/([/\\])/);
+  if (!tokens.some((token) => token === name)) return formattedPath;
+  return tokens.map((token, index) =>
+    token === name ? (
+      <Fragment key={index}>
+        <span className="font-medium text-primary">{token}</span>
+      </Fragment>
+    ) : (
+      <Fragment key={index}>{token}</Fragment>
+    ),
+  );
+}
+
+function rowProjectName(candidate: Pick<ProjectCleanupCandidateView, "kind" | "projectPath">) {
+  // Tauri 应用的 Rust 工程在 src-tauri 子目录里，直接显示末段会撞名；
+  // 此时显示上一级目录（真正的项目名），第二行完整路径保持不变。
+  if (candidate.kind === "RustTarget") {
+    const parts = candidate.projectPath.split(/[\\/]/).filter(Boolean);
+    if (parts.length >= 2 && parts[parts.length - 1] === "src-tauri") {
+      return parts[parts.length - 2];
+    }
+  }
+  return projectName(candidate.projectPath);
 }
 
 function cleanupWarning(rustCount: number, nodeCount: number) {
