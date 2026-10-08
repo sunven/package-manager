@@ -45,6 +45,7 @@ function RecommendationRow({
         <div className="studio-rec-meta">
           <ToneBadge tone={recommendation.tone} />
           <span>{managerLabel(recommendation.managerId)}</span>
+          {recommendation.space ? <span>{recommendation.space.label} {recommendation.space.value}</span> : null}
           {recommendation.bytes ? <span>{formatBytes(recommendation.bytes)}</span> : null}
           {recommendation.count ? <span>{recommendation.count} 项</span> : null}
         </div>
@@ -73,7 +74,7 @@ function ToneBadge({ tone }: { tone: HealthTone }) {
     review: "tone-review",
     safe: "tone-safe",
   }[tone];
-  const label = tone === "risk" ? "风险" : tone === "review" ? "复核" : "维护";
+  const label = tone === "risk" ? "扫描异常" : tone === "review" ? "复核" : "维护";
 
   return <span className={`studio-tone ${config}`}>{label}</span>;
 }

@@ -1,19 +1,22 @@
 # Package Manager Control Center
 
-一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv 和 FVM 的包、缓存/仓库占用情况，清理本地 Rust 项目构建产物，以及查看 Homebrew、Maven、pip、Docker 的维护信号。
+一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv 和 FVM 的包、缓存/仓库占用与维护信号，清理 Rust / Node 项目派生数据，以及查看 VS Code 占用和管理 Codex / Claude 会话记录。
 
 当前目标是 **observe first, then act**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；其中 8 个管理器支持确认后执行 allowlisted 的缓存清理。
 
-清理的安全性是结构性的，不靠弹窗次数保证：**删除动作一律委托给拥有派生数据的 CLI**，本工具自己不删文件（唯一例外是 npm 的 `_npx`，带路径身份断言）。nvm、Maven、Cargo 的管理器缓存没有清理能力；Rust 项目 `target` 则通过固定参数的 `cargo clean` 清理。详见 [ADR-0001](./docs/adr/0001-delegated-cache-cleanup.md) 和 [ADR-0003](./docs/adr/0003-build-cleanup-uses-scan-session-candidates.md)。
+清理的安全性是结构性的：默认委托给拥有派生数据的 CLI；npm 的 `_npx` 和扫描会话授权的 Node `node_modules` 使用带路径身份检查的护栏删除。Rust 项目 `target` 通过固定参数的 `cargo clean` 清理。会话记录不可重建，因此独立处理并移入废纸篓。详见 [ADR-0001](./docs/adr/0001-delegated-cache-cleanup.md) 和 [ADR-0003](./docs/adr/0003-build-cleanup-uses-scan-session-candidates.md)。
 
 术语定义见 [CONTEXT.md](./CONTEXT.md)，架构决策见 [docs/adr/](./docs/adr/)。
 
 ## 功能
 
 - 扫描 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv、FVM。
+- 总览展示已扫描／已启用数量、未扫描状态、维护建议与目录占用 Top 5；其他本机数据提供独立页面入口。
+- 手动刷新当前管理器，或一次扫描所有已启用管理器；共享扫描队列最多同时处理 2 个管理器。
 - 查看全局安装的包名、版本、包路径。
+- 在当前管理器中按名称、版本、路径搜索，按名称或版本自然排序并切换升降序；可与已有信号筛选组合。
 - 查看 cache / store / global modules 等路径。
-- 统计 cache / store 总占用空间。
+- 测量各 cache / store 目录占用；读取不完整时标记为已测下限，不承诺清理后的实际释放量。
 - pnpm store/global modules 使用 hardlink 去重统计，避免重复计算同一物理文件。
 - Yarn Classic 支持全局包列表。
 - Yarn modern 标记为 unsupported，只展示可解析的缓存信息。
@@ -23,6 +26,8 @@
 - pip 支持当前 Python interpreter 的 installed/outdated package、editable/direct-url/user-site 信号、cache/site-packages 路径。
 - Cargo 支持 `cargo install --list` 的已安装二进制 crate、Cargo bin、registry cache/source、git cache/checkouts 路径。
 - 从用户选择的根目录递归发现与 `Cargo.toml` 同级的 `target`，并行测量占用、筛选排序、确认后批量执行 `cargo clean --offline`。
+- 同一扫描也发现与 `package.json` 同级的 `node_modules`，通过身份和完整测量检查后可确认永久清理。
+- 保存多个扫描目录预设，每个预设保留独立深度；切换预设后重新扫描。
 - Docker 支持镜像/容器/卷清单、运行中容器数、dangling 与未使用镜像统计、`docker system df` 的 reclaimable 空间、config/buildx/Desktop data 路径。
 - Bun 支持全局包列表、Bun 安装目录与缓存目录。
 - uv 支持已安装工具、uv 管理的 Python 版本、tools/pythons/cache 三个路径。
@@ -41,21 +46,23 @@
   - pip：`<python> -m pip cache purge`（解释器执行时重新解析）
   - Bun：`bun pm cache rm`
   - uv：`uv cache prune`（不传 `--force`，保留 uv 自己的 in-use 检查）
-  - Homebrew：`brew cleanup`（确认前展示 dry-run 的逐条清单和确切可回收量）
+  - Homebrew：`brew cleanup`（确认前展示 dry-run 的逐条清单与 CLI 预演估算）
   - Docker：`docker builder prune -f` → `docker image prune -f`
 - 多步骤清理如实汇报「全部成功 / 部分完成 / 完全失败」，不会在缓存已清空时谎报失败。
-- 健康页的建议条目可跳转到对应管理器 tab（只跳转，不在健康页执行）。
+- 总览的建议条目可跳转到对应管理器 tab；更新、叶子包、多版本等信号是复核依据，不等于可安全删除。
 - 打开 cache / store / package 目录。
-- 展示扫描失败、缺少二进制、权限问题、命令超时等诊断信息。
+- 展示应用 PATH、可执行文件解析路径、失败命令与输出；可复制检查命令，单独重试目录测量、Homebrew 预演或 pip 更新检查。
+- 会话记录支持按标题、工作目录搜索，按使用状态筛选，并展示每条移除结果及跳过／失败原因。
 
 ## 当前边界
 
 - 主要面向 macOS 自用。
-- 不做后台自动刷新。启动时扫描一次，之后手动刷新。
+- 不做后台自动刷新。启动时只扫描首个已启用管理器，其他管理器首次进入时扫描，之后手动刷新；手动全量扫描仅覆盖已启用管理器。
 - 不做 per-package size，只展示 manager/path 级别总大小。
 - 只有 npm 和 pnpm 支持确认后卸载全局包；其他管理器不做 uninstall。
 - 缓存清理覆盖 8 个管理器。**nvm、Maven、Cargo、FVM 的管理器缓存没有清理能力，这是有意的架构决定**，不是遗漏：nvm、Maven、Cargo 都没有官方子命令能清自己的缓存，做它们就意味着本工具自己 `rm -rf` 推导出来的路径；FVM 的 `fvm remove` 删除的是用户安装的 SDK（按卸载对待，需单独安全论证），`fvm destroy` 则超出本工具的能力范围。Rust 项目构建产物是独立功能，不计入 Cargo 管理器缓存或健康汇总。
 - Rust 构建产物 v1 只认 `Cargo.toml` 同级、非符号链接且根级包含 `CACHEDIR.TAG` 或 `.rustc_info.json` 的 `target`；不解析自定义或共享 `target-dir`。
+- Node 依赖目录只认常规文件 `package.json` 同级、非符号链接的 `node_modules`；扫描不深入依赖目录，清理不自动重新安装。
 - Homebrew 清理有意超出「只清缓存」的范围：`brew cleanup` 会连带删除已安装 formula 的旧版本（当前版本不受影响）。理由和边界见 [ADR-0002](./docs/adr/0002-homebrew-cleanup-exceeds-cache-scope.md)。
 - 不做跨管理器的批量清理，也不在健康页直接执行。
 - 不直接执行 `brew upgrade`。
@@ -80,6 +87,23 @@
 - 项目路径不存在或映射无法识别的记录仍会列出并计入本页汇总；同项目的多份存储分别展示。
 - 占用沿用磁盘分配量口径，读取不完整时展示已测得的下限；本页合计与管理器占用分开。
 - 仅观察 VS Code 留下的工作区数据，不统计项目源码，不代表当前窗口或完整打开历史，不提供清理或删除。
+
+## 项目扫描目录预设
+
+- 添加目录后保存规范化路径与深度（0–32），再次添加同一路径复用已有预设。
+- 深度编辑后点击「保存深度」或按 Enter，保存成功后用于下一次扫描。
+- 旧版单根目录设置自动读取为一个预设；后续保存使用新版格式。
+- 切换预设或移除当前预设会清空候选与选择，旧扫描授权失效；预设本身不保存候选或清理授权。
+- 不可用目录仍保留在列表中并显示原因，恢复后重新选择即可验证。移除预设不会删除目录。
+- 扫描或清理批次期间锁定预设操作；保存失败时保留原有设置。
+
+## 会话记录
+
+Codex 与 Claude 来源分别扫描、搜索、筛选和移除。搜索及使用状态筛选只影响当前列表；改变搜索或筛选会清空选择，「全选」仅选择当前可见且未在使用中的记录。
+
+按年龄移除始终覆盖整个来源，以记录内容的最后活动时间为准，不受搜索条件影响。执行前重新检查记录身份、使用状态和年龄；明确选中的记录不因活动时间更新而自动取消移除。
+
+结果分别显示已移入废纸篓、跳过和失败数量，并列出使用中、记录已失效、活动时间变化、无法确认活动时间或废纸篓操作失败等原因。来源级错误独立展示，不计作某一条记录失败。结果只保留于当前页面状态，不是持久操作历史。
 
 ## 开发环境
 
@@ -229,6 +253,8 @@ fvm api list
 
 如果命令缺失、失败、输出无法解析或超时，界面会显示诊断信息。
 
+扫描分为排队、读取清单和补充测量阶段，清单先显示，目录占用与补充检查逐步填入。重复请求复用同一任务；排队期间停用的管理器不会启动。刷新失败保留上次可用快照并标记异常及数据时间。扫描诊断只读，不修改 shell 配置或权限。
+
 Homebrew 扫描会禁用 auto-update，避免只读扫描触发 Homebrew 更新。`brew cleanup --dry-run` 不阻塞首屏扫描；Homebrew tab 先展示已安装、outdated、leaves 和路径，再单独加载 cleanup dry-run 预览。
 
 nvm 扫描不运行 `nvm` 命令，因为 nvm 通常是 shell function，不是可直接 spawn 的二进制；后端只读取 `NVM_DIR` 或 `~/.nvm` 下的 `versions/node/v*` 目录，并为每个 Node 版本提供复制 `nvm use <version>` 的命令。
@@ -254,6 +280,8 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 
 这对 pnpm store 很重要，因为 pnpm 大量使用 hardlink；不去重会明显高估空间。
 
+目录占用、CLI 预演估算和执行后测量是不同口径。Homebrew 展示 `brew cleanup --dry-run` 估算；pnpm / uv prune 不用整目录大小推断回收量；Docker 保留 `docker system df` 的分项报告，但其统计范围比本工具支持的清理范围更广。总览不提供跨来源「可回收总量」，项目、VS Code 和会话记录占用各自独立。
+
 ## 安全策略
 
 这个工具的默认策略是先可观察，再操作。
@@ -267,19 +295,21 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 - 确认后执行 allowlisted 全局包卸载：`npm uninstall -g <pkg>`、`pnpm remove --global <pkg>`。
 - 确认后执行 allowlisted 缓存清理，命令固定在 Rust 静态表里（见上方功能列表）。
 - 确认后清理扫描会话中的 Rust 构建目录候选；前端只能提交后端签发的根目录、扫描和候选 ID，执行前会重新验证项目、`target` 身份及根目录边界。
+- 确认后永久清理同一扫描会话中已验证的 Node 依赖目录；执行前再次检查项目、目录身份和根目录边界。
+- 确认后把合格的会话记录移入废纸篓；每条记录动手前重判资格。
 - 带路径身份断言地删除 npm 的 `_npx` 目录：断言绝对路径、以 `npm config get cache` 的返回值为前缀、basename 恰为 `_npx`，任一条不满足就报失败而不继续。
 
 清理的执行边界：
 
 - 管理器缓存只暴露 `run_cache_cleanup(managerId)`。前端能传的只有一个 12 值枚举，**在语法上无法表达"执行哪条命令"**，allowlist 因此是类型系统的性质而不是约定。
-- 构建产物清理只接受后端当前扫描会话中的 candidate ID，不接受前端提供路径或 Cargo 参数；重扫会使旧会话立即失效。
+- 项目派生数据清理只接受后端当前扫描会话中的 candidate ID，不接受前端提供路径或 Cargo 参数；重扫和切换预设会使旧会话立即失效。
 - 结构化 args，不拼 shell string。
 - 清理专用 300 秒超时，与扫描的 5–15 秒、卸载的 30 秒分开——避免"缓存很大"被误报成"超时"，而超时会 kill 子进程、留下删了一半的状态。
 - 多步骤方案遇错即停，并区分「部分完成」和「完全失败」。
 
 当前不允许的行为：
 
-- 除 `_npx` 外自行删除任何文件或目录。
+- 绕过 `_npx` 或扫描会话依赖目录的护栏，删除任意文件或目录。
 - 为 nvm、Maven、Cargo 的管理器缓存提供清理（ADR-0001）。
 - 跨管理器的批量清理，或从健康页直接执行。
 - `docker image prune -a`、`docker system prune`、删除容器、删除卷。
@@ -293,7 +323,7 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 - 自动执行 pip uninstall、upgrade。
 - 自动执行 Cargo install、uninstall、update、search、cache 命令。
 - 后台或定时清理。
-- 操作日志与撤销：清理对象限定为可重建的派生数据，事后取证换不到安全收益。
+- 不提供持久操作历史或派生数据清理撤销。会话记录可在清空废纸篓前通过系统恢复。
 
 新增管理器的清理能力，只需在 Rust 静态表和 `src/cleanupCopy.ts` 各加一条；新增"自行删除目录"这类例外，需要和 `_npx` 同等强度的身份断言论证。
 
@@ -331,7 +361,7 @@ cd src-tauri && cargo test
 pnpm test
 ```
 
-`cargo test` 当前覆盖（124 项）：
+`cargo test` 当前覆盖（129 项）：
 
 - npm 无 dependencies 时返回空列表
 - npm 正常解析和排序
@@ -365,8 +395,11 @@ pnpm test
 - 空 cache 值永远不会到达删除函数
 - pip 在内部解析解释器、`python3` → `python` 回退、解析失败时 pip 不运行
 - 清理步骤使用 300 秒超时而非扫描超时
+- 扫描诊断中的可执行路径解析
+- 目录预设迁移、独立深度、路径去重、不可用目录和保存失败时的状态保留
+- 会话记录逐项移除原因，来源级失败不计入记录失败数
 
-`pnpm test` 当前覆盖（109 项），清理相关部分：
+`pnpm test` 当前覆盖（131 项），主要包括：
 
 - 清理文案表：无方案管理器缺席、按钮只挂在拥有它的路径卡片上
 - 全清型显示实测占用；prune 型（pnpm / uv）不显示数字并给出说明
@@ -377,10 +410,14 @@ pnpm test
 - Yarn 2+ 在 `Unsupported` 下仍有清理入口；管理器 `Missing` 时没有
 - 健康页建议只跳转、不执行，也没有批量入口
 - FVM 只读：版本清单紧凑表格、版本目录与 git 缓存内联路径、文案表缺席且路径卡片无清理入口、存量偏好自动补启用
+- 总览入口、未扫描与缺失状态、目录占用下限
+- 扫描并发限制、任务去重、停用排队任务、失败保留快照、定向重试与维护互斥
+- 软件包搜索后复制和卸载保持正确对象
+- 预设切换使候选失效、批次期间禁止切换、深度编辑和保存失败处理
+- 会话记录筛选清空选择、按年龄操作全来源、逐项结果与操作错误
 
 ## 后续候选
 
 - Homebrew services / doctor / Brewfile。
 - Rust project dependency discovery / rustup toolchain inventory。
-- 增加搜索和排序。
 - 增加 README 截图。

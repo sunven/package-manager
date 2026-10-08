@@ -155,10 +155,16 @@ describe("cleanup copy table", () => {
 });
 
 describe("cleanup reclaimable figure", () => {
+  it("labels incomplete measurement as a footprint lower bound", () => {
+    const manager = snapshotWithPath("Npm", "Cache", "3.2 GB");
+    manager.paths[0].size.skipped = 2;
+    expect(cleanupReclaimable(manager)).toMatchObject({ label: "当前目录占用下限", value: "≥ 3.2 GB", note: expect.stringContaining("不等于实际释放空间") });
+    expect(cleanupReclaimable(snapshotWithPath("Uv", "UvCache", "9.9 GB"))).toBeNull();
+  });
   it("reports the measured path usage for cleanups that empty the directory", () => {
-    expect(cleanupReclaimable(snapshotWithPath("Yarn", "Cache", "1.4 GB"))).toBe("1.4 GB");
-    expect(cleanupReclaimable(snapshotWithPath("Bun", "BunCache", "220 MB"))).toBe("220 MB");
-    expect(cleanupReclaimable(snapshotWithPath("Npm", "Cache", "3.2 GB"))).toBe("3.2 GB");
+    expect(cleanupReclaimable(snapshotWithPath("Yarn", "Cache", "1.4 GB"))).toMatchObject({ value: "1.4 GB" });
+    expect(cleanupReclaimable(snapshotWithPath("Bun", "BunCache", "220 MB"))).toMatchObject({ value: "220 MB" });
+    expect(cleanupReclaimable(snapshotWithPath("Npm", "Cache", "3.2 GB"))).toMatchObject({ value: "3.2 GB" });
   });
 
   it("reports no figure for prune-type cleanups", () => {
@@ -183,7 +189,7 @@ describe("Homebrew cleanup", () => {
 
     // The cache path measures 500 MB, but brew cleanup also removes old Cellar
     // versions, so only the dry-run knows the real total.
-    expect(cleanupReclaimable(html)).toBe("1.2 GB");
+    expect(cleanupReclaimable(html)).toMatchObject({ value: "1.2 GB" });
   });
 
   it("shows the itemised list of what will be removed", () => {

@@ -23,7 +23,6 @@ function health(recommendations: HealthRecommendation[]): DevelopmentHealthSumma
     readyManagerCount: 3,
     totalPackages: 20,
     totalBytes: 1024,
-    maintenanceBytes: 512,
     scanIssueCount: 0,
     riskSignalCount: 0,
     reviewSignalCount: 1,

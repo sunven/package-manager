@@ -1,5 +1,6 @@
+import { cleanupReclaimable, hasCleanupPlan, type CleanupSpaceInfo } from "./cleanupCopy";
 import { countedSizePath } from "./utils/format";
-import type { ManagerId, ManagerSnapshot, PackageSignal, PathInfo, PathKind } from "./types";
+import type { ManagerId, ManagerSnapshot, PackageSignal, PathInfo } from "./types";
 
 export type HealthTone = "safe" | "review" | "risk";
 
@@ -9,7 +10,6 @@ export interface DevelopmentHealthSummary {
   readyManagerCount: number;
   totalPackages: number;
   totalBytes: number;
-  maintenanceBytes: number;
   scanIssueCount: number;
   riskSignalCount: number;
   reviewSignalCount: number;
@@ -26,6 +26,7 @@ export interface HealthRecommendation {
   title: string;
   detail: string;
   bytes?: number;
+  space?: CleanupSpaceInfo;
   count?: number;
 }
 
@@ -42,6 +43,7 @@ export interface HealthStorageItem {
   path: string;
   bytes: number;
   status: PathInfo["size"]["status"];
+  incomplete: boolean;
 }
 
 export interface HealthManagerStatus {
@@ -50,18 +52,7 @@ export interface HealthManagerStatus {
   packageCount: number;
 }
 
-const maintenanceCandidatePathKinds = new Set<PathKind>([
-  "Cache",
-  "Store",
-  "CargoRegistryCache",
-  "CargoGitCache",
-  "DockerBuildx",
-  "BunCache",
-  "UvCache",
-]);
-
-const riskSignals = new Set<PackageSignal>(["DirectUrl", "Editable", "Snapshot", "DuplicateVersions"]);
-const reviewSignals = new Set<PackageSignal>(["Outdated", "Leaf", "Dangling", "Unused", "UserSite"]);
+const reviewSignals = new Set<PackageSignal>(["DirectUrl", "Editable", "Snapshot", "DuplicateVersions", "Outdated", "Leaf", "Dangling", "Unused", "UserSite"]);
 
 const signalGroupLabels: Partial<Record<PackageSignal, string>> = {
   DirectUrl: "直接来源",
@@ -88,13 +79,12 @@ export function buildDevelopmentHealthSummary(
   const signalCounts = new Map<PackageSignal, number>();
   const recommendations: HealthRecommendation[] = [];
   let totalBytes = 0;
-  let maintenanceBytes = 0;
   let totalPackages = 0;
   let scanIssueCount = 0;
 
   for (const { managerId, manager } of scannedManagers) {
     totalPackages += manager.packages.length;
-    if (manager.status !== "Ready") {
+    if (manager.status === "Failed" || manager.status === "Partial") {
       scanIssueCount += 1;
       recommendations.push(scanIssueRecommendation(managerId, manager));
     }
@@ -110,11 +100,9 @@ export function buildDevelopmentHealthSummary(
             path: path.path,
             bytes,
             status: path.size.status,
+            incomplete: path.size.skipped > 0,
           });
         }
-      }
-      if (path.size.status === "Ready" && maintenanceCandidatePathKinds.has(path.kind)) {
-        maintenanceBytes += bytes;
       }
     }
 
@@ -127,33 +115,18 @@ export function buildDevelopmentHealthSummary(
     pushManagerRecommendations(recommendations, managerId, manager);
   }
 
-  const dockerReclaimableBytes = scannedManagers.reduce((sum, { manager }) => sum + dockerReclaimable(manager), 0);
-  const homebrewCleanupBytes = scannedManagers.reduce((sum, { manager }) => sum + (manager.homebrew?.cleanup.reclaimedBytes ?? 0), 0);
-  maintenanceBytes += dockerReclaimableBytes + homebrewCleanupBytes;
-
   const signalGroups = Array.from(signalCounts.entries())
-    .filter(([signal]) => riskSignals.has(signal) || reviewSignals.has(signal))
+    .filter(([signal]) => reviewSignals.has(signal))
     .map(([signal, count]) => ({
       key: signal,
       label: signalGroupLabels[signal] ?? signal,
-      tone: riskSignals.has(signal) ? "risk" as const : "review" as const,
+      tone: "review" as HealthTone,
       count,
     }))
     .sort((a, b) => toneRank(a.tone) - toneRank(b.tone) || b.count - a.count || a.label.localeCompare(b.label));
 
   const riskSignalCount = signalGroups.filter((group) => group.tone === "risk").reduce((sum, group) => sum + group.count, 0);
   const reviewSignalCount = signalGroups.filter((group) => group.tone === "review").reduce((sum, group) => sum + group.count, 0);
-
-  if (maintenanceBytes > 0) {
-    recommendations.push({
-      id: "maintenance-space",
-      tone: "safe",
-      managerId: topMaintenanceManager(scannedManagers) ?? enabledManagers[0] ?? "Npm",
-      title: "发现维护候选空间",
-      detail: "缓存、清理预演或 Docker reclaimable 空间可进一步确认",
-      bytes: maintenanceBytes,
-    });
-  }
 
   topStorage.sort((a, b) => b.bytes - a.bytes || a.label.localeCompare(b.label));
   const largestStorage = topStorage[0];
@@ -162,8 +135,8 @@ export function buildDevelopmentHealthSummary(
       id: `largest-storage-${largestStorage.managerId}-${largestStorage.label}`,
       tone: "review",
       managerId: largestStorage.managerId,
-      title: "最大占用需要复核",
-      detail: largestStorage.label,
+      title: "查看较大的目录占用",
+      detail: `${largestStorage.label}${largestStorage.incomplete ? "（已测下限）" : ""}；目录占用不代表可回收空间`,
       bytes: largestStorage.bytes,
     });
   }
@@ -174,7 +147,6 @@ export function buildDevelopmentHealthSummary(
     readyManagerCount: scannedManagers.filter(({ manager }) => manager.status === "Ready").length,
     totalPackages,
     totalBytes,
-    maintenanceBytes,
     scanIssueCount,
     riskSignalCount,
     reviewSignalCount,
@@ -205,6 +177,15 @@ function pushManagerRecommendations(
   managerId: ManagerId,
   manager: ManagerSnapshot,
 ) {
+  if (hasCleanupPlan(managerId) && manager.status !== "Missing") {
+    const space = cleanupReclaimable(manager);
+    recommendations.push({
+      id: `maintenance-${managerId}`, tone: "safe", managerId,
+      title: `查看 ${manager.label} 维护范围`,
+      detail: space?.note ?? "仅处理本工具支持的资源类型；回收量需在执行后核对。",
+      ...(space ? { space } : {}),
+    });
+  }
   if (manager.homebrew) {
     if (manager.homebrew.outdatedCount > 0) {
       recommendations.push({
@@ -216,26 +197,17 @@ function pushManagerRecommendations(
         count: manager.homebrew.outdatedCount,
       });
     }
-    if ((manager.homebrew.cleanup.reclaimedBytes ?? 0) > 0) {
-      recommendations.push({
-        id: "homebrew-cleanup",
-        tone: "safe",
-        managerId,
-        title: "Homebrew 清理预演有回收空间",
-        detail: "dry-run 已返回可回收估算",
-        bytes: manager.homebrew.cleanup.reclaimedBytes ?? 0,
-      });
-    }
+
   }
 
   if (manager.maven) {
     if (manager.maven.snapshotCount > 0) {
       recommendations.push({
         id: "maven-snapshots",
-        tone: "risk",
+        tone: "review",
         managerId,
         title: "Maven 本地仓库含快照版",
-        detail: "快照构件可能让构建结果随时间变化",
+        detail: "这是仓库中的构件类型，不代表项目正在使用；本工具不清理 Maven 本地仓库。",
         count: manager.maven.snapshotCount,
       });
     }
@@ -245,21 +217,21 @@ function pushManagerRecommendations(
         tone: "review",
         managerId,
         title: "Maven 本地仓库有多版本构件",
-        detail: "重复版本会放大仓库体积，清理前需要确认项目依赖",
+        detail: "不同项目可能依赖不同版本；本工具仅展示，不提供仓库清理。",
         count: manager.maven.duplicateArtifactCount,
       });
     }
   }
 
   if (manager.pip) {
-    const riskyPythonPackages = manager.pip.directUrlCount + manager.pip.editableCount;
+    const riskyPythonPackages = manager.packages.filter((pkg) => pkg.signals.includes("DirectUrl") || pkg.signals.includes("Editable")).length;
     if (riskyPythonPackages > 0) {
       recommendations.push({
         id: "pip-local-sources",
-        tone: "risk",
+        tone: "review",
         managerId,
         title: "pip 环境含本地或直接来源包",
-        detail: "direct-url / editable 包需要确认来源和可复现性",
+        detail: "直接来源和可编辑安装是环境事实，不代表故障；可按项目需要查看来源。",
         count: riskyPythonPackages,
       });
     }
@@ -276,28 +248,18 @@ function pushManagerRecommendations(
   }
 
   if (manager.docker) {
-    const cleanupSignals = manager.docker.danglingImageCount + manager.docker.unusedImageCount;
+    const cleanupSignals = manager.packages.filter((pkg) => pkg.signals.includes("Dangling") || pkg.signals.includes("Unused")).length;
     if (cleanupSignals > 0) {
       recommendations.push({
         id: "docker-cleanup-signals",
         tone: "review",
         managerId,
         title: "Docker 有悬空或未使用镜像",
-        detail: "镜像清理通常安全，但仍需确认近期项目是否会复用",
+        detail: "未使用不等于本工具会删除；只清构建缓存和 dangling 镜像，不删容器、卷或已打 tag 的镜像。",
         count: cleanupSignals,
       });
     }
-    const reclaimableBytes = dockerReclaimable(manager);
-    if (reclaimableBytes > 0) {
-      recommendations.push({
-        id: "docker-reclaimable",
-        tone: "safe",
-        managerId,
-        title: "Docker 报告可回收空间",
-        detail: "来自 docker system df 的 reclaimable 估算",
-        bytes: reclaimableBytes,
-      });
-    }
+
   }
 }
 
@@ -316,40 +278,4 @@ function toneRank(tone: HealthTone) {
   if (tone === "risk") return 0;
   if (tone === "review") return 1;
   return 2;
-}
-
-function topMaintenanceManager(scannedManagers: Array<{ managerId: ManagerId; manager: ManagerSnapshot }>) {
-  let best: { managerId: ManagerId; bytes: number } | null = null;
-  for (const { managerId, manager } of scannedManagers) {
-    const bytes =
-      manager.paths.reduce((sum, path) => sum + (maintenanceCandidatePathKinds.has(path.kind) ? path.size.bytes ?? 0 : 0), 0) +
-      dockerReclaimable(manager) +
-      (manager.homebrew?.cleanup.reclaimedBytes ?? 0);
-    if (bytes > 0 && (!best || bytes > best.bytes)) {
-      best = { managerId, bytes };
-    }
-  }
-  return best?.managerId ?? null;
-}
-
-function dockerReclaimable(manager: ManagerSnapshot) {
-  return manager.docker?.diskUsage.reduce((sum, row) => sum + parseHumanBytes(row.reclaimable), 0) ?? 0;
-}
-
-function parseHumanBytes(value: string) {
-  const match = value.trim().match(/^([\d.]+)\s*([KMGT]?i?B|[kmgt]?B)?/);
-  if (!match) return 0;
-
-  const amount = Number(match[1]);
-  if (!Number.isFinite(amount)) return 0;
-
-  const unit = (match[2] ?? "B").toLowerCase();
-  const power =
-    unit === "kb" || unit === "kib" ? 1
-      : unit === "mb" || unit === "mib" ? 2
-        : unit === "gb" || unit === "gib" ? 3
-          : unit === "tb" || unit === "tib" ? 4
-            : 0;
-
-  return Math.round(amount * 1024 ** power);
 }

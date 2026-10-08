@@ -7,7 +7,12 @@ import type {
   DirectoryMeasurement,
   ProjectDataCandidate,
   ProjectDataScan,
+  ProjectCleanupSettings,
 } from "./types";
+
+function settings(rootId = "root-1", rootPath = "/code", maxDepth = 6) {
+  return { rootId, rootPath, maxDepth, presets: [{ id: "preset-1", path: rootPath, maxDepth }], activePresetId: "preset-1", rootMessage: null };
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -101,14 +106,47 @@ function cleanupResult(
 }
 
 describe("Project Cleanup workflow", () => {
+  it("locks settings changes while saving and discards old candidates when switching presets", async () => {
+    const saving = deferred<ProjectCleanupSettings>();
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      scan: async () => scan([pendingCandidate("old-candidate")]),
+      measure: async () => measurement(100),
+      selectPreset: async () => saving.promise,
+      removePreset: async () => ({ ...settings(), rootId: null, rootPath: null, presets: [], activePresetId: null }),
+    }));
+    await workflow.initialize();
+    await workflow.startScan();
+    workflow.setSelected(["old-candidate"], true);
+    const selecting = workflow.selectPreset("preset-2");
+    expect(await workflow.startScan()).toEqual({ kind: "unavailable", reason: "settings-busy" });
+    expect(await workflow.setMaxDepth(12)).toEqual({ kind: "unavailable", reason: "settings-busy" });
+    expect(workflow.prepareCleanupBatch(["old-candidate"])).toEqual({ kind: "unavailable", reason: "settings-busy" });
+    saving.resolve({ ...settings("root-2", "/work", 3), activePresetId: "preset-2", presets: [{ id: "preset-2", path: "/work", maxDepth: 3 }] });
+    await selecting;
+    expect(workflow.read()).toMatchObject({ settings: { rootId: "root-2", maxDepth: 3 }, scan: { phase: "idle", session: null }, totals: { selectedCount: 0 } });
+    await workflow.removePreset("preset-2");
+    expect(workflow.read()).toMatchObject({ settings: { rootId: null, activePresetId: null, presets: [] }, scan: { session: null } });
+    expect(await workflow.startScan()).toEqual({ kind: "unavailable", reason: "no-root" });
+  });
+
+  it("preserves saved depth and the scan when saving fails", async () => {
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      scan: async () => scan([pendingCandidate("candidate")]),
+      measure: async () => measurement(100),
+      updateDepth: async () => { throw new Error("disk full"); },
+    }));
+    await workflow.initialize();
+    await workflow.startScan();
+    expect(await workflow.setMaxDepth(12)).toMatchObject({ kind: "failed", failure: { message: "disk full" } });
+    expect(workflow.read()).toMatchObject({ settings: { phase: "ready", maxDepth: 6 }, scan: { session: { scanId: "scan-1" } } });
+  });
+
   it("initializes persisted Scan Root settings through its interface", async () => {
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({
-          rootId: "root-1",
-          rootPath: "/code",
-          maxDepth: 6,
-        }),
+        readSettings: async () => settings(),
       }),
     );
 
@@ -117,6 +155,7 @@ describe("Project Cleanup workflow", () => {
       rootId: null,
       rootPath: null,
       maxDepth: 8,
+      presets: [], activePresetId: null, rootMessage: null,
       failure: null,
     });
 
@@ -126,9 +165,7 @@ describe("Project Cleanup workflow", () => {
     });
     expect(workflow.read().settings).toEqual({
       phase: "ready",
-      rootId: "root-1",
-      rootPath: "/code",
-      maxDepth: 6,
+      ...settings(),
       failure: null,
     });
   });
@@ -157,6 +194,7 @@ describe("Project Cleanup workflow", () => {
         rootId: null,
         rootPath: null,
         maxDepth: 8,
+        presets: [], activePresetId: null, rootMessage: null,
         failure: {
           operation: "settings",
           message: "settings unavailable",
@@ -176,7 +214,7 @@ describe("Project Cleanup workflow", () => {
     const measurementCalls: string[] = [];
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
+        readSettings: async () => settings(),
         scan: async () => scan(candidates),
         measure: async ({ candidateId }) => {
           measurementCalls.push(candidateId);
@@ -231,7 +269,7 @@ describe("Project Cleanup workflow", () => {
     const measurementCalls: string[] = [];
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
+        readSettings: async () => settings(),
         scan: async () => scan(candidates),
         measure: async ({ candidateId }) => {
           measurementCalls.push(candidateId);
@@ -285,7 +323,7 @@ describe("Project Cleanup workflow", () => {
     ]));
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
+        readSettings: async () => settings(),
         scan: async () => ({ ...scan(candidates), cargoAvailable: false }),
         measure: async ({ candidateId }) => gates.get(candidateId)!.promise,
       }),
@@ -327,7 +365,7 @@ describe("Project Cleanup workflow", () => {
   it("keeps a Scan Session when one candidate measurement fails", async () => {
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
+        readSettings: async () => settings(),
         scan: async () => scan([pendingCandidate("broken")]),
         measure: async () => {
           throw new Error("permission denied");
@@ -366,7 +404,7 @@ describe("Project Cleanup workflow", () => {
     const review = pendingCandidate("review", "NodeModules", "Unrecognized");
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
+        readSettings: async () => settings(),
         scan: async () => scan([ready, review]),
         measure: async ({ candidateId }) =>
           candidateId === "ready" ? measurement(500) : measurement(200),
@@ -409,7 +447,7 @@ describe("Project Cleanup workflow", () => {
     const candidates = ["one", "two", "three"].map((id) => pendingCandidate(id));
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
+        readSettings: async () => settings(),
         scan: async () => scan(candidates),
         measure: async ({ candidateId }) =>
           measurement({ one: 100, two: 200, three: 300 }[candidateId]!),
@@ -442,6 +480,9 @@ describe("Project Cleanup workflow", () => {
       kind: "unavailable",
       reason: "batch-lock",
     });
+    await expect(workflow.selectPreset("preset-2")).resolves.toEqual({ kind: "unavailable", reason: "batch-lock" });
+    await expect(workflow.removePreset("preset-1")).resolves.toEqual({ kind: "unavailable", reason: "batch-lock" });
+    await expect(workflow.setMaxDepth(12)).resolves.toEqual({ kind: "unavailable", reason: "batch-lock" });
   });
 
   it("runs a Cleanup Batch sequentially and continues after invocation failure", async () => {
@@ -453,7 +494,7 @@ describe("Project Cleanup workflow", () => {
     const cleanupCalls: string[] = [];
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
+        readSettings: async () => settings(),
         scan: async () => scan(candidates),
         measure: async ({ candidateId }) =>
           measurement({ one: 100, two: 200, three: 300 }[candidateId]!),
@@ -523,7 +564,7 @@ describe("Project Cleanup workflow", () => {
     const cleanupCalls: string[] = [];
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
+        readSettings: async () => settings(),
         scan: async () => scan(candidates),
         measure: async () => measurement(100),
         clean: async ({ candidateId }) => {
@@ -587,7 +628,7 @@ describe("Project Cleanup workflow", () => {
     }> = [];
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
+        readSettings: async () => settings(),
         scan: async () => scan([pendingCandidate("candidate-1")]),
         measure: async () => measurement(100),
         openRoot: async (rootId) => {
@@ -618,8 +659,9 @@ describe("Project Cleanup workflow", () => {
   it("updates scan depth and invalidates the old Scan Session when choosing a root", async () => {
     const workflow = createProjectCleanupWorkflow(
       effects({
-        readSettings: async () => ({ rootId: "root-1", rootPath: "/code", maxDepth: 6 }),
-        chooseRoot: async () => ({ rootId: "root-2", rootPath: "/work", maxDepth: 9 }),
+        readSettings: async () => settings(),
+        chooseRoot: async () => settings("root-2", "/work", 9),
+        updateDepth: async (_id, depth) => settings("root-1", "/code", depth),
         scan: async () => scan([pendingCandidate("candidate-1")]),
         measure: async () => measurement(100),
       }),
@@ -627,7 +669,7 @@ describe("Project Cleanup workflow", () => {
     await workflow.initialize();
     await workflow.startScan();
 
-    expect(workflow.setMaxDepth(12.8)).toEqual({
+    expect(await workflow.setMaxDepth(12.8)).toEqual({
       kind: "succeeded",
       value: { maxDepth: 12 },
     });

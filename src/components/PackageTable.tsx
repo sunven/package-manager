@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { Input } from "../../components/ui/input";
 import { ArrowSquareOut as ExternalLink, Copy, Trash as Trash2 } from "@phosphor-icons/react";
 import { environmentKindLabels, homebrewFilterLabels, mavenFilterLabels, packageKindLabels, pipFilterLabels, signalLabels } from "../constants";
 import type {
@@ -12,7 +14,7 @@ import type {
 } from "../types";
 import type { MaintenanceRequest } from "../state";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel } from "../utils/format";
-import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, type IndexedPackage } from "../utils/filters";
+import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, searchAndSortPackages, type PackageSort, type IndexedPackage } from "../utils/filters";
 import { cleanupCopyFor } from "../cleanupCopy";
 import { cx } from "../utils/classNames";
 import { EmptyState, IconButton, SignalBadge, SkeletonRows, StatCard, StatusBadge } from "./ui";
@@ -36,7 +38,7 @@ interface PackageTableProps {
   onPipFilter: (filter: PipFilter) => void;
   onRequestCacheCleanup: () => void;
   onRequestPackageUninstall: (index: number) => void;
-  onSelectPackage: (index: number) => void;
+  onSelectPackage: (index: number | null) => void;
   onToggleActions: (index: number) => void;
   pendingMaintenance: MaintenanceRequest | null;
   scanning: boolean;
@@ -47,6 +49,29 @@ interface PackageTableProps {
 }
 
 export function PackageTable(props: PackageTableProps) {
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<PackageSort>("name");
+  const [descending, setDescending] = useState(false);
+  const manager = props.manager;
+  const original = !manager ? [] : manager.id === "Homebrew" ? filteredHomebrewPackages(manager, props.selectedHomebrewFilter)
+    : manager.id === "Maven" ? filteredMavenPackages(manager, props.selectedMavenFilter)
+      : manager.id === "Pip" ? filteredPipPackages(manager, props.selectedPipFilter) : indexedPackages(manager);
+  const rows = searchAndSortPackages(original, query, sort, descending);
+  const changed = () => { props.onSelectPackage(null); };
+  return <>
+    <div className="flex flex-wrap items-center gap-2 border-b p-3">
+      <Input aria-label="搜索当前管理器的软件包" placeholder="搜索名称、版本或路径" type="search" value={query} onChange={(event) => { setQuery(event.target.value); changed(); }} className="min-w-40 flex-1" />
+      <ToggleGroup type="single" value={sort} onValueChange={(value) => { if (value) { setSort(value as PackageSort); changed(); } }} aria-label="软件包排序字段">
+        <ToggleGroupItem value="name">名称</ToggleGroupItem><ToggleGroupItem value="version">版本</ToggleGroupItem>
+      </ToggleGroup>
+      <Button variant="outline" size="sm" type="button" onClick={() => { setDescending(!descending); changed(); }} aria-label="切换软件包排序方向">{descending ? "降序" : "升序"}</Button>
+      <span className="text-xs text-muted-foreground" role="status">{manager ? `${rows.length} / ${manager.packages.length} 项` : "尚未扫描"}</span>
+    </div>
+    <PackageTableContent {...props} rows={rows} />
+  </>;
+}
+
+function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[] }) {
   const { homeDirectory, manager, scanning } = props;
   if (!manager) {
     if (scanning) return <SkeletonRows label="正在扫描软件包" />;
@@ -54,7 +79,7 @@ export function PackageTable(props: PackageTableProps) {
   }
 
   if (manager.id === "Homebrew") {
-    const packages = filteredHomebrewPackages(manager, props.selectedHomebrewFilter);
+    const packages = props.rows;
     return (
       <>
         <FilterBar
@@ -70,7 +95,7 @@ export function PackageTable(props: PackageTableProps) {
   }
 
   if (manager.id === "Maven") {
-    const packages = filteredMavenPackages(manager, props.selectedMavenFilter);
+    const packages = props.rows;
     return (
       <>
         <MavenSummary health={manager.maven} homeDirectory={homeDirectory} />
@@ -81,7 +106,7 @@ export function PackageTable(props: PackageTableProps) {
   }
 
   if (manager.id === "Pip") {
-    const packages = filteredPipPackages(manager, props.selectedPipFilter);
+    const packages = props.rows;
     return (
       <>
         <PipSummary health={manager.pip} homeDirectory={homeDirectory} />
@@ -100,12 +125,12 @@ export function PackageTable(props: PackageTableProps) {
     return (
       <>
         <DockerSummary
-          cleanupAvailable={manager.status !== "Missing"}
+          cleanupAvailable={manager.status !== "Missing" && !scanning}
           health={manager.docker}
           onRequestCacheCleanup={props.onRequestCacheCleanup}
           pendingCleanup={props.pendingMaintenance?.kind === "cleanupCache" && props.pendingMaintenance.managerId === "Docker"}
         />
-        <SpecializedTable emptyMessage="未找到 Docker 镜像、容器或卷" heading={["名称", "状态 / 大小", "信号", "位置", "操作"]} packages={indexedPackages(manager)} {...props} />
+        <SpecializedTable emptyMessage="未找到 Docker 镜像、容器或卷" heading={["名称", "状态 / 大小", "信号", "位置", "操作"]} packages={props.rows} {...props} />
       </>
     );
   }
@@ -121,11 +146,11 @@ export function PackageTable(props: PackageTableProps) {
 
   const globalModulesPath = manager.paths.find((path) => path.kind === "GlobalModules" || path.kind === "GlobalDir") ?? null;
 
-  if (!manager.packages.length) {
+  if (!props.rows.length) {
     return (
       <>
         <GlobalModulesBar homeDirectory={homeDirectory} onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
-        <EmptyState message={manager.id === "Cargo" ? "未找到通过 cargo install 安装的二进制 crate" : manager.id === "Fvm" ? "未找到已安装的 Flutter 版本" : "未找到全局软件包"} />
+        <EmptyState message={manager.packages.length ? "没有匹配当前搜索条件的软件包" : manager.id === "Cargo" ? "未找到通过 cargo install 安装的二进制 crate" : manager.id === "Fvm" ? "未找到已安装的 Flutter 版本" : "未找到全局软件包"} />
       </>
     );
   }
@@ -140,7 +165,7 @@ export function PackageTable(props: PackageTableProps) {
     <>
       <GlobalModulesBar homeDirectory={homeDirectory} onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
       <TableShell heading={heading}>
-        {indexedPackages(manager).map(({ pkg, index }) => (
+        {props.rows.map(({ pkg, index }) => (
           <TableRow
             className={cx(
               "cursor-pointer",
@@ -327,7 +352,7 @@ function renderPackageSignals(pkg: PackageRow) {
   if (!pkg.signals.length) return null;
 
   return pkg.signals.map((signal) => (
-    <SignalBadge key={signal} tone={signal === "Outdated" || signal === "DuplicateVersions" ? "warn" : "partial"}>
+    <SignalBadge key={signal} tone="partial">
       {signalLabels[signal]}
     </SignalBadge>
   ));
@@ -394,22 +419,27 @@ function DockerSummary({
 
   return (
     <div className="flex flex-col gap-2 p-3">
-      <div className="stat-grid grid-cols-2 md:grid-cols-5">
+      <div className="stat-grid grid-cols-2 md:grid-cols-3">
         <StatCard label="镜像" value={String(health.imageCount)} />
         <StatCard label="容器" value={String(health.containerCount)} />
         <StatCard label="运行中" value={String(health.runningContainerCount)} />
         <StatCard label="卷" value={String(health.volumeCount)} />
-        <StatCard label="清理信号" value={String(health.danglingImageCount + health.unusedImageCount)} />
+        <StatCard label="悬空镜像（dangling）" value={String(health.danglingImageCount)} />
+        <StatCard label="未使用镜像（含悬空）" value={String(health.unusedImageCount)} />
       </div>
       {diskRows.length ? (
         <div className="stat-grid grid-cols-2 md:grid-cols-4">
           {diskRows.map((row) => (
-            <StatCard key={row.resourceType} label={row.resourceType} value={row.reclaimable || row.size} />
+            <div className="min-w-0" key={row.resourceType}>
+              <StatCard label={`${row.resourceType} · Docker 报告可回收`} value={row.reclaimable || "—"} />
+              <p className="px-3 text-xs text-muted-foreground">Docker 报告占用 {row.size || "—"}</p>
+            </div>
           ))}
         </div>
       ) : health.diskUsageStatus === "Failed" ? (
         <p className="text-sm font-medium text-destructive">{displayMessage(health.diskUsageMessage ?? "Docker disk usage failed")}</p>
       ) : null}
+      <p className="text-xs text-muted-foreground">以上为 docker system df 的报告值。本工具仅清理构建缓存和悬空镜像，报告值不代表本次实际释放空间；容器和卷不在清理范围内。</p>
       {/* Anchored here rather than on a path card: the plan prunes build cache
           and dangling images, and these are the figures that justify running it. */}
       {cleanupCopy ? (

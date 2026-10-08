@@ -4,9 +4,8 @@ import type { ManagerId, ManagerSnapshot, PathKind } from "./types";
  * Where a manager's "you will reclaim this much" figure comes from.
  *
  * The provenance genuinely differs per manager, and flattening that would mean
- * publishing a number we cannot stand behind. `pathUsage` is honest only for
- * cleanups that empty the directory outright; prune-type cleanups omit the
- * figure entirely rather than over-promise.
+ * publishing a number we cannot stand behind. `pathUsage` describes a directory
+ * footprint, never a promise of physical space released.
  */
 export type ReclaimSource =
   /** The measured size of the directory the cleanup empties. */
@@ -64,7 +63,7 @@ export const cleanupCopy: Partial<Record<ManagerId, CleanupCopy>> = {
     succeeded: "npm 缓存已清理",
     failed: "npm 缓存清理失败",
     // The measured npm cache already contains `_npx`, and the plan removes both,
-    // so the path usage is exactly what comes back.
+    // so report its footprint once, without promising released physical space.
     reclaimSource: "pathUsage",
   },
   Pnpm: {
@@ -149,19 +148,34 @@ export const cleanupCopy: Partial<Record<ManagerId, CleanupCopy>> = {
  * honestly — either the manager prunes rather than empties, or its size scan
  * has not produced a usable number yet.
  */
-export function cleanupReclaimable(manager: ManagerSnapshot | undefined): string | null {
+export interface CleanupSpaceInfo {
+  source: ReclaimSource;
+  label: string;
+  value: string;
+  note: string;
+}
+
+export function cleanupReclaimable(manager: ManagerSnapshot | undefined): CleanupSpaceInfo | null {
   const copy = manager ? cleanupCopyFor(manager.id) : null;
   if (!manager || !copy?.reclaimSource) return null;
 
   if (copy.reclaimSource === "homebrewDryRun") {
     const cleanup = manager.homebrew?.cleanup;
-    return cleanup?.status === "Ready" ? cleanup.reclaimedHuman : null;
+    return cleanup?.status === "Ready" && cleanup.reclaimedHuman ? {
+      source: "homebrewDryRun", label: "CLI 预演估算", value: cleanup.reclaimedHuman,
+      note: "来自 brew cleanup --dry-run；最终结果以执行后重新测量为准。",
+    } : null;
   }
 
   if (!copy.pathKind) return null;
   const path = manager.paths.find((candidate) => candidate.kind === copy.pathKind);
   if (!path || path.size.status !== "Ready") return null;
-  return path.size.human;
+  if (!path.size.human) return null;
+  return {
+    source: "pathUsage", label: path.size.skipped > 0 ? "当前目录占用下限" : "当前目录占用",
+    value: `${path.size.skipped > 0 ? "≥ " : ""}${path.size.human}`,
+    note: "目录占用不等于实际释放空间；共享文件、清理范围和读取完整性均会影响结果。",
+  };
 }
 
 /**

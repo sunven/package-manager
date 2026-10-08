@@ -111,12 +111,12 @@ describe("development health summary", () => {
     expect(summary.readyManagerCount).toBe(3);
     expect(summary.totalPackages).toBe(4);
     expect(summary.totalBytes).toBe(5120);
-    expect(summary.maintenanceBytes).toBeGreaterThan(1024);
-    expect(summary.riskSignalCount).toBe(2);
-    expect(summary.reviewSignalCount).toBe(3);
+    expect(summary).not.toHaveProperty("maintenanceBytes");
+    expect(summary.riskSignalCount).toBe(0);
+    expect(summary.reviewSignalCount).toBe(5);
     expect(summary.recommendations[0]).toMatchObject({
       id: "pip-local-sources",
-      tone: "risk",
+      tone: "review",
       managerId: "Pip",
     });
   });

@@ -1,5 +1,6 @@
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "../../components/ui/dropdown-menu";
 import { ArrowClockwise as RefreshCw, ArrowDown, ArrowSquareOut as ExternalLink, ArrowUp, CaretUpDown, Copy, FolderOpen, Square, Trash as Trash2, X } from "@phosphor-icons/react";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
 import {
@@ -61,6 +62,13 @@ export function ProjectCleanupPage({
   const [sortDir, setSortDir] = useState<ProjectDataSortDir>("desc");
   const [kind, setKind] = useState<ProjectDataKind>("RustTarget");
   const [message, setMessage] = useState<UiMessage | null>(null);
+  const [depthDraft, setDepthDraft] = useState(String(view.settings.maxDepth));
+  useEffect(() => {
+    setDepthDraft(String(view.settings.maxDepth));
+  }, [view.settings.activePresetId, view.settings.maxDepth]);
+  const depthChanged = depthDraft !== String(view.settings.maxDepth);
+  const draftDepth = Number(depthDraft);
+  const depthValid = depthDraft.trim() !== "" && Number.isInteger(draftDepth) && draftDepth >= 0 && draftDepth <= 32;
   const candidates = view.scan.session?.candidates ?? [];
   const rustTotal = useMemo(
     () => candidates.filter((candidate) => candidate.kind === "RustTarget").length,
@@ -85,6 +93,7 @@ export function ProjectCleanupPage({
     && selectableVisibleIds.every((candidateId) =>
       candidates.find((candidate) => candidate.candidateId === candidateId)?.selected,
     );
+  const settingsBusy = view.settings.phase === "loading";
   const scanBusy = view.scan.phase === "discovering" || view.scan.phase === "measuring";
   const batchRunning = view.batch?.phase === "running";
   const workflowFailure = view.settings.failure ?? view.scan.failure;
@@ -116,6 +125,12 @@ export function ProjectCleanupPage({
     }
   };
 
+  const saveDepth = async () => {
+    if (!depthChanged || !depthValid) return;
+    setMessage(null);
+    report(await workflow.setMaxDepth(draftDepth), "无法更新扫描深度");
+  };
+
   return (
     <main className="view-grid">
       {displayedMessage ? (
@@ -126,7 +141,7 @@ export function ProjectCleanupPage({
       ) : null}
 
       <Panel>
-        <div className="flex items-center gap-2 p-2.5">
+        <div className="flex flex-wrap items-center gap-2 p-2.5">
           <span className="shrink-0 text-sm font-medium">扫描范围</span>
           {view.settings.phase === "loading" ? (
             <Skeleton className="h-9 min-w-0 flex-1" />
@@ -145,16 +160,18 @@ export function ProjectCleanupPage({
             <Input
               aria-describedby="project-cleanup-depth-range"
               className="w-16"
-              disabled={scanBusy || Boolean(view.batch)}
+              disabled={!view.settings.activePresetId || settingsBusy || scanBusy || Boolean(view.batch)}
               id="project-cleanup-depth"
               max={32}
               min={0}
-              onChange={(event) => report(workflow.setMaxDepth(event.currentTarget.valueAsNumber), "无法更新扫描深度")}
+              onChange={(event) => setDepthDraft(event.currentTarget.value)}
+              onKeyDown={(event) => { if (event.key === "Enter") void saveDepth(); }}
               type="number"
-              value={view.settings.maxDepth}
+              value={depthDraft}
             />
             <span className="sr-only" id="project-cleanup-depth-range">范围 0 到 32</span>
           </label>
+          {depthChanged ? <Button disabled={!depthValid || settingsBusy || scanBusy || Boolean(view.batch)} onClick={() => void saveDepth()} size="sm" type="button" variant="outline">保存深度</Button> : null}
           {scanBusy ? (
             <Button
               className="shrink-0"
@@ -170,7 +187,7 @@ export function ProjectCleanupPage({
           ) : null}
           <Button
             className="shrink-0"
-            disabled={!view.settings.rootId || scanBusy || Boolean(view.batch)}
+            disabled={settingsBusy || depthChanged || !view.settings.rootId || scanBusy || Boolean(view.batch)}
             onClick={() => void workflow.startScan().then((outcome) => report(outcome, "项目派生数据扫描失败"))}
             size="sm"
             type="button"
@@ -191,16 +208,29 @@ export function ProjectCleanupPage({
           </Button>
           <Button
             className="shrink-0"
-            disabled={scanBusy || Boolean(view.batch)}
+            disabled={settingsBusy || scanBusy || Boolean(view.batch)}
             onClick={() => void workflow.chooseRoot().then((outcome) => report(outcome, "无法选择扫描根目录"))}
             size="sm"
             type="button"
             variant="outline"
           >
             <FolderOpen data-icon="inline-start" />
-            选择目录
+            添加目录预设
           </Button>
         </div>
+        <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><Button disabled={settingsBusy || scanBusy || Boolean(view.batch) || !view.settings.presets.length} variant="outline" size="sm" type="button">选择目录预设（{view.settings.presets.length}）</Button></DropdownMenuTrigger>
+            <DropdownMenuContent><DropdownMenuGroup>
+              {view.settings.presets.map((preset) => <DropdownMenuItem key={preset.id} onSelect={() => void workflow.selectPreset(preset.id).then((outcome) => report(outcome, "无法切换目录预设"))}>
+                {formatHomePath(preset.path, homeDirectory)} · 深度 {preset.maxDepth}{preset.id === view.settings.activePresetId ? " · 当前" : ""}
+              </DropdownMenuItem>)}
+            </DropdownMenuGroup></DropdownMenuContent>
+          </DropdownMenu>
+          {view.settings.activePresetId ? <Button disabled={settingsBusy || scanBusy || Boolean(view.batch)} variant="outline" size="sm" type="button" onClick={() => void workflow.removePreset(view.settings.activePresetId!).then((outcome) => report(outcome, "无法移除目录预设"))}>移除当前预设（不删除目录）</Button> : null}
+          <span className="text-xs text-muted-foreground">切换预设后重新扫描，清理候选不会保存在预设中。</span>
+        </div>
+        {view.settings.rootMessage ? <Alert><AlertTitle>扫描目录不可用</AlertTitle><AlertDescription>{view.settings.rootMessage}。目录恢复后可重新选择此预设验证。</AlertDescription></Alert> : null}
       </Panel>
 
       <ProjectDataScanNotice view={view} />

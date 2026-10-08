@@ -23,6 +23,8 @@ import {
 } from "../state";
 import { cleanupCopyFor, hasCleanupPlan } from "../cleanupCopy";
 import { managerOrder } from "../constants";
+import { createManagerScanQueue } from "../managerScanQueue";
+import { scanProblems, type ManagerScanState } from "../managerScanning";
 import { readEnabledManagers, writeEnabledManagers } from "../managerSettings";
 import type {
   CacheCleanupRun,
@@ -72,9 +74,11 @@ const initialCounters: NumberByManager = {
 
 export interface PackageManagerActions {
   refresh: (managerId?: ManagerId) => Promise<void>;
+  refreshEnabled: () => Promise<void>;
+  retrySupplement: (kind: "paths" | "homebrew" | "pip") => Promise<void>;
   selectManager: (managerId: ManagerId) => void;
   setManagerEnabled: (managerId: ManagerId, enabled: boolean) => void;
-  selectPackage: (index: number) => void;
+  selectPackage: (index: number | null) => void;
   togglePackageActions: (index: number) => void;
   closePackageActions: () => void;
   copyPath: (path: string) => Promise<void>;
@@ -96,6 +100,10 @@ export interface PackageManagerActions {
 export function usePackageManagers() {
   const [enabledManagers, setEnabledManagers] = useState<ManagerId[]>(readEnabledManagers);
   const [managerSnapshots, setManagerSnapshots] = useState<ManagerMap>({});
+  const [scanStates, setScanStates] = useState<Partial<Record<ManagerId, ManagerScanState>>>({});
+  const [scanningAll, setScanningAll] = useState(false);
+  const scanningAllRef = useRef(false);
+  const scanQueue = useRef(createManagerScanQueue());
   const [scanDurationMsByManager, setScanDurationMsByManager] = useState<Partial<NumberByManager>>({});
   const [selectedManager, setSelectedManager] = useState<ManagerId>(() => readEnabledManagers()[0] ?? "Npm");
   const [selectedPackageIndex, setSelectedPackageIndex] = useState<number | null>(null);
@@ -152,17 +160,11 @@ export function usePackageManagers() {
   const currentManager = managerSnapshots[selectedManager] ?? null;
 
   const updateManager = useCallback((managerId: ManagerId, updater: (manager: ManagerSnapshot) => ManagerSnapshot) => {
-    setManagerSnapshots((current) => {
-      const base = current[managerId] ? current : managerSnapshotsRef.current;
-      const manager = base[managerId];
-      if (!manager) return current;
-      const next = {
-        ...base,
-        [managerId]: updater(manager),
-      };
-      managerSnapshotsRef.current = next;
-      return next;
-    });
+    const manager = managerSnapshotsRef.current[managerId];
+    if (!manager) return;
+    const next = { ...managerSnapshotsRef.current, [managerId]: updater(manager) };
+    managerSnapshotsRef.current = next;
+    setManagerSnapshots(next);
   }, []);
 
   const renderMeta = useMemo(() => {
@@ -223,11 +225,9 @@ export function usePackageManagers() {
   }, []);
 
   const updateMaintenanceState = useCallback((updater: (state: MaintenanceUiState) => MaintenanceUiState) => {
-    setMaintenanceState((current) => {
-      const next = updater(current);
-      maintenanceStateRef.current = next;
-      return next;
-    });
+    const next = updater(maintenanceStateRef.current);
+    maintenanceStateRef.current = next;
+    setMaintenanceState(next);
   }, []);
 
   const markCopied = useCallback(
@@ -247,7 +247,7 @@ export function usePackageManagers() {
         if (!shouldApplyHydrationResult(token, pipOutdatedTokenRef.current)) return;
         updateManager("Pip", (manager) => {
           if (!manager.pip) return manager;
-          return applyPipOutdatedPreview({ ...manager, packages: manager.packages.map((pkg) => ({ ...pkg, signals: [...pkg.signals] })) }, preview);
+          return applyPipOutdatedPreview({ ...manager, pip: { ...manager.pip, outdatedFailure: preview.failure }, packages: manager.packages.map((pkg) => ({ ...pkg, signals: [...pkg.signals] })) }, preview);
         });
       } catch (error) {
         if (!shouldApplyHydrationResult(token, pipOutdatedTokenRef.current)) return;
@@ -265,7 +265,7 @@ export function usePackageManagers() {
             message: errorToString(error),
             failure: null,
           };
-          return applyPipOutdatedPreview({ ...manager, packages: manager.packages.map((pkg) => ({ ...pkg, signals: [...pkg.signals] })) }, failedPreview);
+          return applyPipOutdatedPreview({ ...manager, pip: { ...manager.pip, outdatedFailure: null }, packages: manager.packages.map((pkg) => ({ ...pkg, signals: [...pkg.signals] })) }, failedPreview);
         });
       } finally {
         if (shouldApplyHydrationResult(token, pipOutdatedTokenRef.current)) {
@@ -321,11 +321,13 @@ export function usePackageManagers() {
     [updateManager],
   );
 
-  const hydratePathSizes = useCallback(async (managerId: ManagerId, token: number, scannedManager?: ManagerSnapshot) => {
+  const hydratePathSizes = useCallback(async (managerId: ManagerId, token: number, scannedManager?: ManagerSnapshot, retry = false) => {
     const activeManager = scannedManager ?? managerSnapshotsRef.current[managerId];
     if (!activeManager) return;
 
-    const pendingPaths = activeManager.paths.filter((path) => path.size.status === "Pending");
+    const pendingPaths = activeManager.paths.filter((path) => retry
+      ? path.size.status !== "Ready" || path.size.skipped > 0
+      : path.size.status === "Pending");
     setPendingSizeScansByManager((current) => ({ ...current, [managerId]: pendingPaths.length }));
 
     await Promise.all(
@@ -352,57 +354,109 @@ export function usePackageManagers() {
     );
   }, [updateManager]);
 
-  const refresh = useCallback(
-    async (managerId = selectedManagerRef.current) => {
-      if (!enabledManagersRef.current.includes(managerId)) return;
-      if (scanningManagersRef.current.has(managerId)) return;
+  const setScanState = useCallback((managerId: ManagerId, patch: Partial<ManagerScanState>) => {
+    setScanStates((current) => ({
+      ...current,
+      [managerId]: { phase: "idle", scannedAt: null, error: null, ...current[managerId], ...patch },
+    }));
+  }, []);
 
+  const scheduleScan = useCallback((managerId: ManagerId, job: () => Promise<void>) => {
+    if (!scanningManagersRef.current.has(managerId)) {
       scanningManagersRef.current = new Set(scanningManagersRef.current).add(managerId);
       setScanningManagers(scanningManagersRef.current);
-      sizeScanTokensRef.current = { ...sizeScanTokensRef.current, [managerId]: sizeScanTokensRef.current[managerId] + 1 };
-      if (managerId === "Homebrew") {
-        homebrewCleanupTokenRef.current += 1;
-        setPendingHomebrewCleanup(false);
-      }
-      if (managerId === "Pip") {
-        pipOutdatedTokenRef.current += 1;
-        setPendingPipOutdated(false);
-      }
-      setPendingSizeScansByManager((current) => ({ ...current, [managerId]: 0 }));
-      setUiMessage(null);
-
+      setScanState(managerId, { phase: "queued" });
+    }
+    return scanQueue.current.run(managerId, async () => {
       try {
-        const result = await invoke<ManagerScanSnapshot>("scan_manager", { manager: managerId });
-        managerSnapshotsRef.current = { ...managerSnapshotsRef.current, [result.manager.id]: result.manager };
-        setManagerSnapshots(managerSnapshotsRef.current);
-        setScanDurationMsByManager((current) => ({ ...current, [result.manager.id]: result.scanDurationMs }));
-        if (
-          result.manager.id === selectedManagerRef.current &&
-          selectedPackageIndexRef.current !== null &&
-          selectedPackageIndexRef.current >= result.manager.packages.length
-        ) {
-          setSelectedPackageIndex(null);
-        }
-
-        const pathToken = sizeScanTokensRef.current[result.manager.id];
-        void hydratePathSizes(result.manager.id, pathToken, result.manager);
-        if (result.manager.id === "Homebrew" && result.manager.homebrew?.cleanup.status === "Pending") {
-          void hydrateHomebrewCleanup(homebrewCleanupTokenRef.current);
-        }
-        if (result.manager.id === "Pip" && result.manager.pip?.outdatedStatus === "Pending") {
-          void hydratePipOutdated(pipOutdatedTokenRef.current, result.manager.pip.pythonExecutable);
-        }
-      } catch (error) {
-        if (managerId === selectedManagerRef.current) showError(`${managerLabel(managerId)} 扫描失败`, error);
+        if (enabledManagersRef.current.includes(managerId)) await job();
       } finally {
         const next = new Set(scanningManagersRef.current);
         next.delete(managerId);
         scanningManagersRef.current = next;
         setScanningManagers(next);
+        setScanState(managerId, { phase: "idle" });
       }
+    });
+  }, [setScanState]);
+
+  const refresh = useCallback(
+    (managerId = selectedManagerRef.current, afterMaintenance = false): Promise<void> => {
+      if (!afterMaintenance && (maintenanceStateRef.current.confirmation || maintenanceStateRef.current.pending)) return Promise.resolve();
+      if (!enabledManagersRef.current.includes(managerId)) return Promise.resolve();
+      return scheduleScan(managerId, async () => {
+        const token = ++sizeScanTokensRef.current[managerId];
+        if (managerId === "Homebrew") homebrewCleanupTokenRef.current += 1;
+        if (managerId === "Pip") pipOutdatedTokenRef.current += 1;
+        setScanState(managerId, { phase: "reading", error: null });
+        if (managerId === selectedManagerRef.current) {
+          setSelectedPackageIndex(null);
+          setOpenPackageActionMenuIndex(null);
+        }
+        try {
+          const result = await invoke<ManagerScanSnapshot>("scan_manager", { manager: managerId });
+          if (token !== sizeScanTokensRef.current[managerId]) return;
+          setScanDurationMsByManager((current) => ({ ...current, [managerId]: result.scanDurationMs }));
+          setScanState(managerId, { diagnostics: result.diagnostics, failures: result.manager.failures });
+          if (result.manager.status === "Failed" && managerSnapshotsRef.current[managerId]) {
+            setScanState(managerId, { error: scanProblems(result.manager) });
+            return;
+          }
+          managerSnapshotsRef.current = { ...managerSnapshotsRef.current, [managerId]: result.manager };
+          setManagerSnapshots(managerSnapshotsRef.current);
+          setScanState(managerId, { phase: "enriching", scannedAt: Date.now() });
+          const supplements: Promise<void>[] = [hydratePathSizes(managerId, token, result.manager)];
+          if (managerId === "Homebrew" && result.manager.homebrew?.cleanup.status === "Pending") {
+            supplements.push(hydrateHomebrewCleanup(homebrewCleanupTokenRef.current));
+          }
+          if (managerId === "Pip" && result.manager.pip?.outdatedStatus === "Pending") {
+            supplements.push(hydratePipOutdated(pipOutdatedTokenRef.current, result.manager.pip.pythonExecutable));
+          }
+          await Promise.all(supplements);
+          if (token !== sizeScanTokensRef.current[managerId]) return;
+          const current = managerSnapshotsRef.current[managerId];
+          setScanState(managerId, { error: current ? scanProblems(current) : null, failures: current?.failures });
+        } catch (error) {
+          if (token !== sizeScanTokensRef.current[managerId]) return;
+          setScanState(managerId, { error: errorToString(error) });
+        }
+      });
     },
-    [hydrateHomebrewCleanup, hydratePathSizes, hydratePipOutdated, showError],
+    [hydrateHomebrewCleanup, hydratePathSizes, hydratePipOutdated, scheduleScan, setScanState],
   );
+
+  const refreshEnabled = useCallback(async () => {
+    if (scanningAllRef.current || maintenanceStateRef.current.confirmation || maintenanceStateRef.current.pending) return;
+    scanningAllRef.current = true;
+    setScanningAll(true);
+    try {
+      await Promise.allSettled([...enabledManagersRef.current].map((id) => refresh(id)));
+    } finally {
+      scanningAllRef.current = false;
+      setScanningAll(false);
+    }
+  }, [refresh]);
+
+  const retrySupplement = useCallback((kind: "paths" | "homebrew" | "pip") => {
+    if (maintenanceStateRef.current.confirmation || maintenanceStateRef.current.pending) return Promise.resolve();
+    const managerId = selectedManagerRef.current;
+    return scheduleScan(managerId, async () => {
+      const manager = managerSnapshotsRef.current[managerId];
+      if (!manager) return;
+      setScanState(managerId, { phase: "enriching" });
+      if (kind === "paths") await hydratePathSizes(managerId, ++sizeScanTokensRef.current[managerId], manager, true);
+      if (kind === "homebrew" && managerId === "Homebrew") await hydrateHomebrewCleanup(++homebrewCleanupTokenRef.current);
+      if (kind === "pip" && managerId === "Pip" && manager.pip) await hydratePipOutdated(++pipOutdatedTokenRef.current, manager.pip.pythonExecutable);
+      const current = managerSnapshotsRef.current[managerId];
+      setScanState(managerId, { error: current ? scanProblems(current) : null, failures: current?.failures });
+    });
+  }, [hydrateHomebrewCleanup, hydratePathSizes, hydratePipOutdated, scheduleScan, setScanState]);
+
+  useEffect(() => () => {
+    for (const id of managerOrder) sizeScanTokensRef.current[id] += 1;
+    homebrewCleanupTokenRef.current += 1;
+    pipOutdatedTokenRef.current += 1;
+  }, []);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -437,6 +491,7 @@ export function usePackageManagers() {
   const selectManager = useCallback(
     (managerId: ManagerId) => {
       if (!enabledManagersRef.current.includes(managerId)) return;
+      selectedManagerRef.current = managerId;
       setSelectedManager(managerId);
       setSelectedPackageIndex(null);
       setOpenPackageActionMenuIndex(null);
@@ -480,7 +535,7 @@ export function usePackageManagers() {
     [refresh],
   );
 
-  const selectPackage = useCallback((index: number) => {
+  const selectPackage = useCallback((index: number | null) => {
     setSelectedPackageIndex(index);
     setOpenPackageActionMenuIndex(null);
   }, []);
@@ -591,7 +646,7 @@ export function usePackageManagers() {
       const managerId = selectedManagerRef.current;
       if (managerId !== "Npm" && managerId !== "Pnpm") return;
       const pkg = packageAt(index);
-      if (!pkg) return;
+      if (!pkg || scanningManagersRef.current.has(managerId)) return;
       setOpenPackageActionMenuIndex(null);
       updateMaintenanceState((state) => requestMaintenancePackageUninstall(state, managerId, index, pkg.name));
     },
@@ -600,7 +655,7 @@ export function usePackageManagers() {
 
   const requestCacheCleanupAction = useCallback(() => {
     const managerId = selectedManagerRef.current;
-    if (!hasCleanupPlan(managerId)) return;
+    if (!hasCleanupPlan(managerId) || scanningManagersRef.current.has(managerId)) return;
     updateMaintenanceState((state) => requestCacheCleanup(state, managerId));
   }, [updateMaintenanceState]);
 
@@ -610,7 +665,7 @@ export function usePackageManagers() {
 
   const confirmMaintenance = useCallback(async () => {
     const request = maintenanceStateRef.current.confirmation;
-    if (!request || maintenanceStateRef.current.pending) return;
+    if (!request || maintenanceStateRef.current.pending || scanningManagersRef.current.has(request.managerId)) return;
 
     const started = startConfirmedMaintenanceOperation(maintenanceStateRef.current);
     maintenanceStateRef.current = started;
@@ -623,7 +678,7 @@ export function usePackageManagers() {
           throw new Error(cacheCleanupFailureMessage(run));
         }
 
-        await refresh(request.managerId);
+        await refresh(request.managerId, true);
 
         if (run.outcome === "PartiallyCompleted") {
           // Part of the plan really did delete things. Reporting this as a plain
@@ -648,7 +703,7 @@ export function usePackageManagers() {
         throw new Error(maintenanceFailureMessage(preview));
       }
 
-      await refresh(request.managerId);
+      await refresh(request.managerId, true);
       updateMaintenanceState(completeMaintenanceOperation);
       toast.success(maintenanceSuccessTitle(request), {
         description: preview.command.preview,
@@ -666,6 +721,8 @@ export function usePackageManagers() {
 
   const actions: PackageManagerActions = {
     refresh,
+    refreshEnabled,
+    retrySupplement,
     selectManager,
     setManagerEnabled,
     selectPackage,
@@ -714,6 +771,8 @@ export function usePackageManagers() {
     maintenanceResult: maintenanceState.result ?? null,
     pendingSizeScansByManager,
     scanMeta: renderMeta,
+    scanStates,
+    scanningAll,
     scanningManagers,
     selectedHomebrewFilter,
     selectedManager,

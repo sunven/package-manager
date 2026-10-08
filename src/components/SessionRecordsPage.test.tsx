@@ -36,9 +36,9 @@ describe("SessionRecordsPage", () => {
         error={null}
         homeDirectory="/Users/example"
         onRefresh={() => {}}
-        onRemove={async () => ({ moved: 0, failed: 0, message: null })}
-        onRemoveOlder={async () => ({ moved: 0, failed: 0, message: null })}
-        onRemoveSelected={async () => ({ moved: 0, failed: 0, message: null })}
+        onRemove={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
+        onRemoveOlder={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
+        onRemoveSelected={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
         scan={scan}
         scanningSources={{ codex: false, claude: false }}
       />,
@@ -63,9 +63,9 @@ describe("SessionRecordsPage", () => {
         error={null}
         homeDirectory="/Users/example"
         onRefresh={() => {}}
-        onRemove={async () => ({ moved: 1, failed: 0, message: null })}
-        onRemoveOlder={async () => ({ moved: 0, failed: 0, message: null })}
-        onRemoveSelected={async () => ({ moved: 0, failed: 0, message: null })}
+        onRemove={async () => ({ moved: 1, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
+        onRemoveOlder={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
+        onRemoveSelected={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
         scan={{
           ...scan,
           codex: {
@@ -82,7 +82,7 @@ describe("SessionRecordsPage", () => {
     expect(html).toContain("移入废纸篓 0 条");
     expect(openingTagBefore(html, "移入废纸篓 0 条")).toMatch(/ disabled(?:=|\s|>)/);
     expect(checkboxTag(html, "选择 可以移走")).not.toContain("data-disabled");
-    expect(html).toContain("全选可移除");
+    expect(html).toContain("全选当前结果中可移除记录");
   });
 
   it("shows an empty Codex section when the sessions directory is missing", () => {
@@ -91,9 +91,9 @@ describe("SessionRecordsPage", () => {
         error={null}
         homeDirectory={null}
         onRefresh={() => {}}
-        onRemove={async () => ({ moved: 0, failed: 0, message: null })}
-        onRemoveOlder={async () => ({ moved: 0, failed: 0, message: null })}
-        onRemoveSelected={async () => ({ moved: 0, failed: 0, message: null })}
+        onRemove={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
+        onRemoveOlder={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
+        onRemoveSelected={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
         scan={{
           codex: { ...codex, status: "Missing", records: [] },
           claude: scan.claude,
@@ -112,9 +112,9 @@ describe("SessionRecordsPage", () => {
         error={null}
         homeDirectory="/Users/example"
         onRefresh={() => {}}
-        onRemove={async () => ({ moved: 0, failed: 0, message: null })}
-        onRemoveOlder={async () => ({ moved: 0, failed: 0, message: null })}
-        onRemoveSelected={async () => ({ moved: 0, failed: 0, message: null })}
+        onRemove={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
+        onRemoveOlder={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
+        onRemoveSelected={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
         initialSource="claude"
         scan={{
           codex,

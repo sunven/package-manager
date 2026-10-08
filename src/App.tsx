@@ -16,6 +16,9 @@ import { PackageTable } from "./components/PackageTable";
 import { PathPanel } from "./components/PathPanel";
 import { SettingsPage } from "./components/SettingsPage";
 import { Shell } from "./components/Shell";
+import { ManagerDiagnostics } from "./components/ManagerDiagnostics";
+import { scanStateLabel } from "./managerScanning";
+import { Button } from "../components/ui/button";
 import { Panel } from "./components/ui";
 import { Toaster } from "../components/ui/sonner";
 
@@ -43,7 +46,6 @@ export function App() {
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [query, setQuery] = useState("");
   const { actions, currentManager, scanningManagers, selectedManager } = state;
   const scanning = scanningManagers.has(selectedManager);
   const developmentHealth = useMemo(
@@ -112,7 +114,7 @@ export function App() {
         setActiveView("settings");
       }}
       onToggleTheme={() => setTheme((currentTheme) => currentTheme === "dark" ? "light" : "dark")}
-      scanning={scanning}
+      scanning={scanningManagers.size > 0}
       theme={theme}
     >
       <MessageBanner homeDirectory={state.homeDirectory} message={state.uiMessage} />
@@ -168,34 +170,19 @@ export function App() {
           />
         ) : activeView === "health" ? (
           <OverviewDashboard
-            enabledManagers={state.enabledManagers}
             health={developmentHealth}
             homeDirectory={state.homeDirectory}
             managerSnapshots={state.managerSnapshots}
-            menuOpenIndex={state.openPackageActionMenuIndex}
-            onCopyCommand={(payload) => void actions.copyCommand(payload)}
-            onCopyPackage={(index) => void actions.copyPackage(index)}
-            onCopyPackageAction={(index, actionIndex) => void actions.copyPackageAction(index, actionIndex)}
-            onCopyPath={(path) => void actions.copyPath(path)}
+            scanStates={state.scanStates}
+            scanningAll={state.scanningAll}
+            maintenanceBusy={Boolean(state.maintenanceConfirmation || state.maintenancePending)}
+            onRefreshAll={() => void actions.refreshEnabled()}
             onOpenManager={(managerId) => {
               actions.closePackageActions();
               actions.selectManager(managerId);
               setActiveView("managers");
             }}
-            onOpenPackage={(index) => void actions.openPackage(index)}
-            onOpenPath={(path) => void actions.openPath(path)}
-            onQueryChange={setQuery}
-            onRefresh={() => void actions.refresh()}
-            onRequestPackageUninstall={actions.requestPackageUninstall}
-            onSelectManager={actions.selectManager}
-            onSelectPackage={actions.selectPackage}
-            onShowManagers={() => setActiveView("managers")}
-            onToggleActions={actions.togglePackageActions}
-            pendingMaintenance={state.maintenancePending}
-            query={query}
-            scanningManagers={state.scanningManagers}
-            selectedManager={selectedManager}
-            selectedPackageIndex={state.selectedPackageIndex}
+            onOpenView={setActiveView}
           />
         ) : (
           <>
@@ -207,9 +194,14 @@ export function App() {
               selectedManager={selectedManager}
             />
 
+            <div className="flex flex-wrap items-center justify-between gap-2" aria-live="polite">
+              <div className="text-xs text-muted-foreground"><p>{scanStateLabel(state.scanStates[selectedManager], currentManager ?? undefined)}{state.scanStates[selectedManager]?.scannedAt ? ` · 数据时间 ${new Date(state.scanStates[selectedManager]!.scannedAt!).toLocaleString()}` : ""}</p><p>{state.scanMeta}</p></div>
+              <Button variant="outline" type="button" disabled={scanning || Boolean(state.maintenanceConfirmation || state.maintenancePending)} onClick={() => void actions.refresh()}>刷新当前管理器</Button>
+            </div>
             <main className="view-grid min-[1100px]:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.7fr)] min-[1100px]:items-start">
               <Panel className="overflow-hidden">
                 <PackageTable
+                  key={selectedManager}
                   homeDirectory={state.homeDirectory}
                   manager={currentManager}
                   menuOpenIndex={state.openPackageActionMenuIndex}
@@ -235,6 +227,14 @@ export function App() {
               </Panel>
 
               <aside className="grid gap-2 min-[1100px]:sticky min-[1100px]:top-2">
+                <ManagerDiagnostics
+                  manager={currentManager} state={state.scanStates[selectedManager]}
+                  homeDirectory={state.homeDirectory}
+                  busy={scanning || Boolean(state.maintenanceConfirmation || state.maintenancePending)}
+                  onRefresh={() => void actions.refresh()}
+                  onRetry={(kind) => void actions.retrySupplement(kind)}
+                  onCopy={(value) => void actions.copyCommand(value)}
+                />
                 <PathPanel
                   homeDirectory={state.homeDirectory}
                   manager={currentManager}

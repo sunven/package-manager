@@ -57,7 +57,7 @@ export function PathPanel({
     <div className="flex flex-col gap-2">
       {manager.id === "Homebrew" ? (
         <HomebrewCleanupCard
-          cleanupReady={cleanupReady(manager)}
+          cleanupReady={cleanupReady(manager) && !scanning}
           homeDirectory={homeDirectory}
           maintenance={manager.homebrew}
           onCopyCleanupCommand={onCopyCleanupCommand}
@@ -70,7 +70,7 @@ export function PathPanel({
         <>
           {inlinePaths.length ? (
             <InlinePathCard
-              cleanupAvailable={manager.status !== "Missing"}
+              cleanupAvailable={manager.status !== "Missing" && !scanning}
               homeDirectory={homeDirectory}
               managerId={manager.id}
               onCopyPath={onCopyPath}
@@ -85,7 +85,7 @@ export function PathPanel({
             <div className="grid gap-2 sm:grid-cols-2 min-[1100px]:grid-cols-1">
               {stackedPaths.map((path) => (
                 <PathCard
-                  cleanupAvailable={manager.status !== "Missing"}
+                  cleanupAvailable={manager.status !== "Missing" && !scanning}
                   homeDirectory={homeDirectory}
                   key={`${path.kind}-${path.path}`}
                   managerId={manager.id}
@@ -215,8 +215,8 @@ function InlinePathCell({
   pendingMaintenance: MaintenanceRequest | null;
 }) {
   const size = path.size;
-  const sizeValue = size.status === "Ready" ? (size.human ?? "0 B") : null;
-  const detail = size.status === "Pending" ? "等待占用扫描" : `${size.files} 文件`;
+  const sizeValue = size.status === "Ready" ? (size.human ? `${size.skipped > 0 ? "≥ " : ""}${size.human}` : null) : null;
+  const detail = size.status === "Pending" ? "等待占用扫描" : `${size.files} 文件${size.skipped ? " · 已测下限" : ""}`;
   const cleanupCopy = cleanupAvailable ? cleanupCopyForPath(managerId, path.kind) : null;
   const pendingCleanup = pendingMaintenance?.kind === "cleanupCache" && pendingMaintenance.managerId === managerId;
 
@@ -291,7 +291,7 @@ function PathCard({
   const cleanupCopy = cleanupAvailable ? cleanupCopyForPath(managerId, path.kind) : null;
   const pendingCleanup = pendingMaintenance?.kind === "cleanupCache" && pendingMaintenance.managerId === managerId;
   const size = path.size;
-  const sizeValue = size.status === "Ready" ? (size.human ?? "0 B") : null;
+  const sizeValue = size.status === "Ready" ? (size.human ? `${size.skipped > 0 ? "≥ " : ""}${size.human}` : null) : null;
   const detail =
     size.status === "Pending" ? (
       <span>等待占用扫描</span>

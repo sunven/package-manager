@@ -107,7 +107,7 @@ describe("session record grouping", () => {
 
   it("names the record in the single-removal confirmation and reports both counts", () => {
     expect(singleRemovalConfirmText("修一下登录")).toBe("将「修一下登录」移入废纸篓？");
-    expect(removalResultText({ moved: 1, failed: 0 })).toBe("移入废纸篓 1 条，失败 0 条");
+    expect(removalResultText({ moved: 1, failed: 0, skipped: 0, operationError: null })).toBe("移入废纸篓 1 条，跳过 0 条，失败 0 条");
   });
 
   it("selects one source's records older than 7 or 30 periods of 24 hours", () => {
@@ -126,7 +126,7 @@ describe("session record grouping", () => {
     expect(bulkRemovalRequest(records, 30, now)).toEqual({ days: 30, count: 1 });
     expect(bulkRemovalRequest([records[0]], 7, now)).toBeNull();
     expect(bulkRemovalConfirmText("Claude", 30, 1)).toBe(
-      "将 Claude 最后活动时间早于 30 天的 1 条会话记录移入废纸篓？使用中的记录和读不出最后活动时间的记录不在其中。",
+      "将整个 Claude 来源中最后活动时间早于 30 天的会话记录移入废纸篓？当前观察到 1 条，搜索和状态筛选不限制此范围。使用中的记录和读不出最后活动时间的记录不在其中；执行时会重新判断。",
     );
   });
 

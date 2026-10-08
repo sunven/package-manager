@@ -350,6 +350,7 @@ pub(crate) enum ManagerStatus {
 pub(crate) struct ManagerScanSnapshot {
     pub(crate) scan_duration_ms: u128,
     pub(crate) manager: ManagerSnapshot,
+    pub(crate) diagnostics: crate::scan_diagnostics::ScanDiagnostics,
 }
 
 /// Overall result of running a cleanup plan.

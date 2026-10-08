@@ -13,6 +13,9 @@ export function createTauriProjectCleanupEffects(): ProjectCleanupEffects {
       invoke<ProjectCleanupSettings>("get_project_cleanup_settings"),
     chooseRoot: () =>
       invoke<ProjectCleanupSettings | null>("choose_project_cleanup_root"),
+    selectPreset: (presetId) => invoke<ProjectCleanupSettings>("select_project_cleanup_preset", { presetId }),
+    removePreset: (presetId) => invoke<ProjectCleanupSettings>("remove_project_cleanup_preset", { presetId }),
+    updateDepth: (presetId, maxDepth) => invoke<ProjectCleanupSettings>("update_project_cleanup_depth", { presetId, maxDepth }),
     scan: (input) => invoke<ProjectDataScan>("scan_project_data", input),
     measure: (input) =>
       invoke<DirectoryMeasurement>("measure_project_data_candidate", input),

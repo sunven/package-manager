@@ -1,34 +1,75 @@
 import type { DevelopmentHealthSummary } from "../developmentHealth";
-import type { MaintenanceRequest } from "../state";
 import type { ManagerId, ManagerSnapshot } from "../types";
+import { scanStateLabel, type ManagerScanState } from "../managerScanning";
+import { formatBytes, formatHomePath, managerLabel } from "../utils/format";
+import { DevelopmentHealthPage } from "./DevelopmentHealthPage";
+import { StatCard, StatusBadge, EmptyState } from "./ui";
+import { Button } from "../../components/ui/button";
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../../components/ui/card";
 
-export function OverviewDashboard(_props: {
-  enabledManagers: ManagerId[];
+export function OverviewDashboard({ health, homeDirectory, managerSnapshots, scanStates, scanningAll, maintenanceBusy, onRefreshAll, onOpenManager, onOpenView }: {
   health: DevelopmentHealthSummary;
   homeDirectory: string | null;
   managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
-  menuOpenIndex: number | null;
-  onCopyCommand: (payload: string) => void;
-  onCopyPackage: (index: number) => void;
-  onCopyPackageAction: (index: number, actionIndex: number) => void;
-  onCopyPath: (path: string) => void;
-  onOpenManager: (managerId: ManagerId) => void;
-  onOpenPackage: (index: number) => void;
-  onOpenPath: (path: string) => void;
-  onQueryChange: (value: string) => void;
-  onRefresh: () => void;
-  onRequestPackageUninstall: (index: number) => void;
-  onSelectManager: (managerId: ManagerId) => void;
-  onSelectPackage: (index: number) => void;
-  onShowManagers: () => void;
-  onToggleActions: (index: number) => void;
-  pendingMaintenance: MaintenanceRequest | null;
-  query: string;
-  scanningManagers: Set<ManagerId>;
-  selectedManager: ManagerId;
-  selectedPackageIndex: number | null;
+  scanStates: Partial<Record<ManagerId, ManagerScanState>>;
+  scanningAll: boolean;
+  maintenanceBusy: boolean;
+  onRefreshAll: () => void;
+  onOpenManager: (manager: ManagerId) => void;
+  onOpenView: (view: "cleanup" | "vscode" | "sessions") => void;
 }) {
-  return null;
+  return (
+    <main className="view-grid" aria-label="开发环境总览">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h2 className="text-xl font-medium">开发环境总览</h2><p className="text-sm text-muted-foreground">按需检查本机环境，维护前先查看范围和依据。</p></div>
+        <Button disabled={scanningAll || maintenanceBusy} onClick={onRefreshAll} type="button">{scanningAll ? "正在扫描已启用管理器" : "扫描已启用管理器"}</Button>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <StatCard label="已扫描／已启用管理器" value={`${health.scannedManagerCount} / ${health.enabledManagerCount}`} />
+        <StatCard label="已观察资产条目" value={health.scannedManagerCount ? String(health.totalPackages) : "—"} />
+        <StatCard label="未扫描管理器" value={String(health.enabledManagerCount - health.scannedManagerCount)} />
+      </div>
+      <div className="grid items-start gap-3 min-[1100px]:grid-cols-[1.5fr_1fr]">
+        <Card>
+          <CardHeader><CardTitle>管理器状态</CardTitle><CardDescription>未扫描不代表没有占用；最近扫描失败时保留上次结果。</CardDescription></CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            {health.managerStatuses.map(({ managerId }) => {
+              const manager = managerSnapshots[managerId];
+              const state = scanStates[managerId];
+              return <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2 last:border-0" key={managerId}>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2"><strong>{managerLabel(managerId)}</strong><StatusBadge status={state?.error && manager?.status === "Ready" ? "Partial" : manager?.status ?? (state?.error ? "Failed" : "Not scanned")} /></div>
+                  <p className="text-xs text-muted-foreground">{scanStateLabel(state, manager)}{state?.scannedAt ? ` · 数据时间 ${new Date(state.scannedAt).toLocaleString()}` : ""}</p>
+                  {state?.error ? <p className="break-words text-xs text-destructive">{state.error}</p> : null}
+                </div>
+                <Button onClick={() => onOpenManager(managerId)} size="sm" type="button" variant="outline" aria-label={`查看 ${managerLabel(managerId)}`}>查看</Button>
+              </div>;
+            })}
+          </CardContent>
+        </Card>
+        <div className="flex flex-col gap-3">
+          <DevelopmentHealthPage health={health} homeDirectory={homeDirectory} onOpenManager={onOpenManager} />
+          <Card>
+            <CardHeader><CardTitle>目录占用 Top 5</CardTitle><CardDescription>按已测值排列；共享文件可能被不同目录持有，目录占用不等于可回收空间。</CardDescription></CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              {health.topStorage.length ? health.topStorage.map((item) => <div className="flex items-start justify-between gap-2" key={`${item.managerId}:${item.path}`}>
+                <div className="min-w-0"><p className="text-sm">{managerLabel(item.managerId)} · {item.label}</p><p className="break-all text-xs text-muted-foreground">{formatHomePath(item.path, homeDirectory)}</p><p className="text-sm">{item.incomplete ? "已测下限 ≥ " : "目录占用 "}{formatBytes(item.bytes)}</p></div>
+                <Button size="sm" variant="outline" onClick={() => onOpenManager(item.managerId)} type="button">查看</Button>
+              </div>) : <EmptyState message="尚无已完成的目录占用测量" />}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+      <Card>
+        <CardHeader><CardTitle>其他本机数据</CardTitle><CardDescription>进入对应页面后查看，统计范围各自独立。</CardDescription></CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => onOpenView("cleanup")} type="button">项目清理</Button>
+          <Button variant="outline" onClick={() => onOpenView("vscode")} type="button">VS Code 占用</Button>
+          <Button variant="outline" onClick={() => onOpenView("sessions")} type="button">会话记录</Button>
+        </CardContent>
+      </Card>
+    </main>
+  );
 }
 
 export function ManagerMark({ id }: { id: ManagerId }) {

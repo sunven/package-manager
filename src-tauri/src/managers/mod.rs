@@ -26,6 +26,7 @@ pub(crate) fn scan_manager_snapshot(manager: ManagerId) -> ManagerScanSnapshot {
 
     ManagerScanSnapshot {
         scan_duration_ms: started.elapsed().as_millis(),
+        diagnostics: crate::scan_diagnostics::collect(&manager),
         manager,
     }
 }

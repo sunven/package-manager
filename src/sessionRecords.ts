@@ -26,15 +26,35 @@ export type SessionSourceId = "codex" | "claude";
 export type SessionRemovalResult = {
   moved: number;
   failed: number;
+  skipped: number;
+  items: SessionRemovalItem[];
+  operationError: string | null;
   message: string | null;
+};
+
+export type SessionRemovalReason = "InUse" | "NoLongerRecord" | "ActivityChanged" | "ActivityUnknown" | "TrashFailed";
+export type SessionRemovalItem = {
+  id: string;
+  status: "Moved" | "Skipped" | "Failed";
+  reason: SessionRemovalReason | null;
+  message: string | null;
+};
+
+export const removalReasonLabels: Record<SessionRemovalReason, string> = {
+  InUse: "使用中，留在原处",
+  NoLongerRecord: "已不再是可移除的会话记录",
+  ActivityChanged: "最后活动时间已更新，不再早于门槛",
+  ActivityUnknown: "无法确认最后活动时间，留在原处",
+  TrashFailed: "移入废纸篓失败",
 };
 
 export function singleRemovalConfirmText(title: string) {
   return `将「${title}」移入废纸篓？`;
 }
 
-export function removalResultText(result: Pick<SessionRemovalResult, "moved" | "failed">) {
-  return `移入废纸篓 ${result.moved} 条，失败 ${result.failed} 条`;
+export function removalResultText(result: Pick<SessionRemovalResult, "moved" | "failed" | "skipped" | "operationError">) {
+  if (result.operationError) return "移除未能执行";
+  return `移入废纸篓 ${result.moved} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条`;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -55,7 +75,7 @@ export function bulkRemovalRequest(
 }
 
 export function bulkRemovalConfirmText(sourceLabel: string, days: number, count: number) {
-  return `将 ${sourceLabel} 最后活动时间早于 ${days} 天的 ${count} 条会话记录移入废纸篓？使用中的记录和读不出最后活动时间的记录不在其中。`;
+  return `将整个 ${sourceLabel} 来源中最后活动时间早于 ${days} 天的会话记录移入废纸篓？当前观察到 ${count} 条，搜索和状态筛选不限制此范围。使用中的记录和读不出最后活动时间的记录不在其中；执行时会重新判断。`;
 }
 
 export function removableSessionRecords(records: SessionRecord[]) {
@@ -81,7 +101,19 @@ export type SessionSectionView = {
   bytes: number;
   empty: boolean;
   failed: boolean;
+  totalCount: number;
 };
+
+export type SessionUsageFilter = "all" | "inUse" | "notInUse";
+export type SessionFilter = { query: string; usage: SessionUsageFilter };
+
+export function filterSessionRecords(records: SessionRecord[], filter: SessionFilter) {
+  const query = filter.query.trim().toLocaleLowerCase();
+  return records.filter((record) =>
+    (filter.usage === "all" || (filter.usage === "inUse" ? record.inUse : !record.inUse)) &&
+    (!query || [record.title, record.workingDirectory ?? ""].some((value) => value.toLocaleLowerCase().includes(query))),
+  );
+}
 
 export type SessionRecordGroup = {
   key: string;
@@ -98,21 +130,24 @@ export type SessionSort = "time" | "size";
 export function sessionSections(
   scan: SessionRecordScan,
   sort: SessionSort | Partial<Record<SessionSourceId, SessionSort>> = "time",
+  filters: Partial<Record<SessionSourceId, SessionFilter>> = {},
 ) {
   const mode = (source: SessionSourceId) => (typeof sort === "string" ? sort : sort[source] ?? "time");
   return {
-    codex: sectionView(scan.codex, mode("codex")),
-    claude: sectionView(scan.claude, mode("claude")),
+    codex: sectionView(scan.codex, mode("codex"), filters.codex),
+    claude: sectionView(scan.claude, mode("claude"), filters.claude),
   };
 }
 
-function sectionView(source: SessionSourceScan, sort: SessionSort): SessionSectionView {
-  const bytes = source.records.reduce((sum, record) => sum + record.bytes, 0);
+function sectionView(source: SessionSourceScan, sort: SessionSort, filter?: SessionFilter): SessionSectionView {
+  const records = filter ? filterSessionRecords(source.records, filter) : source.records;
+  const bytes = records.reduce((sum, record) => sum + record.bytes, 0);
   return {
-    groups: groupSessionRecords(source.records, sort),
-    count: source.records.length,
+    groups: groupSessionRecords(records, sort),
+    count: records.length,
+    totalCount: source.records.length,
     bytes,
-    empty: source.records.length === 0,
+    empty: records.length === 0,
     failed: source.status === "Failed",
   };
 }

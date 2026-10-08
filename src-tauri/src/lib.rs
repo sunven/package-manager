@@ -2,6 +2,7 @@ mod command;
 mod disk_usage;
 mod managers;
 mod project_cleanup;
+mod scan_diagnostics;
 mod session_records;
 mod types;
 mod vscode_storage;
@@ -85,6 +86,31 @@ fn get_project_cleanup_settings(
     state: tauri::State<'_, ProjectCleanupState>,
 ) -> Result<ProjectCleanupSettings, String> {
     state.settings()
+}
+
+#[tauri::command]
+fn select_project_cleanup_preset(
+    preset_id: String,
+    state: tauri::State<'_, ProjectCleanupState>,
+) -> Result<ProjectCleanupSettings, String> {
+    state.select_preset(&preset_id)
+}
+
+#[tauri::command]
+fn remove_project_cleanup_preset(
+    preset_id: String,
+    state: tauri::State<'_, ProjectCleanupState>,
+) -> Result<ProjectCleanupSettings, String> {
+    state.remove_preset(&preset_id)
+}
+
+#[tauri::command]
+fn update_project_cleanup_depth(
+    preset_id: String,
+    max_depth: u8,
+    state: tauri::State<'_, ProjectCleanupState>,
+) -> Result<ProjectCleanupSettings, String> {
+    state.update_depth(&preset_id, max_depth)
 }
 
 #[tauri::command]
@@ -297,6 +323,9 @@ pub fn run() {
             scan_vscode_storage,
             get_project_cleanup_settings,
             choose_project_cleanup_root,
+            select_project_cleanup_preset,
+            remove_project_cleanup_preset,
+            update_project_cleanup_depth,
             scan_project_data,
             measure_project_data_candidate,
             clean_project_data_candidate,

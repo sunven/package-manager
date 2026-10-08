@@ -10,6 +10,9 @@ export function createInMemoryProjectCleanupEffects(
   return {
     readSettings: unexpected,
     chooseRoot: unexpected,
+    selectPreset: unexpected,
+    removePreset: unexpected,
+    updateDepth: unexpected,
     scan: unexpected,
     measure: unexpected,
     clean: unexpected,

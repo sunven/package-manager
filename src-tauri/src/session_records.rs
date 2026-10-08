@@ -158,12 +158,72 @@ pub(crate) enum SessionSourceKind {
     Claude,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionRemovalResult {
     pub moved: u32,
     pub failed: u32,
+    pub skipped: u32,
+    pub items: Vec<SessionRemovalItem>,
+    pub operation_error: Option<String>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SessionRemovalItem {
+    id: String,
+    status: SessionRemovalStatus,
+    reason: Option<SessionRemovalReason>,
+    message: Option<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+enum SessionRemovalStatus {
+    Moved,
+    Skipped,
+    Failed,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+enum SessionRemovalReason {
+    InUse,
+    NoLongerRecord,
+    ActivityChanged,
+    ActivityUnknown,
+    TrashFailed,
+}
+
+impl SessionRemovalResult {
+    fn aborted(message: String) -> Self {
+        Self {
+            operation_error: Some(message),
+            ..Self::default()
+        }
+    }
+
+    fn record(
+        &mut self,
+        id: &str,
+        status: SessionRemovalStatus,
+        reason: Option<SessionRemovalReason>,
+        message: Option<String>,
+    ) {
+        match status {
+            SessionRemovalStatus::Moved => self.moved += 1,
+            SessionRemovalStatus::Skipped => self.skipped += 1,
+            SessionRemovalStatus::Failed => self.failed += 1,
+        }
+        if self.message.is_none() && status == SessionRemovalStatus::Failed {
+            self.message = message.clone();
+        }
+        self.items.push(SessionRemovalItem {
+            id: id.to_string(),
+            status,
+            reason,
+            message,
+        });
+    }
 }
 
 pub(crate) fn remove_default(
@@ -177,11 +237,7 @@ pub(crate) fn remove_default(
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
         Err(message) => {
-            return Ok(SessionRemovalResult {
-                moved: 0,
-                failed: 1,
-                message: Some(message),
-            });
+            return Ok(SessionRemovalResult::aborted(message));
         }
     };
     Ok(remove_one(
@@ -206,11 +262,7 @@ pub(crate) fn remove_older_default(
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
         Err(message) => {
-            return Ok(SessionRemovalResult {
-                moved: 0,
-                failed: 1,
-                message: Some(message),
-            });
+            return Ok(SessionRemovalResult::aborted(message));
         }
     };
     let now_ms = SystemTime::now()
@@ -243,28 +295,45 @@ pub(crate) fn remove_older_than(
     let scan = match list_records(directory, is_open, format) {
         Ok(scan) => scan,
         Err(message) => {
-            return SessionRemovalResult {
-                moved: 0,
-                failed: 1,
-                message: Some(message),
-            };
+            return SessionRemovalResult::aborted(message);
         }
     };
-    let mut moved = 0;
-    let mut failed = 0;
-    let mut message = None;
+    let mut result = SessionRemovalResult::default();
     for record in scan.records {
         let Some(listed_ms) = record.last_activity_ms else {
             continue;
         };
-        if listed_ms >= cutoff || record.in_use {
+        if listed_ms >= cutoff {
+            continue;
+        }
+        if record.in_use {
+            result.record(
+                &record.id,
+                SessionRemovalStatus::Skipped,
+                Some(SessionRemovalReason::InUse),
+                None,
+            );
             continue;
         }
         let path = match session_record_file(directory, &record.id) {
             Ok(path) => path,
-            Err(_) => continue,
+            Err(message) => {
+                result.record(
+                    &record.id,
+                    SessionRemovalStatus::Skipped,
+                    Some(SessionRemovalReason::NoLongerRecord),
+                    Some(message),
+                );
+                continue;
+            }
         };
         if is_open(&path) {
+            result.record(
+                &record.id,
+                SessionRemovalStatus::Skipped,
+                Some(SessionRemovalReason::InUse),
+                None,
+            );
             continue;
         }
         let parsed = match format {
@@ -272,24 +341,34 @@ pub(crate) fn remove_older_than(
             RecordFormat::Claude => parse_claude_file(&path),
         };
         let Some(latest_ms) = parsed.last_activity_ms else {
+            result.record(
+                &record.id,
+                SessionRemovalStatus::Skipped,
+                Some(SessionRemovalReason::ActivityUnknown),
+                None,
+            );
             continue;
         };
         if latest_ms >= cutoff {
+            result.record(
+                &record.id,
+                SessionRemovalStatus::Skipped,
+                Some(SessionRemovalReason::ActivityChanged),
+                None,
+            );
             continue;
         }
         match trash(&path) {
-            Ok(()) => moved += 1,
-            Err(error) => {
-                failed += 1;
-                message.get_or_insert(error);
-            }
+            Ok(()) => result.record(&record.id, SessionRemovalStatus::Moved, None, None),
+            Err(message) => result.record(
+                &record.id,
+                SessionRemovalStatus::Failed,
+                Some(SessionRemovalReason::TrashFailed),
+                Some(message),
+            ),
         }
     }
-    SessionRemovalResult {
-        moved,
-        failed,
-        message,
-    }
+    result
 }
 
 pub(crate) fn remove_selected_default(
@@ -297,11 +376,7 @@ pub(crate) fn remove_selected_default(
     ids: &[String],
 ) -> Result<SessionRemovalResult, String> {
     if ids.is_empty() {
-        return Ok(SessionRemovalResult {
-            moved: 0,
-            failed: 0,
-            message: None,
-        });
+        return Ok(SessionRemovalResult::default());
     }
     let directory = match source {
         SessionSourceKind::Codex => codex_sessions_dir()?,
@@ -310,11 +385,7 @@ pub(crate) fn remove_selected_default(
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
         Err(message) => {
-            return Ok(SessionRemovalResult {
-                moved: 0,
-                failed: 1,
-                message: Some(message),
-            });
+            return Ok(SessionRemovalResult::aborted(message));
         }
     };
     Ok(remove_selected(
@@ -332,27 +403,17 @@ pub(crate) fn remove_selected(
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
 ) -> SessionRemovalResult {
     let mut seen = HashSet::new();
-    let mut moved = 0;
-    let mut failed = 0;
-    let mut message = None;
+    let mut result = SessionRemovalResult::default();
     for id in ids {
         if !seen.insert(id.as_str()) {
             continue;
         }
-        let result = remove_one(directory, id, is_open, trash);
-        moved += result.moved;
-        if result.failed > 0 {
-            failed += result.failed;
-            if message.is_none() {
-                message = result.message;
-            }
+        let next = remove_one(directory, id, is_open, trash);
+        for item in next.items {
+            result.record(&item.id, item.status, item.reason, item.message);
         }
     }
-    SessionRemovalResult {
-        moved,
-        failed,
-        message,
-    }
+    result
 }
 
 pub(crate) fn remove_one(
@@ -361,35 +422,38 @@ pub(crate) fn remove_one(
     is_open: &dyn Fn(&Path) -> bool,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
 ) -> SessionRemovalResult {
+    let mut result = SessionRemovalResult::default();
     let path = match session_record_file(directory, id) {
         Ok(path) => path,
         Err(message) => {
-            return SessionRemovalResult {
-                moved: 0,
-                failed: 0,
-                message: Some(message),
-            };
+            result.record(
+                id,
+                SessionRemovalStatus::Skipped,
+                Some(SessionRemovalReason::NoLongerRecord),
+                Some(message),
+            );
+            return result;
         }
     };
     if is_open(&path) {
-        return SessionRemovalResult {
-            moved: 0,
-            failed: 0,
-            message: Some("这条会话记录正在使用，留在原处".to_string()),
-        };
+        result.record(
+            id,
+            SessionRemovalStatus::Skipped,
+            Some(SessionRemovalReason::InUse),
+            Some("这条会话记录正在使用，留在原处".into()),
+        );
+        return result;
     }
     match trash(&path) {
-        Ok(()) => SessionRemovalResult {
-            moved: 1,
-            failed: 0,
-            message: None,
-        },
-        Err(message) => SessionRemovalResult {
-            moved: 0,
-            failed: 1,
-            message: Some(message),
-        },
+        Ok(()) => result.record(id, SessionRemovalStatus::Moved, None, None),
+        Err(message) => result.record(
+            id,
+            SessionRemovalStatus::Failed,
+            Some(SessionRemovalReason::TrashFailed),
+            Some(message),
+        ),
     }
+    result
 }
 
 fn session_record_file(directory: &Path, id: &str) -> Result<PathBuf, String> {
@@ -1297,6 +1361,16 @@ mod tests {
         assert_eq!(symlink_result.moved, 0);
         assert_eq!(escape.moved, 0);
         assert_eq!(in_use.moved, 0);
+        assert_eq!(in_use.skipped, 1);
+        assert_eq!(in_use.items[0].reason, Some(SessionRemovalReason::InUse));
+        assert_eq!(
+            escape.items[0].reason,
+            Some(SessionRemovalReason::NoLongerRecord)
+        );
+        assert_eq!(
+            trash_error.items[0].reason,
+            Some(SessionRemovalReason::TrashFailed)
+        );
         assert!(chat.exists());
         assert!(outside.exists());
         assert_eq!(trash_error.failed, 1);
@@ -1395,6 +1469,19 @@ mod tests {
         assert!(!sessions.join("c.jsonl").exists());
         assert!(trash_dir.join("a.jsonl").is_file());
         assert!(trash_dir.join("c.jsonl").is_file());
+    }
+
+    #[test]
+    fn source_failure_is_not_counted_as_a_failed_record() {
+        let fixture = Fixture::new();
+        let file = fixture.0.join("not-a-directory");
+        fs::write(&file, "").unwrap();
+        let result = remove_older_than(&file, 7, 0, &|_| false, RecordFormat::Codex, &mut |_| {
+            panic!("must not remove")
+        });
+        assert!(result.operation_error.is_some());
+        assert_eq!(result.moved + result.failed + result.skipped, 0);
+        assert!(result.items.is_empty());
     }
 
     fn write_codex(path: &Path, timestamp: &str) {

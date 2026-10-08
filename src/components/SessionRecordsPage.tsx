@@ -1,5 +1,7 @@
+import { Input } from "../../components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { ArrowClockwise as RefreshCw, Trash } from "@phosphor-icons/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,13 +18,17 @@ import { Button } from "../../components/ui/button";
 import { CardContent } from "../../components/ui/card";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { formatBytes, formatHomePath } from "../utils/format";
+import { errorToString, formatBytes, formatHomePath } from "../utils/format";
 import {
   bulkRemovalConfirmText,
   bulkRemovalRequest,
   formatSessionActivity,
   removableSessionRecords,
   removalResultText,
+  removalReasonLabels,
+  filterSessionRecords,
+  type SessionFilter,
+  type SessionUsageFilter,
   selectedRemovalConfirmText,
   selectedRemovalRequest,
   sessionSections,
@@ -73,13 +79,23 @@ export function SessionRecordsPage({
   homeDirectory: string | null;
 }) {
   const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time" });
-  const sections = useMemo(() => (scan ? sessionSections(scan, sorts) : null), [scan, sorts]);
+  const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" } });
+  const sections = useMemo(() => (scan ? sessionSections(scan, sorts, filters) : null), [scan, sorts, filters]);
   const [activeSource, setActiveSource] = useState<SessionSourceId>(initialSource);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [pending, setPending] = useState<PendingRemoval | null>(null);
   const [removing, setRemoving] = useState(false);
   const [result, setResult] = useState<SessionRemovalResult | null>(null);
+  const [resultSource, setResultSource] = useState("");
   const [selectedIds, setSelectedIds] = useState<Record<SessionSourceId, string[]>>(emptySelection);
+
+  useEffect(() => {
+    if (!scan) return;
+    setSelectedIds((current) => ({
+      codex: selectedRemovalRequest(scan.codex.records, current.codex)?.ids ?? [],
+      claude: selectedRemovalRequest(scan.claude.records, current.claude)?.ids ?? [],
+    }));
+  }, [scan]);
 
   return (
     <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude}>
@@ -123,11 +139,12 @@ export function SessionRecordsPage({
                   if (!pending) return;
                   const current = pending;
                   setRemoving(true);
-                  const action = current.kind === "one"
+                  setResultSource(current.source === "codex" ? "Codex" : "Claude");
+                  const action = Promise.resolve().then(() => current.kind === "one"
                     ? onRemove(current.source, current.id)
                     : current.kind === "age"
                       ? onRemoveOlder(current.source, current.days)
-                      : onRemoveSelected(current.source, current.ids);
+                      : onRemoveSelected(current.source, current.ids));
                   void action.then((next) => {
                     if (current.kind === "selected") {
                       const submitted = new Set(current.ids);
@@ -137,6 +154,8 @@ export function SessionRecordsPage({
                       }));
                     }
                     setResult(next);
+                  }).catch((error) => {
+                    setResult({ moved: 0, failed: 0, skipped: 0, items: [], message: null, operationError: errorToString(error) });
                   }).finally(() => {
                     setPending(null);
                     setRemoving(false);
@@ -154,8 +173,14 @@ export function SessionRecordsPage({
 
       {result ? (
         <Alert>
-          <AlertTitle>{removalResultText(result)}</AlertTitle>
-          {result.message ? <AlertDescription>{result.message}</AlertDescription> : null}
+          <AlertTitle>{resultSource} · {removalResultText(result)}</AlertTitle>
+          <AlertDescription className="flex flex-col gap-2">
+            {result.operationError ? <p>{result.operationError}</p> : <p>按执行时的实际检查结果汇报；确认时的观察数量可能变化。移入废纸篓不代表磁盘空间立即释放。</p>}
+            {result.message ? <p>{result.message}</p> : null}
+            {result.items.length ? <details><summary className="cursor-pointer">查看逐条结果（{result.items.length}）</summary><ul className="mt-2 flex max-h-64 flex-col gap-2 overflow-auto">
+              {result.items.map((item) => <li key={item.id} className="break-all"><strong>{item.id}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
+            </ul></details> : null}
+          </AlertDescription>
         </Alert>
       ) : null}
 
@@ -180,7 +205,12 @@ export function SessionRecordsPage({
             <TabsContent key={source.key} value={source.key}>
               <SourceSection
                 collapsed={collapsed}
-                emptyMessage={source.empty}
+                emptyMessage={view?.totalCount ? "没有匹配搜索和状态筛选的会话记录" : source.empty}
+                filter={filters[source.key]}
+                onFilterChange={(patch) => {
+                  setFilters((current) => ({ ...current, [source.key]: { ...current[source.key], ...patch } }));
+                  setSelectedIds((current) => ({ ...current, [source.key]: [] }));
+                }}
                 fallbackPath={source.fallback}
                 homeDirectory={homeDirectory}
                 label={source.label}
@@ -203,7 +233,7 @@ export function SessionRecordsPage({
                 onSelectAll={() => {
                   setSelectedIds((current) => ({
                     ...current,
-                    [source.key]: removableSessionRecords(data?.records ?? []).map((record) => record.id),
+                    [source.key]: removableSessionRecords(filterSessionRecords(data?.records ?? [], filters[source.key])).map((record) => record.id),
                   }));
                 }}
                 onSetGroupSelected={(records, selected) => {
@@ -245,6 +275,8 @@ export function SessionRecordsPage({
 }
 
 function SourceSection({
+  filter,
+  onFilterChange,
   source,
   view,
   label,
@@ -269,6 +301,8 @@ function SourceSection({
   selectedIds,
   sort,
 }: {
+  filter: SessionFilter;
+  onFilterChange: (patch: Partial<SessionFilter>) => void;
   source: SessionSourceScan | null;
   view: SessionSectionView | null;
   label: string;
@@ -293,13 +327,20 @@ function SourceSection({
   selectedIds: readonly string[];
   sort: SessionSort;
 }) {
-  const records = source?.records ?? [];
+  const records = view?.groups.flatMap((group) => group.records) ?? [];
   const removable = removableSessionRecords(records);
   const selected = selectedRemovalRequest(records, selectedIds);
   const selectedCount = selected?.count ?? 0;
   const selectedSet = new Set(selected?.ids ?? []);
   return (
     <Panel className="overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b p-3">
+        <Input disabled={removing} type="search" aria-label={`搜索 ${label} 会话记录`} placeholder="搜索标题或工作目录" value={filter.query} onChange={(event) => onFilterChange({ query: event.target.value })} className="min-w-40 flex-1" />
+        <ToggleGroup disabled={removing} type="single" value={filter.usage} onValueChange={(usage) => { if (usage) onFilterChange({ usage: usage as SessionUsageFilter }); }} aria-label={`${label} 使用状态`}>
+          <ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="inUse">使用中</ToggleGroupItem><ToggleGroupItem value="notInUse">未使用中</ToggleGroupItem>
+        </ToggleGroup>
+        <span className="text-xs text-muted-foreground">匹配 {view?.count ?? 0} / 来源共 {view?.totalCount ?? 0} 条</span>
+      </div>
       <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
         <p className="min-w-0 break-all text-xs text-muted-foreground">
           {source ? formatHomePath(source.directory, homeDirectory) : fallbackPath}
@@ -321,7 +362,7 @@ function SourceSection({
             const request = bulkRemovalRequest(source?.records ?? [], days, nowMs);
             return (
               <Button
-                disabled={removing || request === null}
+                disabled={scanning || removing || request === null}
                 key={days}
                 onClick={() => {
                   if (request) onRequestAgeRemoval(request.days, request.count);
@@ -330,7 +371,7 @@ function SourceSection({
                 type="button"
                 variant="outline"
               >
-                {`移除 ${days} 天前`}
+                {`移除 ${days} 天前（整个 ${label} 来源）`}
               </Button>
             );
           })}
@@ -339,7 +380,7 @@ function SourceSection({
       <CardContent className="flex flex-col gap-2 p-3">
         <div className="grid gap-2 sm:grid-cols-2">
           <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
-          <StatCard label="离开原目录的体积" value={view ? formatBytes(view.bytes) : "—"} />
+          <StatCard label="当前结果的记录占用" value={view ? formatBytes(view.bytes) : "—"} />
         </div>
       </CardContent>
       {source?.status === "Failed" && source.message ? (
@@ -366,7 +407,7 @@ function SourceSection({
               type="button"
               variant="outline"
             >
-              全选可移除
+              全选当前结果中可移除记录
             </Button>
             <Button disabled={removing || selectedCount === 0} onClick={onClearSelection} size="sm" type="button" variant="outline">
               清空

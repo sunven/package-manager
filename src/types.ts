@@ -178,6 +178,7 @@ export interface PipEnvironmentHealth {
   inspectStatus: AsyncStatus;
   outdatedStatus: AsyncStatus;
   outdatedMessage: string | null;
+  outdatedFailure?: CommandFailure | null;
 }
 
 export interface PipCacheInfo {
@@ -258,6 +259,12 @@ export interface DockerDiskUsageRow {
 export interface ManagerScanSnapshot {
   scanDurationMs: number;
   manager: ManagerSnapshot;
+  diagnostics?: ScanDiagnostics;
+}
+
+export interface ScanDiagnostics {
+  pathEntries: string[];
+  executables: { program: string; resolvedPath: string | null }[];
 }
 
 export type MessageTone = "bad" | "ok" | "warn";
@@ -272,6 +279,15 @@ export interface UiMessage {
 export interface ProjectCleanupSettings {
   rootId: string | null;
   rootPath: string | null;
+  maxDepth: number;
+  presets: ProjectCleanupPreset[];
+  activePresetId: string | null;
+  rootMessage: string | null;
+}
+
+export interface ProjectCleanupPreset {
+  id: string;
+  path: string;
   maxDepth: number;
 }
 

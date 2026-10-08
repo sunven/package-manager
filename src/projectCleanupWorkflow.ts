@@ -9,6 +9,9 @@ import type {
 export interface ProjectCleanupEffects {
   readSettings(): Promise<ProjectCleanupSettings>;
   chooseRoot(): Promise<ProjectCleanupSettings | null>;
+  selectPreset(id: string): Promise<ProjectCleanupSettings>;
+  removePreset(id: string): Promise<ProjectCleanupSettings>;
+  updateDepth(id: string, maxDepth: number): Promise<ProjectCleanupSettings>;
   scan(input: { rootId: string; maxDepth: number }): Promise<ProjectDataScan>;
   measure(input: { scanId: string; candidateId: string }): Promise<DirectoryMeasurement>;
   clean(input: { scanId: string; candidateId: string }): Promise<ProjectCleanupResult>;
@@ -33,7 +36,7 @@ export type WorkflowOutcome<T> =
   | { kind: "invalid"; message: string }
   | { kind: "failed"; failure: WorkflowFailure };
 
-export interface ProjectCleanupSettingsView {
+export interface ProjectCleanupSettingsView extends ProjectCleanupSettings {
   phase: "loading" | "ready" | "failed";
   rootId: string | null;
   rootPath: string | null;
@@ -134,7 +137,9 @@ export interface ProjectCleanupWorkflow {
   read(): ProjectCleanupView;
   subscribe(listener: () => void): () => void;
   initialize(): Promise<WorkflowOutcome<void>>;
-  setMaxDepth(value: number): WorkflowOutcome<{ maxDepth: number }>;
+  setMaxDepth(value: number): Promise<WorkflowOutcome<{ maxDepth: number }>>;
+  selectPreset(id: string): Promise<WorkflowOutcome<void>>;
+  removePreset(id: string): Promise<WorkflowOutcome<void>>;
   chooseRoot(): Promise<WorkflowOutcome<{ rootId: string }>>;
   startScan(): Promise<
     WorkflowOutcome<{ scanId: string; finish: "completed" }>
@@ -172,6 +177,9 @@ export function createProjectCleanupWorkflow(
       rootId: null,
       rootPath: null,
       maxDepth: 8,
+      presets: [],
+      activePresetId: null,
+      rootMessage: null,
       failure: null,
     },
     scan: {
@@ -193,6 +201,33 @@ export function createProjectCleanupWorkflow(
     listeners.forEach((listener) => listener());
   };
 
+  const changeSettings = async (effect: () => Promise<ProjectCleanupSettings | null>, invalidate: boolean): Promise<WorkflowOutcome<void>> => {
+    if (disposed) return { kind: "unavailable", reason: "disposed" };
+    if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
+    if (view.settings.phase === "loading") return { kind: "unavailable", reason: "settings-busy" };
+    if (view.scan.phase === "discovering" || view.scan.phase === "measuring") return { kind: "unavailable", reason: "scan-active" };
+    const previous = view.settings;
+    publish({ ...view, settings: { ...previous, phase: "loading" } });
+    try {
+      const settings = await effect();
+      if (!settings) {
+        publish({ ...view, settings: previous });
+        return { kind: "cancelled" };
+      }
+      if (invalidate) scanGeneration += 1;
+      publish({
+        ...view,
+        settings: { ...settings, phase: "ready", failure: null },
+        ...(invalidate ? { scan: { phase: "idle" as const, session: null, pendingMeasurements: 0, failure: null } } : {}),
+      });
+      return { kind: "succeeded", value: undefined };
+    } catch (error) {
+      const failure: WorkflowFailure = { operation: "settings", message: errorText(error) };
+      publish({ ...view, settings: { ...previous, failure } });
+      return { kind: "failed", failure };
+    }
+  };
+
   return {
     read: () => view,
     subscribe: (listener) => {
@@ -207,9 +242,7 @@ export function createProjectCleanupWorkflow(
           ...view,
           settings: {
             phase: "ready",
-            rootId: settings.rootId,
-            rootPath: settings.rootPath,
-            maxDepth: settings.maxDepth,
+            ...settings,
             failure: null,
           },
         });
@@ -230,62 +263,22 @@ export function createProjectCleanupWorkflow(
         return { kind: "failed", failure };
       }
     },
-    setMaxDepth: (value) => {
-      if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
-      if (view.scan.phase === "discovering" || view.scan.phase === "measuring") {
-        return { kind: "unavailable", reason: "scan-active" };
-      }
-      if (!Number.isFinite(value)) {
-        return { kind: "invalid", message: "scan depth must be a finite number" };
-      }
+    setMaxDepth: async (value) => {
+      if (!Number.isFinite(value)) return { kind: "invalid", message: "scan depth must be a finite number" };
       const maxDepth = Math.max(0, Math.min(32, Math.trunc(value)));
-      if (maxDepth !== view.settings.maxDepth) {
-        publish({
-          ...view,
-          settings: { ...view.settings, maxDepth },
-        });
-      }
-      return { kind: "succeeded", value: { maxDepth } };
+      const id = view.settings.activePresetId;
+      if (!id) return { kind: "unavailable", reason: "no-root" };
+      const outcome = await changeSettings(() => effects.updateDepth(id, maxDepth), false);
+      return outcome.kind === "succeeded" ? { kind: "succeeded", value: { maxDepth } } : outcome;
     },
     chooseRoot: async () => {
-      if (disposed) return { kind: "unavailable", reason: "disposed" };
-      if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
-      if (view.scan.phase === "discovering" || view.scan.phase === "measuring") {
-        return { kind: "unavailable", reason: "scan-active" };
-      }
-      try {
-        const settings = await effects.chooseRoot();
-        if (!settings) return { kind: "cancelled" };
-        scanGeneration += 1;
-        publish({
-          ...view,
-          settings: {
-            phase: "ready",
-            rootId: settings.rootId,
-            rootPath: settings.rootPath,
-            maxDepth: settings.maxDepth,
-            failure: null,
-          },
-          scan: {
-            phase: "idle",
-            session: null,
-            pendingMeasurements: 0,
-            failure: null,
-          },
-        });
-        return {
-          kind: "succeeded",
-          value: { rootId: settings.rootId! },
-        };
-      } catch (error) {
-        const failure: WorkflowFailure = {
-          operation: "root",
-          message: errorText(error),
-        };
-        return { kind: "failed", failure };
-      }
+      const outcome = await changeSettings(effects.chooseRoot, true);
+      return outcome.kind === "succeeded" ? { kind: "succeeded", value: { rootId: view.settings.rootId! } } : outcome;
     },
+    selectPreset: (id) => changeSettings(() => effects.selectPreset(id), true),
+    removePreset: (id) => changeSettings(() => effects.removePreset(id), id === view.settings.activePresetId),
     startScan: async () => {
+      if (view.settings.phase === "loading") return { kind: "unavailable", reason: "settings-busy" };
       if (disposed) return { kind: "unavailable", reason: "disposed" };
       if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
       const rootId = view.settings.rootId;
@@ -476,6 +469,7 @@ export function createProjectCleanupWorkflow(
       return { kind: "succeeded", value: undefined };
     },
     prepareCleanupBatch: (orderedSelectedCandidateIds) => {
+      if (view.settings.phase === "loading") return { kind: "unavailable", reason: "settings-busy" };
       if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
       const session = view.scan.session;
       if (!session) return { kind: "unavailable", reason: "no-scan-session" };

@@ -5,6 +5,17 @@ export interface IndexedPackage {
   index: number;
 }
 
+export type PackageSort = "name" | "version";
+
+export function searchAndSortPackages(rows: IndexedPackage[], query: string, sort: PackageSort, descending: boolean) {
+  const needle = query.trim().toLocaleLowerCase();
+  return rows.filter(({ pkg }) => !needle || [pkg.name, pkg.version, pkg.path ?? ""].some((value) => value.toLocaleLowerCase().includes(needle)))
+    .sort((a, b) => {
+      const comparison = a.pkg[sort].localeCompare(b.pkg[sort], undefined, { numeric: true, sensitivity: "base" });
+      return (descending ? -comparison : comparison) || a.index - b.index;
+    });
+}
+
 export function filteredHomebrewPackages(manager: ManagerSnapshot, filter: "All" | "Formulae" | "Casks" | "Outdated" | "Leaves") {
   return indexedPackages(manager).filter(({ pkg }) => {
     switch (filter) {

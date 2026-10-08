@@ -1,5 +1,5 @@
 import type { MaintenanceRequest, MaintenanceResult } from "../state";
-import { cleanupCopyFor } from "../cleanupCopy";
+import { cleanupCopyFor, type CleanupSpaceInfo } from "../cleanupCopy";
 import { managerLabel } from "../utils/format";
 import { Button } from "../../components/ui/button";
 import {
@@ -23,7 +23,7 @@ export function MaintenanceConfirmationBanner({
   confirmation: MaintenanceRequest | null;
   pending: MaintenanceRequest | null;
   /** Reclaimable-space figure, or null when none can be shown honestly. */
-  reclaimable: string | null;
+  reclaimable: CleanupSpaceInfo | null;
   /**
    * Itemised list of what will be removed, when the manager can produce one
    * before running. Only Homebrew can, via its dry-run.
@@ -58,7 +58,8 @@ export function MaintenanceConfirmationBanner({
           <>
             {reclaimable && confirmation.kind === "cleanupCache" ? (
               <p className="text-sm text-muted-foreground">
-                预计回收 <strong className="font-medium text-foreground">{reclaimable}</strong>
+                {reclaimable.label} <strong className="font-medium text-foreground">{reclaimable.value}</strong>
+                <span className="mt-1 block">{reclaimable.note}</span>
               </p>
             ) : null}
             {confirmationCopy.reclaimNote ? (

@@ -25,6 +25,9 @@ pub(crate) struct ProjectCleanupSettings {
     pub(crate) root_id: Option<String>,
     pub(crate) root_path: Option<String>,
     pub(crate) max_depth: u8,
+    pub(crate) presets: Vec<ProjectCleanupPreset>,
+    pub(crate) active_preset_id: Option<String>,
+    pub(crate) root_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -137,7 +140,23 @@ pub(crate) enum ProjectCleanupStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectCleanupPreset {
+    pub(crate) id: String,
+    pub(crate) path: String,
+    pub(crate) max_depth: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PersistedSettings {
+    version: u8,
+    presets: Vec<ProjectCleanupPreset>,
+    active_preset_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacySettings {
     root_path: String,
     max_depth: u8,
 }
@@ -169,10 +188,13 @@ struct ScanSession {
     candidates: HashMap<String, CandidateRecord>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Registry {
     next_id: u64,
     settings_path: PathBuf,
+    presets: Vec<ProjectCleanupPreset>,
+    active_preset_id: Option<String>,
+    root_message: Option<String>,
     persisted_root_path: Option<PathBuf>,
     max_depth: u8,
     root: Option<AuthorizedRoot>,
@@ -192,7 +214,34 @@ impl ProjectCleanupState {
     }
 
     pub(crate) fn authorize_root(&self, path: PathBuf) -> Result<ProjectCleanupSettings, String> {
-        self.lock()?.authorize_root(path)
+        self.change_settings(|registry| registry.authorize_root(path))
+    }
+
+    fn change_settings(
+        &self,
+        change: impl FnOnce(&mut Registry) -> Result<ProjectCleanupSettings, String>,
+    ) -> Result<ProjectCleanupSettings, String> {
+        let mut registry = self.lock()?;
+        let mut next = registry.clone();
+        let settings = change(&mut next)?;
+        *registry = next;
+        Ok(settings)
+    }
+
+    pub(crate) fn select_preset(&self, id: &str) -> Result<ProjectCleanupSettings, String> {
+        self.change_settings(|registry| registry.select_preset(id))
+    }
+
+    pub(crate) fn remove_preset(&self, id: &str) -> Result<ProjectCleanupSettings, String> {
+        self.change_settings(|registry| registry.remove_preset(id))
+    }
+
+    pub(crate) fn update_depth(
+        &self,
+        id: &str,
+        depth: u8,
+    ) -> Result<ProjectCleanupSettings, String> {
+        self.change_settings(|registry| registry.update_depth(id, depth))
     }
 
     pub(crate) fn prepare_scan(
@@ -280,66 +329,158 @@ impl ProjectCleanupState {
 
 impl Registry {
     fn load(settings_path: PathBuf) -> Self {
-        let persisted = fs::read_to_string(&settings_path)
-            .ok()
-            .and_then(|raw| serde_json::from_str::<PersistedSettings>(&raw).ok());
-        let persisted_root_path = persisted
+        let persisted = fs::read_to_string(&settings_path).ok().and_then(|raw| {
+            serde_json::from_str::<PersistedSettings>(&raw)
+                .ok()
+                .filter(|settings| settings.version == 2)
+                .or_else(|| {
+                    serde_json::from_str::<LegacySettings>(&raw)
+                        .ok()
+                        .map(|legacy| PersistedSettings {
+                            version: 2,
+                            presets: vec![ProjectCleanupPreset {
+                                id: "preset-1".into(),
+                                path: legacy.root_path,
+                                max_depth: legacy.max_depth,
+                            }],
+                            active_preset_id: Some("preset-1".into()),
+                        })
+                })
+        });
+        let mut presets = persisted
             .as_ref()
-            .map(|settings| PathBuf::from(&settings.root_path));
-        let max_depth = persisted
-            .as_ref()
-            .map(|settings| settings.max_depth.min(MAX_SCAN_DEPTH))
-            .unwrap_or(DEFAULT_MAX_DEPTH);
+            .map(|settings| settings.presets.clone())
+            .unwrap_or_default();
+        for preset in &mut presets {
+            preset.max_depth = preset.max_depth.min(MAX_SCAN_DEPTH);
+            if let Ok(path) = canonical_directory(Path::new(&preset.path)) {
+                preset.path = path.display().to_string();
+            }
+        }
+        let next_id = presets
+            .iter()
+            .filter_map(|preset| preset.id.strip_prefix("preset-")?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let active_preset_id = persisted.and_then(|settings| settings.active_preset_id);
         let mut registry = Self {
-            next_id: 1,
+            next_id,
             settings_path,
-            persisted_root_path,
-            max_depth,
+            presets,
+            active_preset_id,
+            root_message: None,
+            persisted_root_path: None,
+            max_depth: DEFAULT_MAX_DEPTH,
             root: None,
             scan: None,
             pending_scan_id: None,
         };
+        registry.activate_current();
+        registry
+    }
 
-        if let Some(path) = registry.persisted_root_path.clone() {
-            if let Ok(canonical) = canonical_directory(&path) {
-                let id = registry.next_identifier("root");
-                registry.root = Some(AuthorizedRoot {
-                    id,
-                    path: canonical,
-                    max_depth,
-                });
+    fn activate_current(&mut self) {
+        self.root = None;
+        self.root_message = None;
+        self.scan = None;
+        self.pending_scan_id = None;
+        let preset = self
+            .presets
+            .iter()
+            .find(|preset| Some(&preset.id) == self.active_preset_id.as_ref())
+            .cloned();
+        self.persisted_root_path = preset.as_ref().map(|preset| PathBuf::from(&preset.path));
+        self.max_depth = preset
+            .as_ref()
+            .map(|preset| preset.max_depth)
+            .unwrap_or(DEFAULT_MAX_DEPTH);
+        if let Some(preset) = preset {
+            match canonical_directory(Path::new(&preset.path)) {
+                Ok(path) => {
+                    let id = self.next_identifier("root");
+                    self.root = Some(AuthorizedRoot {
+                        id,
+                        path,
+                        max_depth: preset.max_depth,
+                    });
+                }
+                Err(message) => self.root_message = Some(message),
             }
         }
-        registry
     }
 
     fn settings(&self) -> ProjectCleanupSettings {
         ProjectCleanupSettings {
             root_id: self.root.as_ref().map(|root| root.id.clone()),
             root_path: self
-                .root
+                .persisted_root_path
                 .as_ref()
-                .map(|root| root.path.display().to_string())
-                .or_else(|| {
-                    self.persisted_root_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                }),
+                .map(|path| path.display().to_string()),
             max_depth: self.max_depth,
+            presets: self.presets.clone(),
+            active_preset_id: self.active_preset_id.clone(),
+            root_message: self.root_message.clone(),
         }
     }
 
     fn authorize_root(&mut self, path: PathBuf) -> Result<ProjectCleanupSettings, String> {
-        let canonical = canonical_directory(&path)?;
-        let id = self.next_identifier("root");
-        self.persisted_root_path = Some(canonical.clone());
-        self.root = Some(AuthorizedRoot {
-            id,
-            path: canonical,
-            max_depth: self.max_depth,
-        });
-        self.scan = None;
-        self.pending_scan_id = None;
+        let canonical = canonical_directory(&path)?.display().to_string();
+        let existing = self
+            .presets
+            .iter()
+            .find(|preset| preset.path == canonical)
+            .map(|preset| preset.id.clone());
+        let id = if let Some(id) = existing {
+            id
+        } else {
+            let id = self.next_identifier("preset");
+            self.presets.push(ProjectCleanupPreset {
+                id: id.clone(),
+                path: canonical,
+                max_depth: DEFAULT_MAX_DEPTH,
+            });
+            id
+        };
+        self.select_preset(&id)
+    }
+
+    fn select_preset(&mut self, id: &str) -> Result<ProjectCleanupSettings, String> {
+        if !self.presets.iter().any(|preset| preset.id == id) {
+            return Err("扫描目录预设不存在".into());
+        }
+        self.active_preset_id = Some(id.to_string());
+        self.activate_current();
+        self.persist()?;
+        Ok(self.settings())
+    }
+
+    fn remove_preset(&mut self, id: &str) -> Result<ProjectCleanupSettings, String> {
+        if !self.presets.iter().any(|preset| preset.id == id) {
+            return Err("扫描目录预设不存在".into());
+        }
+        self.presets.retain(|preset| preset.id != id);
+        if self.active_preset_id.as_deref() == Some(id) {
+            self.active_preset_id = None;
+            self.activate_current();
+        }
+        self.persist()?;
+        Ok(self.settings())
+    }
+
+    fn update_depth(&mut self, id: &str, depth: u8) -> Result<ProjectCleanupSettings, String> {
+        if depth > MAX_SCAN_DEPTH {
+            return Err(format!("Scan depth must be between 0 and {MAX_SCAN_DEPTH}"));
+        }
+        let preset = self
+            .presets
+            .iter_mut()
+            .find(|preset| preset.id == id)
+            .ok_or("扫描目录预设不存在")?;
+        preset.max_depth = depth;
+        if self.active_preset_id.as_deref() == Some(id) {
+            self.max_depth = depth;
+        }
         self.persist()?;
         Ok(self.settings())
     }
@@ -363,6 +504,13 @@ impl Registry {
         root.path = path.clone();
         root.max_depth = max_depth;
         self.max_depth = max_depth;
+        if let Some(preset) = self
+            .presets
+            .iter_mut()
+            .find(|preset| Some(&preset.id) == self.active_preset_id.as_ref())
+        {
+            preset.max_depth = max_depth;
+        }
         self.persisted_root_path = Some(path.clone());
         self.scan = None;
         let scan_id = self.next_identifier("scan");
@@ -559,17 +707,15 @@ impl Registry {
     }
 
     fn persist(&self) -> Result<(), String> {
-        let Some(root_path) = self.persisted_root_path.as_ref() else {
-            return Ok(());
-        };
         if let Some(parent) = self.settings_path.parent() {
             fs::create_dir_all(parent).map_err(|err| {
                 format!("Could not create project cleanup settings directory: {err}")
             })?;
         }
         let settings = PersistedSettings {
-            root_path: root_path.display().to_string(),
-            max_depth: self.max_depth,
+            version: 2,
+            presets: self.presets.clone(),
+            active_preset_id: self.active_preset_id.clone(),
         };
         let raw = serde_json::to_vec_pretty(&settings)
             .map_err(|err| format!("Could not serialize project cleanup settings: {err}"))?;
@@ -1968,6 +2114,91 @@ mod tests {
             measurement: measure_project_data(ProjectDataKind::NodeModules, &directory_path),
             cleanup_attempted: false,
         }
+    }
+
+    #[test]
+    fn presets_migrate_legacy_settings_and_keep_independent_depths() {
+        let base = temp_dir("preset-migration");
+        let _guard = TempDirGuard(base.clone());
+        let first = base.join("first");
+        let second = base.join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        let settings_path = base.join("settings.json");
+        fs::write(
+            &settings_path,
+            serde_json::json!({ "rootPath": first, "maxDepth": 6 }).to_string(),
+        )
+        .unwrap();
+        let mut registry = Registry::load(settings_path.clone());
+        let original = registry.settings();
+        assert_eq!(original.presets.len(), 1);
+        let first_id = original.active_preset_id.unwrap();
+        assert_eq!(original.max_depth, 6);
+        registry.authorize_root(second.clone()).unwrap();
+        registry.update_depth(&first_id, 12).unwrap();
+        let selected = registry.select_preset(&first_id).unwrap();
+        assert_eq!(selected.max_depth, 12);
+        assert_ne!(selected.root_id, original.root_id);
+        registry.authorize_root(first).unwrap();
+        assert_eq!(registry.settings().presets.len(), 2);
+        let reloaded = Registry::load(settings_path);
+        assert_eq!(reloaded.settings().max_depth, 12);
+        assert_eq!(
+            reloaded
+                .settings()
+                .presets
+                .iter()
+                .find(|preset| preset.path == second.canonicalize().unwrap().display().to_string())
+                .unwrap()
+                .max_depth,
+            DEFAULT_MAX_DEPTH
+        );
+    }
+
+    #[test]
+    fn missing_presets_are_retained_and_removing_one_never_deletes_its_directory() {
+        let base = temp_dir("preset-missing");
+        let _guard = TempDirGuard(base.clone());
+        let directory = base.join("project");
+        fs::create_dir_all(&directory).unwrap();
+        let mut registry = Registry::load(base.join("settings.json"));
+        let id = registry
+            .authorize_root(directory.clone())
+            .unwrap()
+            .active_preset_id
+            .unwrap();
+        fs::remove_dir(&directory).unwrap();
+        let missing = registry.select_preset(&id).unwrap();
+        assert!(missing.root_id.is_none());
+        assert!(missing.root_message.is_some());
+        assert_eq!(missing.presets.len(), 1);
+        fs::create_dir_all(&directory).unwrap();
+        assert!(registry.select_preset(&id).unwrap().root_id.is_some());
+        let removed = registry.remove_preset(&id).unwrap();
+        assert!(directory.is_dir());
+        assert!(removed.active_preset_id.is_none());
+        assert!(removed.root_id.is_none());
+        assert!(Registry::load(base.join("settings.json"))
+            .settings()
+            .presets
+            .is_empty());
+        assert!(registry.select_preset("invented-id").is_err());
+    }
+
+    #[test]
+    fn failed_preset_save_does_not_change_authorized_settings() {
+        let base = temp_dir("preset-write-failure");
+        let _guard = TempDirGuard(base.clone());
+        let settings_path = base.join("settings.json");
+        let state = ProjectCleanupState::load(settings_path.clone());
+        let original = state.authorize_root(base.clone()).unwrap();
+        fs::remove_file(&settings_path).unwrap();
+        fs::create_dir(&settings_path).unwrap();
+        assert!(state
+            .update_depth(original.active_preset_id.as_ref().unwrap(), 12)
+            .is_err());
+        assert_eq!(state.settings().unwrap().max_depth, original.max_depth);
     }
 
     fn temp_dir(label: &str) -> PathBuf {
