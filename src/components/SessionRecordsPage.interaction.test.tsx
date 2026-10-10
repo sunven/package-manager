@@ -19,11 +19,74 @@ const scan: SessionRecordScan = {
 function setup(overrides: Partial<Parameters<typeof SessionRecordsPage>[0]> = {}) {
   const selected = vi.fn().mockResolvedValue(removalResult({ skipped: 1, items: [{ id: "beta.jsonl", status: "Skipped", reason: "InUse", message: null }] }));
   const age = vi.fn().mockResolvedValue(removalResult());
-  render(<SessionRecordsPage scan={scan} scanningSources={{ codex: false, claude: false }} error={null} homeDirectory={null} onRefresh={vi.fn()} onRemove={vi.fn().mockResolvedValue(removalResult())} onRemoveOlder={age} onRemoveSelected={selected} {...overrides} />);
-  return { selected, age };
+  const props = { scan, scanningSources: { codex: false, claude: false }, error: null, homeDirectory: null, onRefresh: vi.fn(), onRemove: vi.fn().mockResolvedValue(removalResult()), onRemoveOlder: age, onRemoveSelected: selected, ...overrides };
+  const { rerender } = render(<SessionRecordsPage {...props} />);
+  return { selected, age, props, rerender };
 }
 
 describe("session selection boundaries", () => {
+  it.each([["codex", "Codex"], ["claude", "Claude"]] as const)("previews and confirms only the selected %s records", async (source, label) => {
+    const title = `核对开发环境 🛠️ ${"包含很长标题的会话记录".repeat(10)}`;
+    const records = [
+      { ...scan.codex.records[0], title, workingDirectory: "/Users/example/work/package-manager", lastActivityMs: new Date(2026, 8, 24, 15).getTime() },
+      { ...scan.codex.records[1], title: "补充记录", workingDirectory: null, lastActivityMs: null },
+      { ...scan.codex.records[0], id: "unselected.jsonl", title: "未选择的记录" },
+      scan.codex.records[2],
+    ];
+    const { selected, age } = setup({
+      homeDirectory: "/Users/example",
+      initialSource: source,
+      scan: { ...scan, [source]: { ...scan[source], status: "Ready", records } },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: `选择 ${title}` }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 补充记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "移入废纸篓 2 条" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    const list = within(dialog).getByRole("list", { name: `${label} 待移入废纸篓的会话记录` });
+    expect(within(dialog).getByText(new RegExp(`选中的 2 条 ${label} 会话记录`))).toBeTruthy();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByText(title)).toBeTruthy();
+    expect(within(list).getByText("~/work/package-manager")).toBeTruthy();
+    expect(within(list).getByText("2026-09-24 15:00")).toBeTruthy();
+    expect(within(list).getByText("没有工作目录")).toBeTruthy();
+    expect(within(list).getByText("没有最后活动时间")).toBeTruthy();
+    expect(within(list).queryByText("未选择的记录")).toBeNull();
+    expect(within(list).queryByText("Busy project")).toBeNull();
+    expect(within(dialog).getByText(/清空废纸篓前可恢复记录/)).toBeTruthy();
+    expect(selected).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "移入废纸篓 2 条" })));
+    expect(selected).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "移入废纸篓 2 条" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "移入废纸篓" }));
+    await waitFor(() => expect(selected).toHaveBeenCalledExactlyOnceWith(source, ["alpha.jsonl", "beta.jsonl"]));
+    expect(age).not.toHaveBeenCalled();
+  });
+
+  it("keeps the reviewed summaries and submitted IDs stable when the scan changes", async () => {
+    const { selected, props, rerender } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "全选当前结果中可移除记录" }));
+    fireEvent.click(screen.getByRole("button", { name: "移入废纸篓 2 条" }));
+    rerender(<SessionRecordsPage {...props} scan={{ ...scan, codex: { ...scan.codex, records: [
+      { ...scan.codex.records[1], title: "更新后的标题", inUse: true },
+      { ...scan.codex.records[0], id: "new.jsonl", title: "新发现的记录" },
+    ] } }} />);
+
+    const dialog = screen.getByRole("alertdialog");
+    const list = within(dialog).getByRole("list", { name: "Codex 待移入废纸篓的会话记录" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByText("Alpha project")).toBeTruthy();
+    expect(within(list).getByText("Beta project")).toBeTruthy();
+    expect(within(list).queryByText("更新后的标题")).toBeNull();
+    expect(within(list).queryByText("新发现的记录")).toBeNull();
+    expect(within(dialog).getByText(/动手时仍在使用或已不再是会话记录的会留下/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "移入废纸篓" }));
+    await waitFor(() => expect(selected).toHaveBeenCalledExactlyOnceWith("codex", ["alpha.jsonl", "beta.jsonl"]));
+  });
+
   it("clears hidden selections, selects visible eligible records and explains skipped results", async () => {
     const { selected } = setup();
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 Alpha project" }));

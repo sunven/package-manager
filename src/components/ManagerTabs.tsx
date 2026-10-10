@@ -1,23 +1,28 @@
+import type { ReactNode } from "react";
 import { statusLabels } from "../constants";
 import type { DisplayStatus } from "../types";
 import type { ManagerId, ManagerSnapshot } from "../types";
 import { managerLabel } from "../utils/format";
 import { ManagerMark } from "./OverviewDashboard";
-import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 
 export function ManagerTabs({
+  children,
   managerIds,
   managerSnapshots,
   onSelect,
   scanningManagers,
   selectedManager,
 }: {
+  children: ReactNode;
   managerIds: ManagerId[];
   managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
   onSelect: (managerId: ManagerId) => void;
   scanningManagers: Set<ManagerId>;
   selectedManager: ManagerId;
 }) {
+  if (!managerIds.length) return <>{children}</>;
+
   return (
     <Tabs
       onValueChange={(value) => onSelect(value as ManagerId)}
@@ -25,7 +30,7 @@ export function ManagerTabs({
       value={selectedManager}
     >
       <div className="studio-manager-scroll">
-        <TabsList className="studio-manager-tabs">
+        <TabsList aria-label="包管理器" className="studio-manager-tabs">
           {managerIds.map((managerId) => {
             const manager = managerSnapshots[managerId];
             const managerName = manager?.label ?? managerLabel(managerId);
@@ -45,6 +50,11 @@ export function ManagerTabs({
           })}
         </TabsList>
       </div>
+      {managerIds.map((managerId) => (
+        <TabsContent className="min-w-0" key={managerId} value={managerId}>
+          {managerId === selectedManager ? children : null}
+        </TabsContent>
+      ))}
     </Tabs>
   );
 }

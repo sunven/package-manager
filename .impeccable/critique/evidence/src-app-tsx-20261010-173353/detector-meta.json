@@ -1,0 +1,14 @@
+{
+  "command": [
+    ".agents/skills/impeccable/scripts/impeccable",
+    "detect",
+    "--json",
+    "src",
+    "components"
+  ],
+  "exitCode": 0,
+  "expectedExitContract": "0=clean, 2=findings",
+  "validExitCode": true,
+  "validJson": true,
+  "topLevelType": "list"
+}

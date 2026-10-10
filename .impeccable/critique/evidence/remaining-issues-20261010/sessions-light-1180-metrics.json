@@ -1,0 +1,109 @@
+{
+  "badControls": [],
+  "destructive": [],
+  "labels": [
+    {
+      "bg": "rgba(0, 0, 0, 0)",
+      "contrast": 5.18,
+      "fg": "rgb(83, 100, 122)",
+      "lineHeight": "17.4px",
+      "overflowX": false,
+      "right": 174,
+      "size": "12px",
+      "text": "12",
+      "weight": "500"
+    },
+    {
+      "bg": "rgba(0, 0, 0, 0)",
+      "contrast": 6.05,
+      "fg": "rgb(83, 100, 122)",
+      "lineHeight": "16px",
+      "overflowX": false,
+      "right": 661,
+      "size": "12px",
+      "text": "Codex 会话记录",
+      "weight": "500"
+    },
+    {
+      "bg": "rgba(0, 0, 0, 0)",
+      "contrast": 6.05,
+      "fg": "rgb(83, 100, 122)",
+      "lineHeight": "16px",
+      "overflowX": false,
+      "right": 1136,
+      "size": "12px",
+      "text": "当前结果的记录占用",
+      "weight": "500"
+    }
+  ],
+  "muted": [
+    {
+      "bg": "rgba(0, 0, 0, 0)",
+      "contrast": 5.18,
+      "fg": "rgb(83, 100, 122)",
+      "lineHeight": "23.2px",
+      "overflowX": false,
+      "right": 1166,
+      "size": "16px",
+      "text": "Codex8Claude2",
+      "weight": "400"
+    },
+    {
+      "bg": "rgba(0, 0, 0, 0)",
+      "contrast": 5.18,
+      "fg": "rgb(83, 100, 122)",
+      "lineHeight": "16px",
+      "overflowX": false,
+      "right": 263,
+      "size": "12px",
+      "text": "8",
+      "weight": "500"
+    },
+    {
+      "bg": "rgba(0, 0, 0, 0)",
+      "contrast": 5.18,
+      "fg": "rgb(83, 100, 122)",
+      "lineHeight": "20px",
+      "overflowX": false,
+      "right": 360,
+      "size": "14px",
+      "text": "Claude2",
+      "weight": "500"
+    },
+    {
+      "bg": "rgba(0, 0, 0, 0)",
+      "contrast": 5.18,
+      "fg": "rgb(83, 100, 122)",
+      "lineHeight": "16px",
+      "overflowX": false,
+      "right": 348,
+      "size": "12px",
+      "text": "2",
+      "weight": "500"
+    }
+  ],
+  "pageOverflow": false,
+  "panels": 1,
+  "placeholder": [
+    {
+      "bg": "rgba(0, 0, 0, 0)",
+      "contrast": 6.05,
+      "fg": "rgb(83, 100, 122)",
+      "lineHeight": "normal",
+      "overflowX": false,
+      "right": 832,
+      "size": "14px",
+      "text": "搜索 Codex 会话记录",
+      "weight": "400"
+    }
+  ],
+  "primary": [],
+  "rowButtons": 0,
+  "tables": [],
+  "theme": "light",
+  "view": "sessions",
+  "viewport": [
+    1180,
+    760
+  ]
+}

@@ -54,7 +54,7 @@ export function PathPanel({
   const { inlinePaths, stackedPaths } = splitPaths(manager);
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="@container flex flex-col gap-2">
       {manager.id === "Homebrew" ? (
         <HomebrewCleanupCard
           cleanupReady={cleanupReady(manager) && !scanning}
@@ -82,7 +82,7 @@ export function PathPanel({
             />
           ) : null}
           {stackedPaths.length ? (
-            <div className="grid gap-2 sm:grid-cols-2 min-[1100px]:grid-cols-1">
+            <div className="grid grid-cols-1 gap-2 @xl:grid-cols-2">
               {stackedPaths.map((path) => (
                 <PathCard
                   cleanupAvailable={manager.status !== "Missing" && !scanning}
@@ -166,9 +166,9 @@ function InlinePathCard({
   const itemCount = paths.length;
   const gridClassName =
     itemCount >= 3
-      ? "grid grid-cols-1 gap-px bg-border sm:grid-cols-3"
+      ? "grid grid-cols-1 gap-px bg-border @xl:grid-cols-2 @4xl:grid-cols-3"
       : itemCount === 2
-        ? "grid grid-cols-1 gap-px bg-border sm:grid-cols-2"
+        ? "grid grid-cols-1 gap-px bg-border @xl:grid-cols-2"
         : "grid grid-cols-1 gap-px bg-border";
 
   return (
@@ -227,14 +227,14 @@ function InlinePathCell({
           <p className="truncate text-xs font-medium text-foreground">{pathLabel(path.label)}</p>
           {note ? <PathNoteTooltip label={`${pathLabel(path.label)}说明`} note={note} /> : null}
         </div>
-        <StatusBadge className="shrink-0 px-1.5 text-[10px]" status={size.status} />
+        <StatusBadge className="shrink-0 px-1.5 text-xs" status={size.status} />
       </div>
       <div className="mt-2 flex min-h-5 items-baseline gap-2">
         {sizeValue ? <strong className="truncate text-sm font-medium leading-5">{sizeValue}</strong> : null}
-        <p className="shrink-0 truncate text-[11px] text-muted-foreground">{detail}</p>
+        <p className="shrink-0 truncate text-xs text-muted-foreground">{detail}</p>
       </div>
+      <code className="terminal-code mt-2 block whitespace-normal break-all px-1.5 py-1 text-xs leading-5 text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
       <div className="mt-2 flex items-center gap-1">
-        <code className="terminal-code h-6 min-w-0 flex-1 truncate px-1.5 text-[11px] leading-6 text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
         <IconButton className="size-6 shrink-0" label={`复制 ${pathLabel(path.label)}路径`} onClick={() => onCopyPath(path.path)}>
           <Copy />
         </IconButton>
@@ -247,7 +247,7 @@ function InlinePathCell({
           </IconButton>
         ) : null}
       </div>
-      {size.message ? <p className="mt-1 truncate text-[11px] text-muted-foreground">{formatHomePathsInText(displayMessage(size.message), homeDirectory)}</p> : null}
+      {size.message ? <p className="mt-1 truncate text-xs text-muted-foreground">{formatHomePathsInText(displayMessage(size.message), homeDirectory)}</p> : null}
     </div>
   );
 }
@@ -316,7 +316,7 @@ function PathCard({
         </div>
       </CardHeader>
       <CardContent>
-        <code className="terminal-code block truncate px-2 py-1.5 text-xs text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
+        <code className="terminal-code block whitespace-normal break-all px-2 py-1.5 text-xs text-muted-foreground">{formatHomePath(path.path, homeDirectory)}</code>
         <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">{detail}</div>
         {size.message ? <p className="mt-2 text-xs text-muted-foreground">{formatHomePathsInText(displayMessage(size.message), homeDirectory)}</p> : null}
         <div className="mt-3 flex gap-2">

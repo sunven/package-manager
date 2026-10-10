@@ -185,15 +185,13 @@ export function App() {
             onOpenView={setActiveView}
           />
         ) : (
-          <>
-            <ManagerTabs
-              managerIds={state.enabledManagers}
-              managerSnapshots={state.managerSnapshots}
-              onSelect={actions.selectManager}
-              scanningManagers={state.scanningManagers}
-              selectedManager={selectedManager}
-            />
-
+          <ManagerTabs
+            managerIds={state.enabledManagers}
+            managerSnapshots={state.managerSnapshots}
+            onSelect={actions.selectManager}
+            scanningManagers={state.scanningManagers}
+            selectedManager={selectedManager}
+          >
             <div className="flex flex-wrap items-center justify-between gap-2" aria-live="polite">
               <div className="text-xs text-muted-foreground"><p>{scanStateLabel(state.scanStates[selectedManager], currentManager ?? undefined)}{state.scanStates[selectedManager]?.scannedAt ? ` · 数据时间 ${new Date(state.scanStates[selectedManager]!.scannedAt!).toLocaleString()}` : ""}</p><p>{state.scanMeta}</p></div>
               <Button variant="outline" type="button" disabled={scanning || Boolean(state.maintenanceConfirmation || state.maintenancePending)} onClick={() => void actions.refresh()}>刷新当前管理器</Button>
@@ -248,7 +246,7 @@ export function App() {
                 />
               </aside>
             </main>
-          </>
+          </ManagerTabs>
         )}
       </div>
       <Toaster />

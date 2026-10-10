@@ -45,7 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from "../../components/ui/table";
-import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { EmptyState, IconButton, Panel, PanelHead } from "./ui";
 
 export function ProjectCleanupPage({
@@ -249,25 +249,25 @@ export function ProjectCleanupPage({
           eyebrow="项目派生数据"
           title="扫描结果"
         />
-        <Tabs
-          onValueChange={(value) => {
-            if (value === "RustTarget" || value === "NodeModules") {
-              setKind(value);
-            }
-          }}
-          value={kind}
-        >
-          <div className="border-b px-2 pt-2">
-            <TabsList aria-label="候选类型">
-              <TabsTrigger value="RustTarget">
+        <div className="flex flex-col gap-2">
+          <div className="border-b p-2">
+            <ToggleGroup
+              aria-label="候选类型"
+              onValueChange={(value) => {
+                if (value === "RustTarget" || value === "NodeModules") setKind(value);
+              }}
+              type="single"
+              value={kind}
+            >
+              <ToggleGroupItem value="RustTarget">
                 Rust target
-                <span className="font-mono text-[0.68rem] tabular-nums text-muted-foreground">{rustTotal}</span>
-              </TabsTrigger>
-              <TabsTrigger value="NodeModules">
+                <span className="font-mono text-xs tabular-nums text-muted-foreground">{rustTotal}</span>
+              </ToggleGroupItem>
+              <ToggleGroupItem value="NodeModules">
                 Node node_modules
-                <span className="font-mono text-[0.68rem] tabular-nums text-muted-foreground">{nodeTotal}</span>
-              </TabsTrigger>
-            </TabsList>
+                <span className="font-mono text-xs tabular-nums text-muted-foreground">{nodeTotal}</span>
+              </ToggleGroupItem>
+            </ToggleGroup>
           </div>
           <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 p-2">
             <Input
@@ -416,7 +416,7 @@ export function ProjectCleanupPage({
             }
           />
         )}
-        </Tabs>
+        </div>
       </Panel>
 
       <ProjectCleanupDialog

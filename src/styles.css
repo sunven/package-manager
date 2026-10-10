@@ -74,10 +74,10 @@
   --secondary: #eef3fb;
   --secondary-foreground: #1b2433;
   --muted: #f3f6fb;
-  --muted-foreground: #6d7b90;
+  --muted-foreground: #53647a;
   --accent: #e7f0ff;
   --accent-foreground: #1b2433;
-  --destructive: #d4534e;
+  --destructive: #992621;
   --border: #e1e8f2;
   --input: #e1e8f2;
   --ring: #2f62e4;
@@ -98,7 +98,7 @@
   --surface-strong: #ffffff;
   --surface-code: #f4f7fb;
   --surface-hover: #f3f7ff;
-  --placeholder: #8b97a8;
+  --placeholder: #53647a;
   --scrollbar-track: #e7eef8;
   --scrollbar-thumb: #c9d4e6;
   --dialog-overlay: rgb(27 36 51 / 36%);
@@ -145,6 +145,7 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
   --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
@@ -389,12 +390,13 @@
   [data-slot="table-head"] {
     height: 2.25rem;
     color: var(--foreground);
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     font-weight: 700;
   }
 
   [data-slot="table-cell"] {
-    font-size: 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
   }
 
   [data-slot="dialog-overlay"],
@@ -760,14 +762,14 @@
 .industrial-panel-head [data-slot="card-description"] {
   color: var(--muted-foreground);
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 500;
   letter-spacing: 0.05em;
 }
 
 .industrial-panel-head [data-slot="card-title"] {
-  font-size: 1.05rem;
-  font-weight: 450;
+  font-size: 1rem;
+  font-weight: 600;
   letter-spacing: -0.03em;
 }
 
@@ -780,7 +782,7 @@
 }
 
 .industrial-stat-card [data-slot="card-description"] {
-  font-size: 0.64rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
 }
 
@@ -1426,14 +1428,14 @@
 
 .studio-nav-item em {
   margin-left: auto;
-  color: #8b97a8;
+  color: var(--muted-foreground);
   font-style: normal;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
 .studio-nav-item:hover {
-  background: rgb(255 255 255 / 55%);
+  background: var(--surface-hover);
   color: var(--foreground);
 }
 
@@ -1466,12 +1468,17 @@
   background: var(--card);
 }
 
-.studio-env h2,
-.studio-card h2,
-.studio-side-card h2 {
+.studio-env h2 {
   margin: 0;
   font-size: 13px;
   font-weight: 650;
+}
+
+.studio-card h2,
+.studio-side-card h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .studio-env ul {
@@ -2190,17 +2197,22 @@
 }
 
 .studio-rec p {
-  overflow: hidden;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .studio-rec small,
 .studio-rec-meta {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: 12px;
+}
+
+.studio-rec small {
+  display: block;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .studio-rec-meta {
@@ -2216,7 +2228,7 @@
   align-items: center;
   border-radius: 6px;
   padding: 0 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
 }
 
@@ -2244,6 +2256,7 @@
 
 .studio-manager-tab {
   display: inline-flex !important;
+  max-width: 100%;
   height: auto !important;
   flex: none;
   align-items: center;
@@ -2268,21 +2281,24 @@
 
 .studio-manager-tab-copy {
   display: grid;
+  max-width: 24ch;
   min-width: 0;
   text-align: left;
 }
 
 .studio-manager-tab-copy strong {
-  font-size: 12px;
-  font-weight: 650;
-  line-height: 1.2;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .studio-manager-tab-copy small {
   color: var(--muted-foreground);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
-  line-height: 1.2;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .telemetry-view-stage[data-view="managers"] .view-grid {

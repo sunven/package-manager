@@ -1,0 +1,41 @@
+{
+  "badControls": 0,
+  "copy": [
+    {
+      "args": {
+        "text": "typescript@5.9.3"
+      },
+      "cmd": "plugin:clipboard-manager|write_text"
+    }
+  ],
+  "metadata": [
+    {
+      "badgesOutsideButton": true,
+      "text": "@workspace/包含中文路径的开发环境审查工具-with-a-deliberately-long-package-name-and-no-shortening可更新"
+    },
+    {
+      "badgesOutsideButton": true,
+      "text": "typescript"
+    },
+    {
+      "badgesOutsideButton": true,
+      "text": "vite"
+    }
+  ],
+  "nameSizes": [
+    "14px",
+    "14px",
+    "14px"
+  ],
+  "nativeRows": 3,
+  "overflow": false,
+  "rowButtons": 0,
+  "tableScrollWidth": 660,
+  "tableWidth": 660,
+  "theme": "light",
+  "viewport": [
+    1180,
+    760
+  ],
+  "visiblePanels": 1
+}

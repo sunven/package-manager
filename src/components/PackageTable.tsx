@@ -164,7 +164,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
   return (
     <>
       <GlobalModulesBar homeDirectory={homeDirectory} onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
-      <TableShell heading={heading}>
+      <TableShell compact={usesCompactTable} heading={heading}>
         {props.rows.map(({ pkg, index }) => (
           <TableRow
             className={cx(
@@ -173,15 +173,11 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
             )}
             key={`${pkg.name}-${pkg.version}-${index}`}
             onClick={() => props.onSelectPackage(index)}
-            onKeyDown={(event) => selectRowWithKeyboard(event, () => props.onSelectPackage(index))}
-            role="button"
-            tabIndex={0}
           >
             <TableCell className={packageNameClassName}>
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                <span className="truncate">{pkg.name}</span>
+              <PackageName pkg={pkg} selected={index === props.selectedPackageIndex} onSelect={() => props.onSelectPackage(index)}>
                 {usesCompactTable ? renderPackageSignals(pkg) : null}
-              </span>
+              </PackageName>
             </TableCell>
             <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
             {showSourceColumn ? <TableCell className="max-w-52 truncate text-muted-foreground">{shortenPath(formatHomePathsInText(pkg.source, homeDirectory))}</TableCell> : null}
@@ -270,12 +266,11 @@ function SpecializedTable({
           )}
           key={`${pkg.name}-${pkg.version}-${index}`}
           onClick={() => onSelectPackage(index)}
-          onKeyDown={(event) => selectRowWithKeyboard(event, () => onSelectPackage(index))}
-          role="button"
-          tabIndex={0}
         >
           <TableCell className="min-w-45 max-w-70 truncate">
-            <PackageName pkg={pkg} />
+            <PackageName pkg={pkg} selected={index === selectedPackageIndex} onSelect={() => onSelectPackage(index)}>
+              <Badge className="shrink-0" variant="secondary">{packageKindLabels[pkg.kind]}</Badge>
+            </PackageName>
           </TableCell>
           <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
           <TableCell>
@@ -306,44 +301,50 @@ function isPendingUninstall(pending: MaintenanceRequest | null, managerId: Manag
   return pending?.kind === "uninstallGlobalPackage" && pending.managerId === managerId && pending.packageIndex === index && pending.packageName === packageName;
 }
 
-function selectRowWithKeyboard(event: React.KeyboardEvent, select: () => void) {
-  if (event.key !== "Enter" && event.key !== " ") return;
-  event.preventDefault();
-  select();
-}
-
 function TableShell({
   children,
+  compact = false,
   heading,
 }: {
   children: React.ReactNode;
+  compact?: boolean;
   heading: string[];
 }) {
   return (
-    <div className="min-w-[760px]">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-muted/40 hover:bg-muted/40">
-            {heading.map((item) => (
-              <TableHead className={cx("font-semibold", item === "操作" && "w-24 text-right")} key={item}>
-                {item}
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>{children}</TableBody>
-      </Table>
-    </div>
+    <Table className={compact ? "table-fixed" : "min-w-[760px]"}>
+      <TableHeader>
+        <TableRow className="bg-muted/40 hover:bg-muted/40">
+          {heading.map((item) => (
+            <TableHead className={cx("font-semibold", compact && item === "版本" && "w-32", item === "操作" && (compact ? "w-32 text-right" : "w-24 text-right"))} key={item}>
+              {item}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>{children}</TableBody>
+    </Table>
   );
 }
 
-function PackageName({ pkg }: { pkg: PackageRow }) {
+function PackageName({ children, onSelect, pkg, selected }: {
+  children?: React.ReactNode;
+  onSelect: () => void;
+  pkg: PackageRow;
+  selected: boolean;
+}) {
   return (
-    <span className="min-w-0 truncate font-medium">
-      {pkg.name}
-      <Badge className="ml-2 align-middle" variant="secondary">
-        {packageKindLabels[pkg.kind]}
-      </Badge>
+    <span className="inline-flex max-w-full min-w-0 items-center gap-1.5">
+      <button
+        aria-label={`选择 ${pkg.name} ${pkg.version}`}
+        aria-pressed={selected}
+        className="min-w-0 truncate rounded-sm text-left font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        onClick={(event) => { event.stopPropagation(); onSelect(); }}
+        title={pkg.name}
+        type="button"
+      >
+        {pkg.name}
+      </button>
+      {children}
     </span>
   );
 }

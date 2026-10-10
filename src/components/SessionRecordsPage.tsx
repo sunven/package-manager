@@ -1,7 +1,7 @@
 import { Input } from "../../components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { ArrowClockwise as RefreshCw, Trash } from "@phosphor-icons/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -51,7 +51,7 @@ const sources = [
 type PendingRemoval =
   | { kind: "one"; source: SessionSourceId; id: string; title: string }
   | { kind: "age"; source: SessionSourceId; label: string; days: 7 | 30; count: number }
-  | { kind: "selected"; source: SessionSourceId; label: string; ids: string[]; count: number };
+  | { kind: "selected"; source: SessionSourceId; label: string; records: SessionRecord[] };
 
 const emptySelection: Record<SessionSourceId, string[]> = { codex: [], claude: [] };
 
@@ -84,6 +84,7 @@ export function SessionRecordsPage({
   const [activeSource, setActiveSource] = useState<SessionSourceId>(initialSource);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [pending, setPending] = useState<PendingRemoval | null>(null);
+  const selectionTrigger = useRef<HTMLButtonElement | null>(null);
   const [removing, setRemoving] = useState(false);
   const [result, setResult] = useState<SessionRemovalResult | null>(null);
   const [resultSource, setResultSource] = useState("");
@@ -112,8 +113,18 @@ export function SessionRecordsPage({
           if (!open && !removing) setPending(null);
         }}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
+        <AlertDialogContent
+          className={pending?.kind === "selected" ? "flex max-h-[calc(100dvh-2rem)] flex-col" : undefined}
+          onCloseAutoFocus={(event) => {
+            const trigger = selectionTrigger.current;
+            selectionTrigger.current = null;
+            if (trigger && !trigger.disabled) {
+              event.preventDefault();
+              trigger.focus();
+            }
+          }}
+        >
+          <AlertDialogHeader className="shrink-0">
             <AlertDialogTitle>确认移入废纸篓</AlertDialogTitle>
             <AlertDialogDescription>
               {pending?.kind === "one"
@@ -121,11 +132,40 @@ export function SessionRecordsPage({
                 : pending?.kind === "age"
                   ? bulkRemovalConfirmText(pending.label, pending.days, pending.count)
                   : pending?.kind === "selected"
-                    ? selectedRemovalConfirmText(pending.label, pending.count)
+                    ? selectedRemovalConfirmText(pending.label, pending.records.length)
                     : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
+          {pending?.kind === "selected" ? (
+            <>
+              <ul
+                aria-label={`${pending.label} 待移入废纸篓的会话记录`}
+                className="min-h-0 max-h-80 divide-y overflow-y-auto overscroll-contain rounded-lg border focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                role="list"
+                tabIndex={0}
+              >
+                {pending.records.map((record) => (
+                  <li className="min-w-0 px-4 py-3" key={record.id}>
+                    <p className="wrap-anywhere text-sm font-medium">{record.title || record.id}</p>
+                    <dl className="mt-2 grid gap-1 text-sm">
+                      <div className="flex gap-2">
+                        <dt className="shrink-0 text-foreground/80">工作目录</dt>
+                        <dd className="min-w-0 break-all">
+                          {record.workingDirectory ? formatHomePath(record.workingDirectory, homeDirectory) : "没有工作目录"}
+                        </dd>
+                      </div>
+                      <div className="flex flex-wrap gap-x-2">
+                        <dt className="text-foreground/80">最后活动时间</dt>
+                        <dd>{record.lastActivityMs === null ? "没有最后活动时间" : formatSessionActivity(record.lastActivityMs)}</dd>
+                      </div>
+                    </dl>
+                  </li>
+                ))}
+              </ul>
+              <p className="shrink-0 text-sm text-foreground/80">清空废纸篓前可恢复记录；移入废纸篓不代表磁盘空间立即释放。</p>
+            </>
+          ) : null}
+          <AlertDialogFooter className="shrink-0">
             <AlertDialogCancel asChild>
               <Button disabled={removing} type="button" variant="outline">
                 取消
@@ -144,10 +184,10 @@ export function SessionRecordsPage({
                     ? onRemove(current.source, current.id)
                     : current.kind === "age"
                       ? onRemoveOlder(current.source, current.days)
-                      : onRemoveSelected(current.source, current.ids));
+                      : onRemoveSelected(current.source, current.records.map((record) => record.id)));
                   void action.then((next) => {
                     if (current.kind === "selected") {
-                      const submitted = new Set(current.ids);
+                      const submitted = new Set(current.records.map((record) => record.id));
                       setSelectedIds((existing) => ({
                         ...existing,
                         [current.source]: existing[current.source].filter((id) => !submitted.has(id)),
@@ -192,7 +232,7 @@ export function SessionRecordsPage({
               <TabsTrigger key={source.key} value={source.key}>
                 {source.label}
                 {count === undefined ? null : (
-                  <span className="font-mono text-[0.68rem] tabular-nums text-muted-foreground">{count}</span>
+                  <span className="font-mono text-xs tabular-nums text-muted-foreground">{count}</span>
                 )}
               </TabsTrigger>
             );
@@ -226,9 +266,10 @@ export function SessionRecordsPage({
                   setResult(null);
                   setPending({ kind: "one", source: source.key, id, title });
                 }}
-                onRequestSelectedRemoval={(ids, count) => {
+                onRequestSelectedRemoval={(records, trigger) => {
+                  selectionTrigger.current = trigger;
                   setResult(null);
-                  setPending({ kind: "selected", source: source.key, label: source.label, ids, count });
+                  setPending({ kind: "selected", source: source.key, label: source.label, records });
                 }}
                 onSelectAll={() => {
                   setSelectedIds((current) => ({
@@ -318,7 +359,7 @@ function SourceSection({
   onRequestAgeRemoval: (days: 7 | 30, count: number) => void;
   onRequestRemoval: (id: string, title: string) => void;
   onRefresh: () => void;
-  onRequestSelectedRemoval: (ids: string[], count: number) => void;
+  onRequestSelectedRemoval: (records: SessionRecord[], trigger: HTMLButtonElement) => void;
   onSelectAll: () => void;
   onSetGroupSelected: (records: SessionRecord[], selected: boolean) => void;
   onSetRecordSelected: (id: string, selected: boolean) => void;
@@ -414,8 +455,8 @@ function SourceSection({
             </Button>
             <Button
               disabled={removing || selected === null}
-              onClick={() => {
-                if (selected) onRequestSelectedRemoval(selected.ids, selected.count);
+              onClick={(event) => {
+                if (selected) onRequestSelectedRemoval(records.filter((record) => selectedSet.has(record.id)), event.currentTarget);
               }}
               size="sm"
               type="button"
