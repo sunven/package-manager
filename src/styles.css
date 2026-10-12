@@ -729,7 +729,46 @@
 
 .view-grid {
   display: grid;
-  gap: 0.35rem;
+  gap: 1rem;
+}
+
+.overview-dashboard {
+  container-type: inline-size;
+}
+
+.overview-columns {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  gap: 1rem;
+}
+
+.overview-manager-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 1.5rem;
+}
+
+.overview-manager-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  padding-block: 0.75rem;
+}
+
+@container (min-width: 34rem) {
+  .overview-manager-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 54rem) {
+  .overview-columns {
+    grid-template-columns: minmax(0, 1.8fr) minmax(18rem, 1fr);
+  }
 }
 
 .view-grid > * {
@@ -1387,7 +1426,7 @@
   min-height: 0;
   flex-direction: column;
   gap: 12px;
-  padding: 4px 12px 12px 14px;
+  padding: 16px 12px 16px 16px;
 }
 
 .studio-nav {
@@ -1491,7 +1530,7 @@
 
 .studio-env li {
   display: grid;
-  grid-template-columns: 8px 1fr auto;
+  grid-template-columns: 8px auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   color: var(--muted-foreground);
@@ -1499,10 +1538,13 @@
 }
 
 .studio-env strong {
+  min-width: 0;
   color: var(--foreground);
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .studio-env-dot {
@@ -1547,7 +1589,7 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 2px 14px 12px 2px;
+  padding: 16px;
 }
 
 .studio-overview {
@@ -2328,6 +2370,12 @@
 }
 
 @media (max-width: 860px) {
+  .studio-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
   .studio-topbar {
     height: auto;
     padding: 10px 12px 10px 72px;
@@ -2338,10 +2386,40 @@
   }
 
   .studio-sidebar {
-    max-height: 220px;
+    padding-bottom: 0;
+  }
+
+  .studio-nav {
+    display: grid;
+    flex: none;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .studio-slogan {
+    display: none;
+  }
+
+  .studio-main {
+    overflow: visible;
   }
 
   .studio-brand-copy p {
     display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .studio-topbar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 12px 16px 0;
+  }
+
+  .studio-top-actions {
+    justify-content: flex-end;
+  }
+
+  .studio-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
