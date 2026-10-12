@@ -25,13 +25,13 @@ export function OverviewDashboard({ health, homeDirectory, managerSnapshots, sca
         <Button disabled={scanningAll || maintenanceBusy} onClick={onRefreshAll} type="button">{scanningAll ? "正在扫描已启用管理器" : "扫描已启用管理器"}</Button>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
-        <StatCard label="已扫描／已启用管理器" value={`${health.scannedManagerCount} / ${health.enabledManagerCount}`} />
-        <StatCard label="已观察资产条目" value={health.scannedManagerCount ? String(health.totalPackages) : "—"} />
+        <StatCard label="已扫描／已启用管理器" value={`${health.scannedManagerCount} / ${health.enabledManagerCount}`} tone="info" />
+        <StatCard label="已观察资产条目" value={health.scannedManagerCount ? String(health.totalPackages) : "—"} tone="measurement" />
         <StatCard label="未扫描管理器" value={String(health.enabledManagerCount - health.scannedManagerCount)} />
       </div>
       <div className="overview-columns">
         <Card className="min-w-0 gap-4 py-4">
-          <CardHeader className="px-4"><CardTitle>管理器状态</CardTitle><CardDescription>未扫描不代表没有占用；最近扫描失败时保留上次结果。</CardDescription></CardHeader>
+          <CardHeader className="px-4"><CardTitle aria-level={3} role="heading">管理器状态</CardTitle><CardDescription>未扫描不代表没有占用；最近扫描失败时保留上次结果。</CardDescription></CardHeader>
           <CardContent className="overview-manager-grid px-4">
             {health.managerStatuses.map(({ managerId }) => {
               const manager = managerSnapshots[managerId];
@@ -49,18 +49,18 @@ export function OverviewDashboard({ health, homeDirectory, managerSnapshots, sca
         </Card>
         <div className="grid min-w-0 gap-4">
           <DevelopmentHealthPage health={health} homeDirectory={homeDirectory} onOpenManager={onOpenManager} />
-          <Card>
-            <CardHeader><CardTitle>目录占用 Top 5</CardTitle><CardDescription>按已测值排列；共享文件可能被不同目录持有，目录占用不等于可回收空间。</CardDescription></CardHeader>
-            <CardContent className="flex flex-col gap-3">
+          <Card className="gap-4 py-4">
+            <CardHeader className="px-4"><CardTitle aria-level={3} role="heading">目录占用 Top 5</CardTitle><CardDescription>按已测值排列；共享文件可能被不同目录持有，目录占用不等于可回收空间。</CardDescription></CardHeader>
+            <CardContent className="flex flex-col gap-3 px-4">
               {health.topStorage.length ? health.topStorage.map((item) => <div className="flex items-start justify-between gap-2" key={`${item.managerId}:${item.path}`}>
-                <div className="min-w-0"><p className="text-sm">{managerLabel(item.managerId)} · {item.label}</p><p className="break-all text-xs text-muted-foreground">{formatHomePath(item.path, homeDirectory)}</p><p className="text-sm">{item.incomplete ? "已测下限 ≥ " : "目录占用 "}{formatBytes(item.bytes)}</p></div>
-                <Button size="sm" variant="outline" onClick={() => onOpenManager(item.managerId)} type="button">查看</Button>
+                <div className="min-w-0"><p className="text-sm">{managerLabel(item.managerId)} · {item.label}</p><p className="break-all text-xs text-muted-foreground">{formatHomePath(item.path, homeDirectory)}</p><p className="overview-storage-value text-sm">{item.incomplete ? "已测下限 ≥ " : "目录占用 "}{formatBytes(item.bytes)}</p></div>
+                <Button aria-label={`查看 ${managerLabel(item.managerId)}：${item.label}`} size="sm" variant="outline" onClick={() => onOpenManager(item.managerId)} type="button">查看</Button>
               </div>) : <EmptyState message="尚无已完成的目录占用测量" />}
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader><CardTitle>其他本机数据</CardTitle><CardDescription>进入对应页面后查看，统计范围各自独立。</CardDescription></CardHeader>
-            <CardContent className="flex flex-wrap gap-2">
+          <Card className="gap-4 py-4">
+            <CardHeader className="px-4"><CardTitle aria-level={3} role="heading">其他本机数据</CardTitle><CardDescription>进入对应页面后查看，统计范围各自独立。</CardDescription></CardHeader>
+            <CardContent className="flex flex-wrap gap-2 px-4">
               <Button variant="outline" onClick={() => onOpenView("cleanup")} type="button">项目清理</Button>
               <Button variant="outline" onClick={() => onOpenView("vscode")} type="button">VS Code 占用</Button>
               <Button variant="outline" onClick={() => onOpenView("sessions")} type="button">会话记录</Button>

@@ -246,7 +246,6 @@ export function ProjectCleanupPage({
               <span>本轮已清理 <strong className="font-medium tabular-nums text-foreground">{formatBytes(view.totals.cleanedBytes)}</strong></span>
             </div>
           }
-          eyebrow="项目派生数据"
           title="扫描结果"
         />
         <div className="flex flex-col gap-2">

@@ -3,6 +3,7 @@ import type { DevelopmentHealthSummary, HealthRecommendation, HealthTone } from 
 import type { ManagerId } from "../types";
 import { formatBytes, managerLabel } from "../utils/format";
 import { Button } from "../../components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { EmptyState } from "./ui";
 
 export function DevelopmentHealthPage({
@@ -14,21 +15,23 @@ export function DevelopmentHealthPage({
   onOpenManager: (managerId: ManagerId) => void;
 }) {
   return (
-    <section aria-label="优先建议" className="studio-card studio-side-card">
-      <header className="studio-card-head studio-card-head--plain">
-        <h2>优先建议</h2>
-        <span>{health.recommendations.length} 项</span>
-      </header>
-      {health.recommendations.length ? (
-        <div className="studio-recs">
-          {health.recommendations.map((recommendation) => (
-            <RecommendationRow key={recommendation.id} onOpenManager={onOpenManager} recommendation={recommendation} />
-          ))}
-        </div>
-      ) : (
-        <EmptyState message={health.scannedManagerCount ? "当前没有优先建议" : "尚未完成体检"} />
-      )}
-    </section>
+    <Card aria-label="优先建议" className="gap-4 py-4" role="region">
+      <CardHeader className="px-4">
+        <CardTitle aria-level={3} role="heading">优先建议</CardTitle>
+        <CardAction className="text-xs text-muted-foreground">{health.recommendations.length} 项</CardAction>
+      </CardHeader>
+      <CardContent className="px-4">
+        {health.recommendations.length ? (
+          <div className="studio-recs">
+            {health.recommendations.map((recommendation) => (
+              <RecommendationRow key={recommendation.id} onOpenManager={onOpenManager} recommendation={recommendation} />
+            ))}
+          </div>
+        ) : (
+          <EmptyState message={health.scannedManagerCount ? "当前没有优先建议" : "尚未完成体检"} />
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -40,7 +43,7 @@ function RecommendationRow({
   recommendation: HealthRecommendation;
 }) {
   return (
-    <div className="studio-rec">
+    <div className="studio-rec" data-tone={recommendation.tone}>
       <div>
         <div className="studio-rec-meta">
           <ToneBadge tone={recommendation.tone} />
@@ -50,7 +53,6 @@ function RecommendationRow({
           {recommendation.count ? <span>{recommendation.count} 项</span> : null}
         </div>
         <p>{recommendation.title}</p>
-        <small>{recommendation.detail}</small>
       </div>
       {/* Navigates only. Execution stays on the manager tab, beside the cache
           path and its measured size — the figures that justify confirming. */}
@@ -64,6 +66,7 @@ function RecommendationRow({
         <ArrowRight data-icon="inline-start" />
         查看
       </Button>
+      <small>{recommendation.detail}</small>
     </div>
   );
 }

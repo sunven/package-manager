@@ -224,7 +224,7 @@ export function SessionRecordsPage({
         </Alert>
       ) : null}
 
-      <Tabs onValueChange={(value) => setActiveSource(value as SessionSourceId)} value={activeSource}>
+      <Tabs className="min-w-0" onValueChange={(value) => setActiveSource(value as SessionSourceId)} value={activeSource}>
         <TabsList className="w-full">
           {sources.map((source) => {
             const count = sections?.[source.key].count;
@@ -242,7 +242,7 @@ export function SessionRecordsPage({
           const data = scan?.[source.key];
           const view = sections?.[source.key];
           return (
-            <TabsContent key={source.key} value={source.key}>
+            <TabsContent className="min-w-0" key={source.key} value={source.key}>
               <SourceSection
                 collapsed={collapsed}
                 emptyMessage={view?.totalCount ? "没有匹配搜索和状态筛选的会话记录" : source.empty}
@@ -382,11 +382,11 @@ function SourceSection({
         </ToggleGroup>
         <span className="text-xs text-muted-foreground">匹配 {view?.count ?? 0} / 来源共 {view?.totalCount ?? 0} 条</span>
       </div>
-      <div className="flex items-center justify-between gap-3 border-b px-3 py-2">
-        <p className="min-w-0 break-all text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
+        <p className="min-w-0 basis-48 grow break-all text-xs text-muted-foreground">
           {source ? formatHomePath(source.directory, homeDirectory) : fallbackPath}
         </p>
-        <span className="flex shrink-0 gap-2">
+        <span className="flex max-w-full flex-wrap gap-2">
           <span aria-label="排序" className="flex gap-1" role="group">
             <Button aria-pressed={sort === "time"} onClick={() => onSortChange("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>
               按时间
@@ -481,7 +481,7 @@ function SourceSection({
                   />
                   <button
                     aria-expanded={!isCollapsed}
-                    className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                    className="flex min-h-6 min-w-0 flex-1 items-center justify-between gap-3 text-left"
                     onClick={() => onToggle(group.key)}
                     type="button"
                   >

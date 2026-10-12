@@ -60,19 +60,12 @@ export function ManagerTabs({
 }
 
 function StatusDot({ status }: { status: DisplayStatus }) {
-  const className =
-    status === "Ready"
-      ? "bg-terminal"
-      : status === "Failed" || status === "Missing"
-        ? "bg-destructive"
-        : status === "Unsupported" || status === "Partial" || status === "Scanning" || status === "Pending"
-          ? "bg-muted-foreground"
-          : "bg-border";
-
   return (
     <span
-      aria-hidden="true"
-      className={`status-dot size-2.5 shrink-0 ${className}`}
+      aria-label={statusLabels[status]}
+      className="status-dot size-2.5 shrink-0"
+      data-status={status}
+      role="img"
       title={statusLabels[status]}
     />
   );

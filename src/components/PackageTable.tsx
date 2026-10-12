@@ -167,10 +167,8 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
       <TableShell compact={usesCompactTable} heading={heading}>
         {props.rows.map(({ pkg, index }) => (
           <TableRow
-            className={cx(
-              "cursor-pointer",
-              index === props.selectedPackageIndex && "bg-muted",
-            )}
+            className="cursor-pointer"
+            data-state={index === props.selectedPackageIndex ? "selected" : undefined}
             key={`${pkg.name}-${pkg.version}-${index}`}
             onClick={() => props.onSelectPackage(index)}
           >
@@ -260,10 +258,8 @@ function SpecializedTable({
     <TableShell heading={heading}>
       {packages.map(({ pkg, index }) => (
         <TableRow
-          className={cx(
-            "cursor-pointer",
-            index === selectedPackageIndex && "bg-muted",
-          )}
+          className="cursor-pointer"
+          data-state={index === selectedPackageIndex ? "selected" : undefined}
           key={`${pkg.name}-${pkg.version}-${index}`}
           onClick={() => onSelectPackage(index)}
         >

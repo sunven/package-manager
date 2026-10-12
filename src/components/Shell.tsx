@@ -151,7 +151,7 @@ export function Shell({
             <SloganMark />
           </div>
         </aside>
-        <div className="studio-main" id="main-content">
+        <div className="studio-main" id="main-content" tabIndex={-1}>
           {children}
         </div>
       </div>

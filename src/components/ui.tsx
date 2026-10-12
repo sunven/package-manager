@@ -29,26 +29,23 @@ export function Panel({
 }
 
 export function PanelHead({
-  eyebrow,
   title,
   action,
 }: {
-  eyebrow: string;
   title: string;
   action?: ReactNode;
 }) {
   return (
     <CardHeader className="industrial-panel-head border-b py-0">
-      <CardDescription className="text-xs font-medium uppercase">{eyebrow}</CardDescription>
-      <CardTitle className="truncate">{title}</CardTitle>
+      <CardTitle aria-level={2} role="heading">{title}</CardTitle>
       {action ? <CardAction>{action}</CardAction> : null}
     </CardHeader>
   );
 }
 
-export function StatCard({ label, value }: { label: string; value: string }) {
+export function StatCard({ label, value, tone }: { label: string; value: string; tone?: "info" | "measurement" }) {
   return (
-    <Card size="sm" className="industrial-stat-card min-h-[76px] justify-between gap-2 py-3">
+    <Card size="sm" className="industrial-stat-card min-h-[76px] justify-between gap-2 py-3" data-tone={tone}>
       <CardHeader className="px-3.5">
         <CardDescription className="text-xs font-medium">{label}</CardDescription>
       </CardHeader>
@@ -79,7 +76,7 @@ export function SkeletonRows({ label }: { label: string }) {
 
 export function StatusBadge({ status, className }: { status: DisplayStatus; className?: string }) {
   return (
-    <Badge className={cn("status-badge", status === "Ready" && "status-badge--ready", className)} variant={statusVariant(status)}>
+    <Badge className={cn("status-badge", className)} data-status={status} variant={statusVariant(status)}>
       {statusLabels[status]}
     </Badge>
   );
@@ -87,7 +84,7 @@ export function StatusBadge({ status, className }: { status: DisplayStatus; clas
 
 export function SignalBadge({ tone, children }: { tone: "neutral" | "warn" | "partial"; children: ReactNode }) {
   return (
-    <Badge variant={tone === "neutral" ? "secondary" : tone === "warn" ? "destructive" : "outline"}>
+    <Badge className="signal-badge" data-tone={tone} variant={tone === "neutral" ? "secondary" : tone === "warn" ? "destructive" : "outline"}>
       {children}
     </Badge>
   );
@@ -157,13 +154,13 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
       return "default";
     case "Unsupported":
       return "outline";
-    case "Missing":
     case "Failed":
     case "PermissionDenied":
     case "Error":
       return "destructive";
     case "Pending":
     case "Partial":
+    case "Missing":
       return "secondary";
     default:
       return "secondary";

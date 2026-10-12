@@ -61,7 +61,6 @@ export function VscodeStoragePage({
     <main className="view-grid" aria-busy={scanning}>
       <Panel>
         <PanelHead
-          eyebrow="VS CODE / WORKSPACE STORAGE"
           title="VS Code 占用"
           action={
             <Button disabled={scanning} onClick={onRefresh} size="sm" type="button" variant="outline">
@@ -70,7 +69,7 @@ export function VscodeStoragePage({
             </Button>
           }
         />
-        <CardContent className="flex flex-col gap-2 p-3">
+        <CardContent className="flex flex-col gap-2 p-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline">只读</Badge>
             <p className="text-sm text-muted-foreground">VS Code 为工作区保留的数据，仅统计 workspaceStorage。</p>
@@ -97,7 +96,7 @@ export function VscodeStoragePage({
         </Alert>
       ) : null}
 
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="工作区存储" value={scan ? `${scan.workspaces.length} 个` : "—"} />
         <StatCard label="存储占用" value={formatFootprint(summary?.bytes ?? null, summary?.complete ?? false)} />
         <StatCard label="路径不存在" value={summary ? `${summary.missingCount} 个` : "—"} />
@@ -115,11 +114,10 @@ export function VscodeStoragePage({
 
       <Panel className="overflow-hidden">
         <PanelHead
-          eyebrow="WORKSPACE RECORDS"
           title="工作区记录"
           action={<Badge variant="secondary">{workspaces.length} / {scan?.workspaces.length ?? 0}</Badge>}
         />
-        <CardContent className="flex flex-col gap-2 p-3">
+        <CardContent className="flex flex-col gap-2 p-4">
           <Input
             aria-label="搜索工作区"
             className="max-w-lg"

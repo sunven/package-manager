@@ -25,11 +25,10 @@ export function SettingsPage({
               已启用 {enabledManagers.length}/{managerOrder.length}
             </span>
           }
-          eyebrow="设置"
           title="包管理工具"
         />
         <div className="grid grid-cols-1 gap-px bg-border min-[720px]:grid-cols-2 min-[1100px]:grid-cols-3">
-          {managerOrder.map((managerId, index) => {
+          {managerOrder.map((managerId) => {
             const enabled = enabledSet.has(managerId);
             const locked = enabled && enabledManagers.length === 1;
             const manager = managerSnapshots[managerId];
@@ -38,10 +37,9 @@ export function SettingsPage({
 
             return (
               <label
-                className={`settings-row grid min-h-10 min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 bg-background px-4 py-1.5 transition-colors ${
+                className={`grid min-h-10 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-card px-4 py-3 transition-colors ${
                   locked ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-muted/60"
                 }`}
-                data-index={String(index + 1).padStart(2, "0")}
                 key={managerId}
               >
                 <span className="grid min-w-0 gap-1">
