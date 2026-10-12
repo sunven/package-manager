@@ -28,7 +28,7 @@ export function DevelopmentHealthPage({
             ))}
           </div>
         ) : (
-          <EmptyState message={health.scannedManagerCount ? "当前没有优先建议" : "尚未完成体检"} />
+          <EmptyState message={health.scannedManagerCount ? "已扫描的管理器暂无优先建议" : "扫描管理器后查看维护建议"} />
         )}
       </CardContent>
     </Card>

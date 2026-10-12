@@ -72,7 +72,7 @@ export function VscodeStoragePage({
         <CardContent className="flex flex-col gap-2 p-4">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline">只读</Badge>
-            <p className="text-sm text-muted-foreground">VS Code 为工作区保留的数据，仅统计 workspaceStorage。</p>
+            <p className="text-sm text-muted-foreground">仅统计 VS Code 工作区存储（workspaceStorage）中的编辑器状态和扩展数据，不包含项目源码占用。</p>
           </div>
           <p className="break-all text-xs text-muted-foreground">
             {scan
@@ -126,7 +126,7 @@ export function VscodeStoragePage({
             type="search"
             value={query}
           />
-          <p className="text-xs text-muted-foreground">按占用从大到小排列。路径不存在或未识别的记录也计入汇总。</p>
+          <p className="text-xs text-muted-foreground">按占用从大到小排列，包括路径不存在或未识别的记录。这些记录不代表当前打开的窗口或完整打开历史。</p>
         </CardContent>
         {scanning && !scan ? (
           <div className="flex flex-col gap-2 p-3" aria-label="正在加载工作区">
@@ -185,7 +185,7 @@ export function VscodeStoragePage({
             error && !scan ? "扫描未完成，请刷新重试"
               : scan?.status === "Missing" ? "未发现 VS Code 工作区存储目录"
                 : scan?.status === "Partial" && !scan.workspaces.length ? "无法读取工作区记录，请查看扫描提示"
-                  : query.trim() ? "没有匹配的工作区记录"
+                  : query.trim() ? "没有匹配的工作区记录，请调整搜索词"
                     : scan ? "没有工作区存储记录" : "等待扫描工作区存储"
           } />
         )}

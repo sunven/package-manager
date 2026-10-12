@@ -102,7 +102,7 @@ describe("SessionRecordsPage", () => {
       />,
     );
 
-    expect(html).toContain("没有 Codex 会话记录");
+    expect(html).toContain("未找到 Codex 会话记录目录");
     expect(html).toContain(">Claude");
   });
 
@@ -130,7 +130,8 @@ describe("SessionRecordsPage", () => {
     );
 
     expect(html).toContain("Claude 会话记录读取失败");
-    expect(html).toContain("没有 Claude 会话记录");
+    expect(html).not.toContain("没有 Claude 会话记录");
+    expect(html).toContain("未能读取会话记录，请查看错误信息后刷新重试");
     expect(html).toContain(">Codex");
   });
 });

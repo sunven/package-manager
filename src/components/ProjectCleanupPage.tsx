@@ -159,6 +159,7 @@ export function ProjectCleanupPage({
             <span className="shrink-0 text-xs text-muted-foreground">深度</span>
             <Input
               aria-describedby="project-cleanup-depth-range"
+              aria-invalid={!depthValid}
               className="w-16"
               disabled={!view.settings.activePresetId || settingsBusy || scanBusy || Boolean(view.batch)}
               id="project-cleanup-depth"
@@ -169,7 +170,6 @@ export function ProjectCleanupPage({
               type="number"
               value={depthDraft}
             />
-            <span className="sr-only" id="project-cleanup-depth-range">范围 0 到 32</span>
           </label>
           {depthChanged ? <Button disabled={!depthValid || settingsBusy || scanBusy || Boolean(view.batch)} onClick={() => void saveDepth()} size="sm" type="button" variant="outline">保存深度</Button> : null}
           {scanBusy ? (
@@ -193,7 +193,7 @@ export function ProjectCleanupPage({
             type="button"
           >
             <RefreshCw data-icon="inline-start" />
-            扫描
+            扫描项目目录
           </Button>
           <Button
             className="shrink-0"
@@ -204,7 +204,7 @@ export function ProjectCleanupPage({
             variant="outline"
           >
             <ExternalLink data-icon="inline-start" />
-            打开
+            打开根目录
           </Button>
           <Button
             className="shrink-0"
@@ -228,8 +228,10 @@ export function ProjectCleanupPage({
             </DropdownMenuGroup></DropdownMenuContent>
           </DropdownMenu>
           {view.settings.activePresetId ? <Button disabled={settingsBusy || scanBusy || Boolean(view.batch)} variant="outline" size="sm" type="button" onClick={() => void workflow.removePreset(view.settings.activePresetId!).then((outcome) => report(outcome, "无法移除目录预设"))}>移除当前预设（不删除目录）</Button> : null}
-          <span className="text-xs text-muted-foreground">切换预设后重新扫描，清理候选不会保存在预设中。</span>
+          <span className="text-xs text-muted-foreground">预设只保存扫描根目录和深度，切换后需要重新扫描。</span>
         </div>
+        <p className="px-3 pb-3 text-xs text-muted-foreground" id="project-cleanup-depth-range">扫描深度为 0–32 的整数；0 只检查根目录，每增加 1 多检查一层子目录。</p>
+        {!depthValid ? <p className="px-3 pb-3 text-sm text-destructive" role="alert">请输入 0 到 32 之间的整数，再保存深度。</p> : null}
         {view.settings.rootMessage ? <Alert><AlertTitle>扫描目录不可用</AlertTitle><AlertDescription>{view.settings.rootMessage}。目录恢复后可重新选择此预设验证。</AlertDescription></Alert> : null}
       </Panel>
 
@@ -285,7 +287,7 @@ export function ProjectCleanupPage({
             variant="outline"
           >
             <Square data-icon="inline-start" />
-            全选可清理项
+            全选当前可清理项
           </Button>
           <Button
             disabled={!view.totals.selectedCount || Boolean(view.batch)}
@@ -294,7 +296,7 @@ export function ProjectCleanupPage({
             type="button"
             variant="outline"
           >
-            清空
+            取消选择
           </Button>
           <Button
             disabled={!view.totals.selectedCount || Boolean(view.batch)}
@@ -373,14 +375,14 @@ export function ProjectCleanupPage({
                   aria-sort={sort === "modified" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
                 >
                   <Button
-                    aria-label="按最近活跃排序"
+                    aria-label="按最近修改时间排序"
                     className="-ml-2"
                     onClick={() => cycleSort("modified")}
                     size="sm"
                     type="button"
                     variant="ghost"
                   >
-                    最近活跃
+                    最近修改
                     <SortDirIcon active={sort === "modified"} dir={sortDir} />
                   </Button>
                 </TableHead>
@@ -406,12 +408,12 @@ export function ProjectCleanupPage({
           <EmptyState
             message={
               query
-                ? "没有匹配的项目派生数据"
+                ? "没有匹配的项目派生数据，请调整搜索词或切换目录类型"
                 : view.scan.session
                   ? kind === "RustTarget"
                     ? "扫描范围内没有发现 Rust target"
                     : "扫描范围内没有发现 Node node_modules"
-                  : "选择根目录后开始扫描"
+                  : "添加或选择目录预设后，点击「扫描项目目录」"
             }
           />
         )}
@@ -689,7 +691,7 @@ function ProjectCleanupDialog({
             {batch?.phase === "result"
               ? `已处理 ${batch.completedCount}/${candidates.length} 项，已清理目录占用 ${formatBytes(batch.cleanedBytes)}。`
               : batch?.phase === "running"
-                ? `正在处理 ${Math.min(batch.completedCount + 1, candidates.length)}/${candidates.length}；取消将在当前项目完成后生效。`
+                ? `正在处理第 ${Math.min(batch.completedCount + 1, candidates.length)}/${candidates.length} 项。停止清理会等待当前项完成，其余项不再开始。`
                 : `将永久清理 ${candidateSummary}，目录占用 ${formatBytes(batch?.selectedBytes ?? 0)}。`}
           </AlertDialogDescription>
         </AlertDialogHeader>

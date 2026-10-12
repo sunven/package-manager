@@ -25,11 +25,11 @@ it("lets a user edit a multi-digit depth before saving it for the next scan", as
   await user.clear(depth);
   await user.type(depth, "12");
   expect(updateDepth).not.toHaveBeenCalled();
-  expect((screen.getByRole("button", { name: "扫描" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "扫描项目目录" }) as HTMLButtonElement).disabled).toBe(true);
   await user.click(screen.getByRole("button", { name: "保存深度" }));
   await waitFor(() => expect(workflow.read().settings.maxDepth).toBe(12));
   expect(updateDepth).toHaveBeenCalledWith("preset-1", 12);
-  expect((screen.getByRole("button", { name: "扫描" }) as HTMLButtonElement).disabled).toBe(false);
+  expect((screen.getByRole("button", { name: "扫描项目目录" }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 it("filters candidate types by keyboard while retaining the selected candidates", async () => {

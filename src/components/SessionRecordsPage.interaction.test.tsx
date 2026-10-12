@@ -25,6 +25,18 @@ function setup(overrides: Partial<Parameters<typeof SessionRecordsPage>[0]> = {}
 }
 
 describe("session selection boundaries", () => {
+  it("names a single removal target and explains recovery before confirmation", () => {
+    const onRemove = vi.fn().mockResolvedValue(removalResult());
+    setup({ onRemove });
+    fireEvent.click(screen.getByRole("button", { name: "将 Alpha project 移入废纸篓" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText(/清空废纸篓前可恢复记录/)).toBeTruthy();
+    expect(onRemove).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
   it.each([["codex", "Codex"], ["claude", "Claude"]] as const)("previews and confirms only the selected %s records", async (source, label) => {
     const title = `核对开发环境 🛠️ ${"包含很长标题的会话记录".repeat(10)}`;
     const records = [
@@ -82,7 +94,7 @@ describe("session selection boundaries", () => {
     expect(within(list).getByText("Beta project")).toBeTruthy();
     expect(within(list).queryByText("更新后的标题")).toBeNull();
     expect(within(list).queryByText("新发现的记录")).toBeNull();
-    expect(within(dialog).getByText(/动手时仍在使用或已不再是会话记录的会留下/)).toBeTruthy();
+    expect(within(dialog).getByText(/使用中或已不符合移除条件的记录会跳过/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "移入废纸篓" }));
     await waitFor(() => expect(selected).toHaveBeenCalledExactlyOnceWith("codex", ["alpha.jsonl", "beta.jsonl"]));
   });
@@ -104,10 +116,11 @@ describe("session selection boundaries", () => {
   it("keeps age removal scoped to the whole source despite a search", async () => {
     const { age } = setup();
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "alpha" } });
-    fireEvent.click(screen.getByRole("button", { name: "移除 7 天前（整个 Codex 来源）" }));
+    fireEvent.click(screen.getByRole("button", { name: "移除 7 天前的记录" }));
     const dialog = screen.getByRole("alertdialog");
-    expect(within(dialog).getByText(/当前观察到 2 条/)).toBeTruthy();
-    expect(within(dialog).getByText(/搜索和状态筛选不限制此范围/)).toBeTruthy();
+    expect(within(dialog).getByText(/当前符合条件的有 2 条/)).toBeTruthy();
+    expect(within(dialog).getByText(/不受搜索和状态筛选限制/)).toBeTruthy();
+    expect(within(dialog).getByText(/清空废纸篓前可恢复记录/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "移入废纸篓" }));
     await waitFor(() => expect(age).toHaveBeenCalledWith("codex", 7));
   });
@@ -118,7 +131,7 @@ describe("session selection boundaries", () => {
     fireEvent.click(screen.getByRole("button", { name: "移入废纸篓 1 条" }));
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "移入废纸篓" }));
     await waitFor(() => expect(screen.getByText(/移除未能执行/)).toBeTruthy());
-    expect(screen.getByText("无法读取使用状态")).toBeTruthy();
+    expect(screen.getByText(/无法读取使用状态/)).toBeTruthy();
     expect(screen.queryByText(/失败 1 条/)).toBeNull();
   });
 });

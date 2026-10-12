@@ -26,7 +26,7 @@ describe("overview entry points", () => {
     render(<OverviewDashboard health={buildDevelopmentHealthSummary(["Npm", "Pip"], {})} homeDirectory={null} managerSnapshots={{}} scanStates={{}} scanningAll={false} maintenanceBusy={false} onRefreshAll={refresh} onOpenManager={manager} onOpenView={view} />);
     expect(screen.getByRole("main", { name: "开发环境总览" })).toBeTruthy();
     expect(screen.getByText("0 / 2")).toBeTruthy();
-    expect(screen.getByText("尚无已完成的目录占用测量")).toBeTruthy();
+    expect(screen.getByText("尚无目录占用测量，请扫描管理器后查看")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "扫描已启用管理器" }));
     expect(refresh).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "查看 pip" }));

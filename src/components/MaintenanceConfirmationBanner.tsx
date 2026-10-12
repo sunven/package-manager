@@ -47,8 +47,8 @@ export function MaintenanceConfirmationBanner({
     }}>
       <DialogContent showCloseButton={!isPending}>
         <DialogHeader>
-          <DialogTitle className={visibleResult ? "sr-only" : undefined}>{copy.title}</DialogTitle>
-          {visibleResult ? null : <DialogDescription>{copy.description}</DialogDescription>}
+          <DialogTitle className={visibleResult ? "sr-only" : "wrap-anywhere"}>{copy.title}</DialogTitle>
+          {visibleResult ? null : <DialogDescription className="wrap-anywhere">{copy.description}</DialogDescription>}
         </DialogHeader>
         {visibleResult ? (
           <p className={resultToneClassName(visibleResult.tone)}>
@@ -83,7 +83,7 @@ export function MaintenanceConfirmationBanner({
                 取消
               </Button>
               <Button disabled={isPending} onClick={onConfirm} size="sm" type="button" variant="destructive">
-                {isPending ? "执行中" : confirmationCopy.confirm}
+                {isPending ? confirmation.kind === "cleanupCache" ? "正在清理" : "正在卸载" : confirmationCopy.confirm}
               </Button>
             </>
           )}
@@ -125,9 +125,9 @@ function maintenanceConfirmationCopy(confirmation: MaintenanceRequest) {
     ? `pnpm remove --global ${confirmation.packageName}`
     : `npm uninstall -g ${confirmation.packageName}`;
   return {
-    title: `确认卸载 ${label} 全局包`,
-    description: `将执行 ${command}。卸载后会刷新 ${label} 包列表。`,
-    confirm: "卸载",
+    title: `确认卸载 ${confirmation.packageName}`,
+    description: `将卸载此 ${label} 全局包，需要时须重新安装。执行命令：${command}。卸载后会刷新包列表。`,
+    confirm: "卸载全局包",
     reclaimNote: undefined as string | undefined,
   };
 }

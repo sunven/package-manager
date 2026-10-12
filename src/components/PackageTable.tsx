@@ -75,8 +75,14 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
   const { homeDirectory, manager, scanning } = props;
   if (!manager) {
     if (scanning) return <SkeletonRows label="正在扫描软件包" />;
-    return <EmptyState message="尚未扫描" />;
+    return <EmptyState message="尚无清单，请刷新当前管理器" />;
   }
+
+  const unreadMessage = !manager.packages.length && (manager.status === "Missing" || manager.status === "Failed" || manager.status === "Partial")
+    ? manager.status === "Missing"
+      ? `未找到 ${manager.label}，请查看扫描诊断，确认已安装且应用可以访问`
+      : `${manager.label} 扫描不完整，暂未读到条目，请查看扫描诊断后重新扫描`
+    : null;
 
   if (manager.id === "Homebrew") {
     const packages = props.rows;
@@ -89,7 +95,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
           labels={homebrewFilterLabels}
           onSelect={props.onHomebrewFilter}
         />
-        <SpecializedTable emptyMessage="没有匹配当前筛选条件的 Homebrew 软件包" heading={["名称", "版本", "信号", "路径", "操作"]} packages={packages} {...props} />
+        <SpecializedTable emptyMessage={unreadMessage ?? "没有匹配当前筛选条件的 Homebrew 软件包"} heading={["名称", "版本", "信号", "路径", "操作"]} packages={packages} {...props} />
       </>
     );
   }
@@ -100,7 +106,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
       <>
         <MavenSummary health={manager.maven} homeDirectory={homeDirectory} />
         <FilterBar active={props.selectedMavenFilter} filters={["All", "Duplicates", "Snapshots"]} labels={mavenFilterLabels} onSelect={props.onMavenFilter} />
-        <SpecializedTable emptyMessage="没有匹配当前筛选条件的 Maven 构件" heading={["坐标", "版本", "信号", "路径", "操作"]} packages={packages} {...props} />
+        <SpecializedTable emptyMessage={unreadMessage ?? "没有匹配当前筛选条件的 Maven 构件"} heading={["坐标", "版本", "信号", "路径", "操作"]} packages={packages} {...props} />
       </>
     );
   }
@@ -116,7 +122,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
           labels={pipFilterLabels}
           onSelect={props.onPipFilter}
         />
-        <SpecializedTable emptyMessage="没有匹配当前筛选条件的 pip 软件包" heading={["名称", "版本", "信号", "位置", "操作"]} packages={packages} {...props} />
+        <SpecializedTable emptyMessage={unreadMessage ?? "没有匹配当前筛选条件的 pip 软件包"} heading={["名称", "版本", "信号", "位置", "操作"]} packages={packages} {...props} />
       </>
     );
   }
@@ -130,7 +136,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
           onRequestCacheCleanup={props.onRequestCacheCleanup}
           pendingCleanup={props.pendingMaintenance?.kind === "cleanupCache" && props.pendingMaintenance.managerId === "Docker"}
         />
-        <SpecializedTable emptyMessage="未找到 Docker 镜像、容器或卷" heading={["名称", "状态 / 大小", "信号", "位置", "操作"]} packages={props.rows} {...props} />
+        <SpecializedTable emptyMessage={unreadMessage ?? "未找到 Docker 镜像、容器或卷"} heading={["名称", "状态 / 大小", "信号", "位置", "操作"]} packages={props.rows} {...props} />
       </>
     );
   }
@@ -139,7 +145,8 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
     return (
       <div className="px-4 py-4">
         <p className="font-medium text-foreground">Yarn 现代版本不提供全局软件包列表。</p>
-        <p className="mt-2 text-sm text-muted-foreground">{formatHomePathsInText(displayMessage(manager.unsupportedReason ?? "当前状态不支持扫描"), homeDirectory)}</p>
+        {manager.unsupportedReason ? <p className="mt-2 text-sm text-muted-foreground">{formatHomePathsInText(displayMessage(manager.unsupportedReason), homeDirectory)}</p> : null}
+        <p className="mt-2 text-sm text-muted-foreground">仍可在路径面板查看缓存目录、占用和可用的清理操作。</p>
       </div>
     );
   }
@@ -150,7 +157,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
     return (
       <>
         <GlobalModulesBar homeDirectory={homeDirectory} onCopyPath={props.onCopyPath} onOpenPath={props.onOpenPath} path={globalModulesPath} />
-        <EmptyState message={manager.packages.length ? "没有匹配当前搜索条件的软件包" : manager.id === "Cargo" ? "未找到通过 cargo install 安装的二进制 crate" : manager.id === "Fvm" ? "未找到已安装的 Flutter 版本" : "未找到全局软件包"} />
+        <EmptyState message={unreadMessage ?? (manager.packages.length ? "没有匹配的条目，请调整搜索词" : manager.id === "Cargo" ? "未找到通过 cargo install 安装的二进制 crate" : manager.id === "Fvm" ? "未找到已安装的 Flutter 版本" : manager.id === "Nvm" ? "未找到已安装的 Node 版本" : "未找到全局软件包")} />
       </>
     );
   }

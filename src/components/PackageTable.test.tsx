@@ -62,6 +62,35 @@ function renderPackageTable(manager: ManagerSnapshot) {
 }
 
 describe("PackageTable", () => {
+  it.each(["Missing", "Failed", "Partial"] as const)("does not present an unread %s list as an empty installation", (status) => {
+    const html = renderPackageTable({ ...packageManager("Npm"), status, packages: [] });
+
+    expect(html).toContain("扫描诊断");
+    expect(html).not.toContain("未找到全局软件包");
+  });
+
+  it("keeps observed packages visible after an incomplete scan", () => {
+    const html = renderPackageTable({ ...packageManager("Npm"), status: "Partial" });
+
+    expect(html).toContain("@scope/tool");
+    expect(html).not.toContain("扫描不完整，暂未读到条目");
+  });
+
+  it("keeps Docker storage and cleanup visible when the resource list is incomplete", () => {
+    const html = renderPackageTable({
+      ...packageManager("Npm"), id: "Docker", label: "Docker", status: "Partial", packages: [],
+      docker: {
+        imageCount: 0, containerCount: 0, runningContainerCount: 0, volumeCount: 0,
+        danglingImageCount: 0, unusedImageCount: 0, diskUsageStatus: "Ready", diskUsageMessage: null,
+        diskUsage: [{ resourceType: "Build Cache", totalCount: "1", activeCount: "0", size: "2 GB", reclaimable: "2 GB" }],
+      },
+    });
+
+    expect(html).toContain("扫描不完整，暂未读到条目");
+    expect(html).toContain("2 GB");
+    expect(html).toContain("执行 Docker 清理");
+  });
+
   it("shows pnpm global packages with the compact npm table columns", () => {
     const html = renderPackageTable(packageManager("Pnpm"));
 

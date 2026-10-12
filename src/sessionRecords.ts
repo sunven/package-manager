@@ -75,7 +75,7 @@ export function bulkRemovalRequest(
 }
 
 export function bulkRemovalConfirmText(sourceLabel: string, days: number, count: number) {
-  return `将整个 ${sourceLabel} 来源中最后活动时间早于 ${days} 天的会话记录移入废纸篓？当前观察到 ${count} 条，搜索和状态筛选不限制此范围。使用中的记录和读不出最后活动时间的记录不在其中；执行时会重新判断。`;
+  return `将整个 ${sourceLabel} 来源中最后活动时间早于 ${days} 天前的会话记录移入废纸篓。当前符合条件的有 ${count} 条，不受搜索和状态筛选限制。使用中或无法读取最后活动时间的记录会跳过；移除前会再次检查。`;
 }
 
 export function removableSessionRecords(records: SessionRecord[]) {
@@ -92,7 +92,7 @@ export function selectedRemovalRequest(records: SessionRecord[], selectedIds: Re
 }
 
 export function selectedRemovalConfirmText(sourceLabel: string, count: number) {
-  return `将选中的 ${count} 条 ${sourceLabel} 会话记录移入废纸篓？动手时仍在使用或已不再是会话记录的会留下。`;
+  return `将选中的 ${count} 条 ${sourceLabel} 会话记录移入废纸篓。移除前会再次检查，使用中或已不符合移除条件的记录会跳过。`;
 }
 
 export type SessionSectionView = {

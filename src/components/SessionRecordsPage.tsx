@@ -162,9 +162,9 @@ export function SessionRecordsPage({
                   </li>
                 ))}
               </ul>
-              <p className="shrink-0 text-sm text-foreground/80">清空废纸篓前可恢复记录；移入废纸篓不代表磁盘空间立即释放。</p>
             </>
           ) : null}
+          <p className="shrink-0 text-sm text-foreground/80">清空废纸篓前可恢复记录；移入废纸篓不代表磁盘空间立即释放。</p>
           <AlertDialogFooter className="shrink-0">
             <AlertDialogCancel asChild>
               <Button disabled={removing} type="button" variant="outline">
@@ -204,7 +204,7 @@ export function SessionRecordsPage({
                 type="button"
                 variant="destructive"
               >
-                {removing ? "移入中" : "移入废纸篓"}
+                {removing ? "正在移入废纸篓" : "移入废纸篓"}
               </Button>
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -215,7 +215,7 @@ export function SessionRecordsPage({
         <Alert>
           <AlertTitle>{resultSource} · {removalResultText(result)}</AlertTitle>
           <AlertDescription className="flex flex-col gap-2">
-            {result.operationError ? <p>{result.operationError}</p> : <p>按执行时的实际检查结果汇报；确认时的观察数量可能变化。移入废纸篓不代表磁盘空间立即释放。</p>}
+            {result.operationError ? <p>{result.operationError}。请刷新会话记录，核对后再试。</p> : <p>以上为实际移除结果，可能与确认时的条数不同。清空废纸篓前可恢复记录，磁盘空间不会立即释放。</p>}
             {result.message ? <p>{result.message}</p> : null}
             {result.items.length ? <details><summary className="cursor-pointer">查看逐条结果（{result.items.length}）</summary><ul className="mt-2 flex max-h-64 flex-col gap-2 overflow-auto">
               {result.items.map((item) => <li key={item.id} className="break-all"><strong>{item.id}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
@@ -245,7 +245,10 @@ export function SessionRecordsPage({
             <TabsContent className="min-w-0" key={source.key} value={source.key}>
               <SourceSection
                 collapsed={collapsed}
-                emptyMessage={view?.totalCount ? "没有匹配搜索和状态筛选的会话记录" : source.empty}
+                emptyMessage={data?.status === "Failed" ? "未能读取会话记录，请查看错误信息后刷新重试"
+                  : data?.status === "Partial" && !view?.totalCount ? "尚未读到会话记录，请查看读取不完整的提示"
+                    : data?.status === "Missing" ? `未找到 ${source.label} 会话记录目录`
+                      : view?.totalCount ? "没有匹配的会话记录，请调整搜索词或使用状态筛选" : source.empty}
                 filter={filters[source.key]}
                 onFilterChange={(patch) => {
                   setFilters((current) => ({ ...current, [source.key]: { ...current[source.key], ...patch } }));
@@ -380,7 +383,7 @@ function SourceSection({
         <ToggleGroup disabled={removing} type="single" value={filter.usage} onValueChange={(usage) => { if (usage) onFilterChange({ usage: usage as SessionUsageFilter }); }} aria-label={`${label} 使用状态`}>
           <ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="inUse">使用中</ToggleGroupItem><ToggleGroupItem value="notInUse">未使用中</ToggleGroupItem>
         </ToggleGroup>
-        <span className="text-xs text-muted-foreground">匹配 {view?.count ?? 0} / 来源共 {view?.totalCount ?? 0} 条</span>
+        <span className="text-xs text-muted-foreground" role="status">{view ? `匹配 ${view.count} / 已读取 ${view.totalCount} 条` : "尚未读取会话记录"}</span>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
         <p className="min-w-0 basis-48 grow break-all text-xs text-muted-foreground">
@@ -389,7 +392,7 @@ function SourceSection({
         <span className="flex max-w-full flex-wrap gap-2">
           <span aria-label="排序" className="flex gap-1" role="group">
             <Button aria-pressed={sort === "time"} onClick={() => onSortChange("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>
-              按时间
+              按最后活动时间
             </Button>
             <Button aria-pressed={sort === "size"} onClick={() => onSortChange("size")} size="sm" type="button" variant={sort === "size" ? "secondary" : "outline"}>
               按大小
@@ -403,6 +406,7 @@ function SourceSection({
             const request = bulkRemovalRequest(source?.records ?? [], days, nowMs);
             return (
               <Button
+                aria-describedby={`${sourceKey}-age-removal-help`}
                 disabled={scanning || removing || request === null}
                 key={days}
                 onClick={() => {
@@ -412,13 +416,14 @@ function SourceSection({
                 type="button"
                 variant="outline"
               >
-                {`移除 ${days} 天前（整个 ${label} 来源）`}
+                {`移除 ${days} 天前的记录`}
               </Button>
             );
           })}
         </span>
       </div>
       <CardContent className="flex flex-col gap-2 p-3">
+        <p className="text-xs text-muted-foreground" id={`${sourceKey}-age-removal-help`}>按天数移除以最后活动时间为准，作用于整个 {label} 来源，不受搜索和状态筛选限制。使用中的记录会跳过。</p>
         <div className="grid gap-2 sm:grid-cols-2">
           <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
           <StatCard label="当前结果的记录占用" value={view ? formatBytes(view.bytes) : "—"} />
@@ -427,7 +432,7 @@ function SourceSection({
       {source?.status === "Failed" && source.message ? (
         <Alert variant="destructive">
           <AlertTitle>{label} 会话记录读取失败</AlertTitle>
-          <AlertDescription>{source.message}</AlertDescription>
+          <AlertDescription>{source.message}。请根据错误信息检查目录，再刷新重试。</AlertDescription>
         </Alert>
       ) : null}
       {source?.status === "Partial" && source.message ? (
@@ -451,7 +456,7 @@ function SourceSection({
               全选当前结果中可移除记录
             </Button>
             <Button disabled={removing || selectedCount === 0} onClick={onClearSelection} size="sm" type="button" variant="outline">
-              清空
+              取消选择
             </Button>
             <Button
               disabled={removing || selected === null}
@@ -516,7 +521,7 @@ function SourceSection({
                         <span className="flex items-center justify-end">
                           {record.inUse ? <Badge variant="outline">使用中，暂不移除</Badge> : (
                             <Button
-                              aria-label="移入废纸篓"
+                              aria-label={`将 ${record.title || record.id} 移入废纸篓`}
                               disabled={removing}
                               onClick={() => onRequestRemoval(record.id, record.title)}
                               size="icon-sm"
@@ -536,7 +541,7 @@ function SourceSection({
             );
           })}
         </div>
-      ) : null}
+      ) : <EmptyState message={scanning ? `正在读取 ${label} 会话记录…` : `尚未读取 ${label} 会话记录，请刷新后查看`} />}
     </Panel>
   );
 }

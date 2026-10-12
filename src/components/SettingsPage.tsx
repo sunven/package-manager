@@ -25,8 +25,11 @@ export function SettingsPage({
               已启用 {enabledManagers.length}/{managerOrder.length}
             </span>
           }
-          title="包管理工具"
+          title="管理器扫描设置"
         />
+        <p className="border-b px-4 py-3 text-sm text-muted-foreground" id="manager-settings-help">
+          选择要显示和扫描的管理器，不会安装或卸载它们。至少保留一个已启用管理器。
+        </p>
         <div className="grid grid-cols-1 gap-px bg-border min-[720px]:grid-cols-2 min-[1100px]:grid-cols-3">
           {managerOrder.map((managerId) => {
             const enabled = enabledSet.has(managerId);
@@ -50,6 +53,7 @@ export function SettingsPage({
                   {version ? <span className="truncate text-xs text-muted-foreground">{version}</span> : null}
                 </span>
                 <Checkbox
+                  aria-describedby="manager-settings-help"
                   aria-label={`启用 ${managerLabels[managerId]}`}
                   checked={enabled}
                   disabled={locked}

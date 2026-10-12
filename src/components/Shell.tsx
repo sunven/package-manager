@@ -70,7 +70,7 @@ export function Shell({
           </span>
           <div className="studio-brand-copy">
             <h1>包管理器控制中心</h1>
-            <p>统一管理你的开发环境与依赖包</p>
+            <p>查看本机开发环境，按需维护</p>
           </div>
         </div>
         <div className="studio-top-actions">
@@ -98,7 +98,7 @@ export function Shell({
           </div>
           <p className="studio-online">
             <span aria-hidden="true" />
-            {scanning ? "扫描中" : "已连接"}
+            {scanning ? "扫描中" : "按需扫描"}
           </p>
           <button
             aria-current={activeView === "settings" ? "page" : undefined}

@@ -126,7 +126,7 @@ describe("session record grouping", () => {
     expect(bulkRemovalRequest(records, 30, now)).toEqual({ days: 30, count: 1 });
     expect(bulkRemovalRequest([records[0]], 7, now)).toBeNull();
     expect(bulkRemovalConfirmText("Claude", 30, 1)).toBe(
-      "将整个 Claude 来源中最后活动时间早于 30 天的会话记录移入废纸篓？当前观察到 1 条，搜索和状态筛选不限制此范围。使用中的记录和读不出最后活动时间的记录不在其中；执行时会重新判断。",
+      "将整个 Claude 来源中最后活动时间早于 30 天前的会话记录移入废纸篓。当前符合条件的有 1 条，不受搜索和状态筛选限制。使用中或无法读取最后活动时间的记录会跳过；移除前会再次检查。",
     );
   });
 
@@ -146,7 +146,7 @@ describe("session record grouping", () => {
     expect(selectedRemovalRequest(records, ["busy"])).toBeNull();
     expect(selectedRemovalRequest(records, [])).toBeNull();
     expect(selectedRemovalConfirmText("Codex", 2)).toBe(
-      "将选中的 2 条 Codex 会话记录移入废纸篓？动手时仍在使用或已不再是会话记录的会留下。",
+      "将选中的 2 条 Codex 会话记录移入废纸篓。移除前会再次检查，使用中或已不符合移除条件的记录会跳过。",
     );
   });
 });

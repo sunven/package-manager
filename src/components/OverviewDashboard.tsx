@@ -26,7 +26,7 @@ export function OverviewDashboard({ health, homeDirectory, managerSnapshots, sca
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         <StatCard label="已扫描／已启用管理器" value={`${health.scannedManagerCount} / ${health.enabledManagerCount}`} tone="info" />
-        <StatCard label="已观察资产条目" value={health.scannedManagerCount ? String(health.totalPackages) : "—"} tone="measurement" />
+        <StatCard label="包、版本与资源条目" value={health.scannedManagerCount ? String(health.totalPackages) : "—"} tone="measurement" />
         <StatCard label="未扫描管理器" value={String(health.enabledManagerCount - health.scannedManagerCount)} />
       </div>
       <div className="overview-columns">
@@ -55,7 +55,7 @@ export function OverviewDashboard({ health, homeDirectory, managerSnapshots, sca
               {health.topStorage.length ? health.topStorage.map((item) => <div className="flex items-start justify-between gap-2" key={`${item.managerId}:${item.path}`}>
                 <div className="min-w-0"><p className="text-sm">{managerLabel(item.managerId)} · {item.label}</p><p className="break-all text-xs text-muted-foreground">{formatHomePath(item.path, homeDirectory)}</p><p className="overview-storage-value text-sm">{item.incomplete ? "已测下限 ≥ " : "目录占用 "}{formatBytes(item.bytes)}</p></div>
                 <Button aria-label={`查看 ${managerLabel(item.managerId)}：${item.label}`} size="sm" variant="outline" onClick={() => onOpenManager(item.managerId)} type="button">查看</Button>
-              </div>) : <EmptyState message="尚无已完成的目录占用测量" />}
+              </div>) : <EmptyState message="尚无目录占用测量，请扫描管理器后查看" />}
             </CardContent>
           </Card>
           <Card className="gap-4 py-4">

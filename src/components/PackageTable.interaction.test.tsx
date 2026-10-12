@@ -30,7 +30,7 @@ describe("package lookup", () => {
     expect(uninstall).toHaveBeenCalledWith(1);
     await user.clear(input);
     await user.type(input, "not-installed");
-    expect(screen.getByText("没有匹配当前搜索条件的软件包")).toBeTruthy();
+    expect(screen.getByText("没有匹配的条目，请调整搜索词")).toBeTruthy();
   });
 
   it.each(["Npm", "Pip"] as const)("keeps native table semantics and independent keyboard actions for %s", async (managerId) => {
