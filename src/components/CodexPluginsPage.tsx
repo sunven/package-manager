@@ -43,7 +43,7 @@ export function CodexPluginsPage({ scan, scanning, saving, error, result, onRefr
   }
 
   return (
-    <main className="view-grid" aria-label="Codex 插件管理" aria-busy={busy}>
+    <section className="view-grid" aria-label="已安装插件管理" aria-busy={busy}>
       <Panel>
         <PanelHead title="Codex 插件" action={
           <Button ref={refreshButton} disabled={busy || Boolean(confirmation)} onClick={onRefresh} size="sm" type="button" variant="outline">
@@ -168,7 +168,7 @@ export function CodexPluginsPage({ scan, scanning, saving, error, result, onRefr
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </main>
+    </section>
   );
 }
 

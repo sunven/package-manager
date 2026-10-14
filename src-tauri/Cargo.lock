@@ -2460,6 +2460,7 @@ dependencies = [
 name = "package-manager-control-center"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "roxmltree",
  "serde",
  "serde_json",

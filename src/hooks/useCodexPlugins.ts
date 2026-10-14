@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CodexPluginChangeRequest, CodexPluginChangeResult, CodexPluginScan } from "../codexPlugins";
 import { errorToString } from "../utils/format";
 
-export function useCodexPlugins(active: boolean) {
+export function useCodexPlugins(active: boolean, revision = 0) {
   const [scan, setScan] = useState<CodexPluginScan | null>(null);
   const [scanning, setScanning] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -11,13 +11,15 @@ export function useCodexPlugins(active: boolean) {
   const [result, setResult] = useState<CodexPluginChangeResult | null>(null);
   const started = useRef(false);
   const busy = useRef(false);
+  const observedRevision = useRef(revision);
 
   const read = useCallback(async () => {
     setScanning(true);
     setError(null);
     try {
       const next = await invoke<CodexPluginScan>("scan_codex_plugins");
-      setScan(next);
+      setScan((previous) => next.status !== "Ready" && previous?.directory === next.directory
+        ? { ...next, plugins: previous.plugins, snapshotId: null } : next);
       if (next.status !== "Ready") setError(next.message ?? "插件清单读取失败，请刷新重试。");
     } catch (caught) {
       setError(errorToString(caught));
@@ -30,17 +32,18 @@ export function useCodexPlugins(active: boolean) {
     if (busy.current) return;
     busy.current = true;
     started.current = true;
+    observedRevision.current = revision;
     setResult(null);
     try {
       await read();
     } finally {
       busy.current = false;
     }
-  }, [read]);
+  }, [read, revision]);
 
   useEffect(() => {
-    if (active && !started.current) void refresh();
-  }, [active, refresh]);
+    if (active && (!started.current || observedRevision.current !== revision)) void refresh();
+  }, [active, refresh, revision]);
 
   const setEnabled = useCallback(async (request: CodexPluginChangeRequest) => {
     if (busy.current) return;

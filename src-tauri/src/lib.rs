@@ -1,3 +1,5 @@
+mod codex_cli;
+mod codex_marketplaces;
 mod codex_plugins;
 mod command;
 mod disk_usage;
@@ -28,6 +30,39 @@ use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+async fn scan_codex_marketplaces(
+    state: tauri::State<'_, codex_marketplaces::MarketplacesState>,
+) -> Result<codex_marketplaces::MarketplaceScan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.scan())
+        .await
+        .map_err(|error| format!("市场清单读取失败：{error}"))?
+}
+
+#[tauri::command]
+async fn change_codex_marketplace(
+    request: codex_marketplaces::MarketplaceRequest,
+    state: tauri::State<'_, codex_marketplaces::MarketplacesState>,
+) -> Result<codex_marketplaces::MarketplaceResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.change(request))
+        .await
+        .map_err(|error| format!("市场操作未能完成：{error}"))?
+}
+
+#[tauri::command]
+async fn choose_codex_marketplace_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let selected = app.dialog().file().blocking_pick_folder();
+    selected
+        .map(|file| {
+            file.into_path()
+                .map(|path| path.display().to_string())
+                .map_err(|error| format!("无法读取所选目录：{error}"))
+        })
+        .transpose()
+}
 
 #[tauri::command]
 async fn scan_codex_plugins(
@@ -324,6 +359,7 @@ async fn run_cache_cleanup(manager: ManagerId) -> Result<CacheCleanupRun, String
 pub fn run() {
     tauri::Builder::default()
         .manage(codex_plugins::CodexPluginsState::default())
+        .manage(codex_marketplaces::MarketplacesState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -338,6 +374,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scan_codex_marketplaces,
+            change_codex_marketplace,
+            choose_codex_marketplace_directory,
             scan_codex_plugins,
             set_codex_plugin_enabled,
             remove_session_record,

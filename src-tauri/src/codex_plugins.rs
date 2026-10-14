@@ -126,6 +126,9 @@ struct ListFailure {
 
 impl CodexPluginsState {
     pub(crate) fn scan(&self) -> Result<PluginScan, String> {
+        let _operation = crate::codex_cli::OPERATIONS
+            .lock()
+            .map_err(|_| "Codex 操作状态不可用")?;
         self.scan_with(resolve_home(), &list_installed)
     }
 
@@ -219,6 +222,9 @@ impl CodexPluginsState {
         &self,
         request: PluginChangeRequest,
     ) -> Result<PluginChangeResult, String> {
+        let _operation = crate::codex_cli::OPERATIONS
+            .lock()
+            .map_err(|_| "Codex 操作状态不可用")?;
         self.set_enabled_with(request, resolve_home(), &list_installed)
     }
 
@@ -306,7 +312,7 @@ impl CodexPluginsState {
     }
 }
 
-fn resolve_home() -> Result<PathBuf, String> {
+pub(crate) fn resolve_home() -> Result<PathBuf, String> {
     let home = match std::env::var_os("CODEX_HOME").filter(|value| !value.is_empty()) {
         Some(value) => PathBuf::from(value),
         None => PathBuf::from(std::env::var_os("HOME").ok_or("无法确定当前用户的主目录")?)
@@ -434,14 +440,14 @@ fn list_installed(home: &Path) -> Result<Vec<InstalledPlugin>, ListFailure> {
     })
 }
 
-struct ConfigFile {
-    target: PathBuf,
+pub(crate) struct ConfigFile {
+    pub(crate) target: PathBuf,
     original: Option<String>,
     permissions: Option<fs::Permissions>,
-    document: DocumentMut,
+    pub(crate) document: DocumentMut,
 }
 
-fn read_config(path: &Path) -> Result<ConfigFile, String> {
+pub(crate) fn read_config(path: &Path) -> Result<ConfigFile, String> {
     let target = match fs::canonicalize(path) {
         Ok(target) => target,
         Err(error)

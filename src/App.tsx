@@ -5,6 +5,9 @@ import { useProjectCleanup } from "./hooks/useProjectCleanup";
 import { useSessionRecords } from "./hooks/useSessionRecords";
 import { useCodexPlugins } from "./hooks/useCodexPlugins";
 import { CodexPluginsPage } from "./components/CodexPluginsPage";
+import { CodexMarketplacesPage } from "./components/CodexMarketplacesPage";
+import { useCodexMarketplaces } from "./hooks/useCodexMarketplaces";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { useVscodeStorage } from "./hooks/useVscodeStorage";
 import { SessionRecordsPage } from "./components/SessionRecordsPage";
 import { VscodeStoragePage } from "./components/VscodeStoragePage";
@@ -45,7 +48,10 @@ export function App() {
   const state = usePackageManagers();
   const projectCleanup = useProjectCleanup();
   const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "settings">("health");
-  const codexPlugins = useCodexPlugins(activeView === "plugins");
+  const [codexTab, setCodexTab] = useState("installed");
+  const codexMarketplaces = useCodexMarketplaces(activeView === "plugins" && codexTab === "marketplaces");
+  const codexPlugins = useCodexPlugins(activeView === "plugins" && codexTab === "installed", codexMarketplaces.pluginRevision);
+  const codexBusy = codexPlugins.scanning || codexPlugins.saving || codexMarketplaces.scanning || codexMarketplaces.pending;
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -144,15 +150,26 @@ export function App() {
       />
       <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
         {activeView === "plugins" ? (
-          <CodexPluginsPage
-            scan={codexPlugins.scan}
-            scanning={codexPlugins.scanning}
-            saving={codexPlugins.saving}
-            error={codexPlugins.error}
-            result={codexPlugins.result}
-            onRefresh={() => void codexPlugins.refresh()}
-            onSetEnabled={codexPlugins.setEnabled}
-          />
+          <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 插件管理">
+            <TabsList aria-label="Codex 插件管理视图">
+              <TabsTrigger value="installed" disabled={codexBusy}>已安装</TabsTrigger>
+              <TabsTrigger value="marketplaces" disabled={codexBusy}>市场源</TabsTrigger>
+            </TabsList>
+            <TabsContent value="installed">
+              <CodexPluginsPage
+                scan={codexPlugins.scan}
+                scanning={codexPlugins.scanning}
+                saving={codexPlugins.saving}
+                error={codexPlugins.error}
+                result={codexPlugins.result}
+                onRefresh={() => void codexPlugins.refresh()}
+                onSetEnabled={codexPlugins.setEnabled}
+              />
+            </TabsContent>
+            <TabsContent value="marketplaces">
+              <CodexMarketplacesPage {...codexMarketplaces} onRefresh={() => void codexMarketplaces.refresh()} onChange={codexMarketplaces.change} />
+            </TabsContent>
+          </Tabs>
         ) : activeView === "sessions" ? (
           <SessionRecordsPage
             error={sessionRecords.error}
