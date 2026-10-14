@@ -6,12 +6,13 @@ import {
   House,
   Moon,
   Package,
+  PuzzlePiece,
   Sun,
   Trash as Trash2,
 } from "@phosphor-icons/react";
 import type { ManagerId, ManagerSnapshot } from "../types";
 
-type ViewId = "health" | "managers" | "cleanup" | "vscode" | "sessions" | "settings";
+type ViewId = "health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "settings";
 
 const views: { id: ViewId; label: string; icon: typeof House }[] = [
   { id: "health", label: "总览", icon: House },
@@ -19,6 +20,7 @@ const views: { id: ViewId; label: string; icon: typeof House }[] = [
   { id: "cleanup", label: "项目清理", icon: Trash2 },
   { id: "vscode", label: "VS Code 占用", icon: Code2 },
   { id: "sessions", label: "会话记录", icon: MessagesSquare },
+  { id: "plugins", label: "Codex 插件", icon: PuzzlePiece },
   { id: "settings", label: "设置", icon: Settings },
 ];
 
@@ -29,6 +31,7 @@ export function Shell({
   onShowProjectCleanup,
   onShowVscodeStorage,
   onShowSessionRecords,
+  onShowCodexPlugins,
   onShowManagers,
   onShowSettings,
   onToggleTheme,
@@ -43,6 +46,7 @@ export function Shell({
   onShowProjectCleanup: () => void;
   onShowVscodeStorage: () => void;
   onShowSessionRecords: () => void;
+  onShowCodexPlugins: () => void;
   onShowManagers: () => void;
   onShowSettings: () => void;
   onToggleTheme: () => void;
@@ -57,6 +61,7 @@ export function Shell({
     cleanup: onShowProjectCleanup,
     vscode: onShowVscodeStorage,
     sessions: onShowSessionRecords,
+    plugins: onShowCodexPlugins,
     settings: onShowSettings,
   };
 

@@ -1,3 +1,4 @@
+mod codex_plugins;
 mod command;
 mod disk_usage;
 mod managers;
@@ -27,6 +28,27 @@ use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+async fn scan_codex_plugins(
+    state: tauri::State<'_, codex_plugins::CodexPluginsState>,
+) -> Result<codex_plugins::PluginScan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.scan())
+        .await
+        .map_err(|error| format!("插件清单读取失败：{error}"))?
+}
+
+#[tauri::command]
+async fn set_codex_plugin_enabled(
+    request: codex_plugins::PluginChangeRequest,
+    state: tauri::State<'_, codex_plugins::CodexPluginsState>,
+) -> Result<codex_plugins::PluginChangeResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.set_enabled(request))
+        .await
+        .map_err(|error| format!("插件设置保存失败：{error}"))?
+}
 
 #[tauri::command]
 async fn remove_session_records_older_than(
@@ -301,6 +323,7 @@ async fn run_cache_cleanup(manager: ManagerId) -> Result<CacheCleanupRun, String
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(codex_plugins::CodexPluginsState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -315,6 +338,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scan_codex_plugins,
+            set_codex_plugin_enabled,
             remove_session_record,
             remove_session_records,
             remove_session_records_older_than,

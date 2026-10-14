@@ -1,0 +1,65 @@
+import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { CodexPluginChangeRequest, CodexPluginChangeResult, CodexPluginScan } from "../codexPlugins";
+import { errorToString } from "../utils/format";
+
+export function useCodexPlugins(active: boolean) {
+  const [scan, setScan] = useState<CodexPluginScan | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<CodexPluginChangeResult | null>(null);
+  const started = useRef(false);
+  const busy = useRef(false);
+
+  const read = useCallback(async () => {
+    setScanning(true);
+    setError(null);
+    try {
+      const next = await invoke<CodexPluginScan>("scan_codex_plugins");
+      setScan(next);
+      if (next.status !== "Ready") setError(next.message ?? "插件清单读取失败，请刷新重试。");
+    } catch (caught) {
+      setError(errorToString(caught));
+    } finally {
+      setScanning(false);
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    if (busy.current) return;
+    busy.current = true;
+    started.current = true;
+    setResult(null);
+    try {
+      await read();
+    } finally {
+      busy.current = false;
+    }
+  }, [read]);
+
+  useEffect(() => {
+    if (active && !started.current) void refresh();
+  }, [active, refresh]);
+
+  const setEnabled = useCallback(async (request: CodexPluginChangeRequest) => {
+    if (busy.current) return;
+    busy.current = true;
+    setSaving(true);
+    setResult(null);
+    try {
+      try {
+        setResult(await invoke<CodexPluginChangeResult>("set_codex_plugin_enabled", { request }));
+      } catch (caught) {
+        setResult({ status: "Failed", message: `未能确认保存结果：${errorToString(caught)}。请核对刷新后的用户默认设置。` });
+      }
+      // Refresh has its own error state: a saved configuration stays reported as saved.
+      await read();
+    } finally {
+      setSaving(false);
+      busy.current = false;
+    }
+  }, [read]);
+
+  return { scan, scanning, saving, error, result, refresh, setEnabled };
+}

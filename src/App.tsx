@@ -3,6 +3,8 @@ import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
 import { useSessionRecords } from "./hooks/useSessionRecords";
+import { useCodexPlugins } from "./hooks/useCodexPlugins";
+import { CodexPluginsPage } from "./components/CodexPluginsPage";
 import { useVscodeStorage } from "./hooks/useVscodeStorage";
 import { SessionRecordsPage } from "./components/SessionRecordsPage";
 import { VscodeStoragePage } from "./components/VscodeStoragePage";
@@ -42,7 +44,8 @@ function initialTheme(): Theme {
 export function App() {
   const state = usePackageManagers();
   const projectCleanup = useProjectCleanup();
-  const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "settings">("health");
+  const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "settings">("health");
+  const codexPlugins = useCodexPlugins(activeView === "plugins");
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -104,6 +107,10 @@ export function App() {
         actions.closePackageActions();
         setActiveView("sessions");
       }}
+      onShowCodexPlugins={() => {
+        actions.closePackageActions();
+        setActiveView("plugins");
+      }}
       onShowHealth={() => {
         actions.closePackageActions();
         setActiveView("health");
@@ -136,7 +143,17 @@ export function App() {
         result={state.maintenanceResult}
       />
       <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
-        {activeView === "sessions" ? (
+        {activeView === "plugins" ? (
+          <CodexPluginsPage
+            scan={codexPlugins.scan}
+            scanning={codexPlugins.scanning}
+            saving={codexPlugins.saving}
+            error={codexPlugins.error}
+            result={codexPlugins.result}
+            onRefresh={() => void codexPlugins.refresh()}
+            onSetEnabled={codexPlugins.setEnabled}
+          />
+        ) : activeView === "sessions" ? (
           <SessionRecordsPage
             error={sessionRecords.error}
             homeDirectory={state.homeDirectory}
