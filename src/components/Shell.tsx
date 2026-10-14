@@ -20,7 +20,7 @@ const views: { id: ViewId; label: string; icon: typeof House }[] = [
   { id: "cleanup", label: "项目清理", icon: Trash2 },
   { id: "vscode", label: "VS Code 占用", icon: Code2 },
   { id: "sessions", label: "会话记录", icon: MessagesSquare },
-  { id: "plugins", label: "Codex 插件", icon: PuzzlePiece },
+  { id: "plugins", label: "Codex", icon: PuzzlePiece },
   { id: "settings", label: "设置", icon: Settings },
 ];
 

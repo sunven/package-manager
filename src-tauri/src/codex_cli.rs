@@ -6,7 +6,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-// Plugin settings and marketplace commands share one home and must not race each other.
+// Codex settings and marketplace commands share one home and must not race each other.
 pub(crate) static OPERATIONS: Mutex<()> = Mutex::new(());
 
 pub(crate) struct Output {
@@ -95,51 +95,129 @@ pub(crate) fn run(home: &Path, args: &[&str], timeout: Duration) -> Result<Outpu
     }
 }
 
-// config/read exposes the authoritative field origins; marketplace list does not.
+#[derive(Debug, PartialEq)]
+pub(crate) enum RpcErrorKind {
+    MissingCli,
+    Incompatible,
+    Conflict,
+    Failed,
+}
+
+#[derive(Debug)]
+pub(crate) struct RpcError {
+    pub kind: RpcErrorKind,
+    pub message: String,
+}
+
+impl RpcError {
+    fn transport(message: String) -> Self {
+        Self {
+            kind: if message.starts_with("未找到 Codex CLI") {
+                RpcErrorKind::MissingCli
+            } else {
+                RpcErrorKind::Failed
+            },
+            message,
+        }
+    }
+
+    pub(crate) fn incompatible() -> Self {
+        Self {
+            kind: RpcErrorKind::Incompatible,
+            message: "Codex CLI 未提供兼容的响应，请更新 CLI 后重新读取。".into(),
+        }
+    }
+}
+
+// Only backend-owned methods use this connection. No thread/turn is started.
+pub(crate) struct AppServer {
+    process: Process,
+    sequence: u64,
+}
+
+impl AppServer {
+    pub(crate) fn start(home: &Path) -> Result<Self, RpcError> {
+        let mut server = Self {
+            process: start(home, &["app-server"], true).map_err(RpcError::transport)?,
+            sequence: 0,
+        };
+        server.request(
+            "initialize",
+            json!({
+                "clientInfo": {"name": "package_manager", "version": "0.1.0"}
+            }),
+        )?;
+        server.send(json!({"method":"initialized"}))?;
+        Ok(server)
+    }
+
+    fn send(&mut self, message: Value) -> Result<(), RpcError> {
+        let input = self
+            .process
+            .child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| RpcError::transport("无法连接 Codex CLI。".into()))?;
+        writeln!(input, "{message}")
+            .and_then(|_| input.flush())
+            .map_err(|e| RpcError::transport(e.to_string()))
+    }
+
+    pub(crate) fn request(&mut self, method: &str, params: Value) -> Result<Value, RpcError> {
+        self.sequence += 1;
+        let id = self.sequence;
+        self.send(json!({"id":id,"method":method,"params":params}))?;
+        let started = Instant::now();
+        loop {
+            let output = read_output(&mut self.process.stdout).map_err(RpcError::transport)?;
+            for line in output.lines() {
+                let Ok(message) = serde_json::from_str::<Value>(line) else {
+                    continue;
+                };
+                if message["id"].as_u64() != Some(id) {
+                    continue;
+                }
+                if let Some(result) = message.get("result") {
+                    return Ok(result.clone());
+                }
+                let error = &message["error"];
+                if error["data"]["config_write_error_code"] == "configVersionConflict" {
+                    return Err(RpcError {
+                        kind: RpcErrorKind::Conflict,
+                        message: "用户配置已被外部修改，请重新读取并确认。".into(),
+                    });
+                }
+                if error["code"] == -32601 {
+                    return Err(RpcError::incompatible());
+                }
+                return Err(RpcError::transport(format!(
+                    "Codex 未能完成 {method}，请检查用户配置、访问权限和 CLI 兼容性后重新读取。"
+                )));
+            }
+            if self
+                .process
+                .child
+                .try_wait()
+                .map_err(|e| RpcError::transport(e.to_string()))?
+                .is_some()
+                || started.elapsed() > Duration::from_secs(15)
+            {
+                return Err(RpcError::transport(format!(
+                    "无法确认 Codex {method} 的结果。请检查 CLI 和用户配置后重新读取。"
+                )));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
 // Never send configuration contents back to the UI.
 pub(crate) fn config(home: &Path) -> Result<Value, String> {
-    let mut process = start(home, &["app-server"], true)?;
-    let messages = [
-        json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"package_manager","version":"0.1.0"}}}),
-        json!({"method":"initialized"}),
-        json!({"id":2,"method":"config/read","params":{"includeLayers":true,"cwd":"/"}}),
-    ];
-    let input = process
-        .child
-        .stdin
-        .as_mut()
-        .ok_or("无法读取 Codex 配置来源")?;
-    for message in messages {
-        writeln!(input, "{message}").map_err(|e| e.to_string())?;
-    }
-    input.flush().map_err(|e| e.to_string())?;
-    let started = Instant::now();
-    loop {
-        let output = read_output(&mut process.stdout)?;
-        for line in output.lines() {
-            let Ok(message) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            if message["id"] == 2 {
-                return message.get("result").cloned().ok_or_else(|| {
-                    "无法读取 Codex 配置来源；请检查用户配置和 CLI 兼容性。".into()
-                });
-            }
-            if message["id"] == 1 && message.get("error").is_some() {
-                return Err("当前 CLI 无法提供配置来源信息，市场暂时只读。".into());
-            }
-        }
-        if process
-            .child
-            .try_wait()
-            .map_err(|e| e.to_string())?
-            .is_some()
-            || started.elapsed() > Duration::from_secs(15)
-        {
-            return Err("无法核实 Codex 配置来源，市场暂时只读。请检查 CLI 后重新读取。".into());
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    AppServer::start(home)
+        .and_then(|mut server| {
+            server.request("config/read", json!({"includeLayers":true,"cwd":"/"}))
+        })
+        .map_err(|error| error.message)
 }
 
 pub(crate) fn diagnostic(stderr: &str) -> String {

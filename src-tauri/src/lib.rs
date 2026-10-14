@@ -1,4 +1,5 @@
 mod codex_cli;
+mod codex_hooks;
 mod codex_marketplaces;
 mod codex_plugins;
 mod command;
@@ -30,6 +31,27 @@ use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+async fn scan_codex_hooks(
+    state: tauri::State<'_, codex_hooks::HooksState>,
+) -> Result<codex_hooks::HookScan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.scan())
+        .await
+        .map_err(|error| format!("Hooks 清单读取失败：{error}"))?
+}
+
+#[tauri::command]
+async fn set_codex_hook_enabled(
+    request: codex_hooks::HookChangeRequest,
+    state: tauri::State<'_, codex_hooks::HooksState>,
+) -> Result<codex_hooks::HookChangeResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.set_enabled(request))
+        .await
+        .map_err(|error| format!("Hook 设置保存失败：{error}"))?
+}
 
 #[tauri::command]
 async fn scan_codex_marketplaces(
@@ -358,6 +380,7 @@ async fn run_cache_cleanup(manager: ManagerId) -> Result<CacheCleanupRun, String
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(codex_hooks::HooksState::default())
         .manage(codex_plugins::CodexPluginsState::default())
         .manage(codex_marketplaces::MarketplacesState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -374,6 +397,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scan_codex_hooks,
+            set_codex_hook_enabled,
             scan_codex_marketplaces,
             change_codex_marketplace,
             choose_codex_marketplace_directory,

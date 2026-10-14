@@ -7,6 +7,8 @@ import { useCodexPlugins } from "./hooks/useCodexPlugins";
 import { CodexPluginsPage } from "./components/CodexPluginsPage";
 import { CodexMarketplacesPage } from "./components/CodexMarketplacesPage";
 import { useCodexMarketplaces } from "./hooks/useCodexMarketplaces";
+import { useCodexHooks } from "./hooks/useCodexHooks";
+import { CodexHooksPage } from "./components/CodexHooksPage";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { useVscodeStorage } from "./hooks/useVscodeStorage";
 import { SessionRecordsPage } from "./components/SessionRecordsPage";
@@ -51,7 +53,8 @@ export function App() {
   const [codexTab, setCodexTab] = useState("installed");
   const codexMarketplaces = useCodexMarketplaces(activeView === "plugins" && codexTab === "marketplaces");
   const codexPlugins = useCodexPlugins(activeView === "plugins" && codexTab === "installed", codexMarketplaces.pluginRevision);
-  const codexBusy = codexPlugins.scanning || codexPlugins.saving || codexMarketplaces.scanning || codexMarketplaces.pending;
+  const codexHooks = useCodexHooks(activeView === "plugins" && codexTab === "hooks", codexPlugins.hookRevision + codexMarketplaces.pluginRevision);
+  const codexBusy = codexPlugins.scanning || codexPlugins.saving || codexMarketplaces.scanning || codexMarketplaces.pending || codexHooks.scanning || codexHooks.saving;
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -150,10 +153,11 @@ export function App() {
       />
       <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
         {activeView === "plugins" ? (
-          <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 插件管理">
-            <TabsList aria-label="Codex 插件管理视图">
-              <TabsTrigger value="installed" disabled={codexBusy}>已安装</TabsTrigger>
+          <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
+            <TabsList aria-label="Codex 管理视图">
+              <TabsTrigger value="installed" disabled={codexBusy}>已安装插件</TabsTrigger>
               <TabsTrigger value="marketplaces" disabled={codexBusy}>市场源</TabsTrigger>
+              <TabsTrigger value="hooks" disabled={codexBusy}>Hooks</TabsTrigger>
             </TabsList>
             <TabsContent value="installed">
               <CodexPluginsPage
@@ -168,6 +172,9 @@ export function App() {
             </TabsContent>
             <TabsContent value="marketplaces">
               <CodexMarketplacesPage {...codexMarketplaces} onRefresh={() => void codexMarketplaces.refresh()} onChange={codexMarketplaces.change} />
+            </TabsContent>
+            <TabsContent value="hooks">
+              <CodexHooksPage {...codexHooks} onRefresh={() => void codexHooks.refresh()} onSetEnabled={codexHooks.setEnabled} onShowPlugins={() => setCodexTab("installed")} />
             </TabsContent>
           </Tabs>
         ) : activeView === "sessions" ? (

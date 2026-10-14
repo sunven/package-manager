@@ -9,6 +9,7 @@ export function useCodexPlugins(active: boolean, revision = 0) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CodexPluginChangeResult | null>(null);
+  const [hookRevision, setHookRevision] = useState(0);
   const started = useRef(false);
   const busy = useRef(false);
   const observedRevision = useRef(revision);
@@ -57,6 +58,7 @@ export function useCodexPlugins(active: boolean, revision = 0) {
         setResult({ status: "Failed", message: `未能确认保存结果：${errorToString(caught)}。请核对刷新后的用户默认设置。` });
       }
       // Refresh has its own error state: a saved configuration stays reported as saved.
+      setHookRevision((value) => value + 1);
       await read();
     } finally {
       setSaving(false);
@@ -64,5 +66,5 @@ export function useCodexPlugins(active: boolean, revision = 0) {
     }
   }, [read]);
 
-  return { scan, scanning, saving, error, result, refresh, setEnabled };
+  return { scan, scanning, saving, error, result, refresh, setEnabled, hookRevision };
 }
