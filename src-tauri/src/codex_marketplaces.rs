@@ -60,6 +60,8 @@ struct MarketplaceEntry {
     source_kind: Option<String>,
     source: Option<String>,
     read_only_reason: Option<String>,
+    ref_name: Option<String>,
+    sparse_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -80,6 +82,10 @@ pub(crate) struct MarketplaceRequest {
     source_kind: Option<String>,
     #[serde(default)]
     source: Option<String>,
+    #[serde(default)]
+    ref_name: Option<String>,
+    #[serde(default)]
+    sparse_paths: Vec<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -309,6 +315,24 @@ impl MarketplacesState {
                 id: market.name.clone(),
                 name: market.name.clone(),
                 root: market.root.clone(),
+                ref_name: config
+                    .as_ref()
+                    .ok()
+                    .and_then(|c| c.sources.get(&market.name))
+                    .and_then(|s| s["ref"].as_str())
+                    .map(str::to_owned),
+                sparse_paths: config
+                    .as_ref()
+                    .ok()
+                    .and_then(|c| c.sources.get(&market.name))
+                    .and_then(|s| s["sparse_paths"].as_array())
+                    .map(|paths| {
+                        paths
+                            .iter()
+                            .filter_map(|p| p.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
                 source_kind: market.marketplace_source["sourceType"]
                     .as_str()
                     .map(str::to_owned),
@@ -428,10 +452,14 @@ impl MarketplacesState {
                 )
             }
         };
-        let output = match run(
-            &observation.home,
-            &["plugin", "marketplace", command, "--json", "--", &target],
-        ) {
+        let extra = match source_options(&request) {
+            Ok(extra) => extra,
+            Err(error) => return Ok(MarketplaceResult::new(ChangeStatus::Failed, error, false)),
+        };
+        let mut args = vec!["plugin", "marketplace", command, "--json"];
+        args.extend(extra.iter().map(String::as_str));
+        args.extend(["--", target.as_str()]);
+        let output = match run(&observation.home, &args) {
             Ok(output) => output,
             Err(error) => {
                 return Ok(MarketplaceResult::new(
@@ -453,9 +481,12 @@ fn validate_source(kind: Option<&str>, source: Option<&str>) -> Result<String, S
     match kind {
         Some("local") => {
             let root = Path::new(source);
-            if !root.is_absolute() || !root.join(".agents/plugins/marketplace.json").is_file() {
+            if !root.is_absolute()
+                || !(root.join(".agents/plugins/marketplace.json").is_file()
+                    || root.join(".claude-plugin/marketplace.json").is_file())
+            {
                 return Err(
-                    "请选择包含 .agents/plugins/marketplace.json 的本地市场根目录。".into(),
+                    "请选择包含 .agents/plugins/marketplace.json 或 .claude-plugin/marketplace.json 的本地市场根目录。".into(),
                 );
             }
             std::fs::canonicalize(root)
@@ -467,10 +498,15 @@ fn validate_source(kind: Option<&str>, source: Option<&str>) -> Result<String, S
                 || source.starts_with("http://")
                 || source.starts_with("ssh://")
                 || source.starts_with("git@");
+            let (repository, reference) = source
+                .split_once('@')
+                .map(|(repo, reference)| (repo, Some(reference)))
+                .unwrap_or((source, None));
             let shorthand = !source.contains(':')
-                && !source.starts_with('.')
-                && source.split('/').count() == 2
-                && source.split('/').all(|part| {
+                && !repository.starts_with('.')
+                && reference.is_none_or(valid_ref)
+                && repository.split('/').count() == 2
+                && repository.split('/').all(|part| {
                     !part.is_empty()
                         && part
                             .chars()
@@ -491,6 +527,42 @@ fn validate_source(kind: Option<&str>, source: Option<&str>) -> Result<String, S
         }
         _ => Err("请选择 Git 或本地市场来源。".into()),
     }
+}
+
+fn valid_ref(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && !value.chars().any(|c| c.is_control() || c.is_whitespace())
+}
+
+fn source_options(request: &MarketplaceRequest) -> Result<Vec<String>, String> {
+    if request.ref_name.is_none() && request.sparse_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    if request.operation != Operation::Add || request.source_kind.as_deref() != Some("git") {
+        return Err("分支和稀疏检出只适用于添加 Git 市场。".into());
+    }
+    let mut args = Vec::new();
+    if let Some(reference) = &request.ref_name {
+        if !valid_ref(reference) {
+            return Err("请输入有效的分支或标签。".into());
+        }
+        args.extend(["--ref".into(), reference.clone()]);
+    }
+    for path in &request.sparse_paths {
+        if path.trim().is_empty()
+            || path.starts_with('-')
+            || path.chars().any(char::is_control)
+            || Path::new(path).is_absolute()
+            || Path::new(path)
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err("稀疏检出目录须为仓库内的相对路径。".into());
+        }
+        args.extend(["--sparse".into(), path.clone()]);
+    }
+    Ok(args)
 }
 
 fn operation_result(operation: &Operation, target: &str, output: Output) -> MarketplaceResult {
@@ -628,7 +700,38 @@ mod tests {
             marketplace_id: Some("personal".into()),
             source_kind: Some("git".into()),
             source: Some("owner/market".into()),
+            ref_name: None,
+            sparse_paths: Vec::new(),
         }
+    }
+
+    #[test]
+    fn git_ref_sparse_and_legacy_marketplace_are_supported_without_local_git_options() {
+        assert_eq!(
+            validate_source(Some("git"), Some("owner/repo@feature/plugins")).unwrap(),
+            "owner/repo@feature/plugins"
+        );
+        let state = MarketplacesState::default();
+        let scan = scan(&state);
+        let mut change = request(&scan, Operation::Add);
+        change.ref_name = Some("v1.0".into());
+        change.sparse_paths = vec![".agents/plugins".into(), "plugins".into()];
+        let result = state.change_with(change, Ok(PathBuf::from("/fixture/home")), &|_| Ok(vec![market()]), &|_| Ok(config()), &|_, args| {
+            assert_eq!(args, &["plugin", "marketplace", "add", "--json", "--ref", "v1.0", "--sparse", ".agents/plugins", "--sparse", "plugins", "--", "owner/market"]);
+            Ok(output(json!({"marketplaceName":"personal", "installedRoot":"/fixture/market", "alreadyAdded":false})))
+        }).unwrap();
+        assert_eq!(result.status, ChangeStatus::Succeeded);
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".claude-plugin")).unwrap();
+        fs::write(dir.path().join(".claude-plugin/marketplace.json"), "{}").unwrap();
+        assert!(validate_source(Some("local"), dir.path().to_str()).is_ok());
+        let mut change = request(&scan, Operation::Add);
+        change.source_kind = Some("local".into());
+        change.ref_name = Some("main".into());
+        assert!(source_options(&change).is_err());
+        change.source_kind = Some("git".into());
+        change.sparse_paths = vec!["../outside".into()];
+        assert!(source_options(&change).is_err());
     }
 
     fn scan(state: &MarketplacesState) -> MarketplaceScan {
@@ -955,6 +1058,8 @@ mod tests {
                 .unwrap();
             assert!(before.snapshot_id.is_some(), "{:?}", before.config_error);
             let req = MarketplaceRequest {
+                ref_name: None,
+                sparse_paths: Vec::new(),
                 snapshot_id: before.snapshot_id.unwrap(),
                 operation: Operation::Add,
                 marketplace_id: None,
@@ -977,6 +1082,8 @@ mod tests {
         let result = state
             .change_with(
                 MarketplaceRequest {
+                    ref_name: None,
+                    sparse_paths: Vec::new(),
                     snapshot_id: before.snapshot_id.unwrap(),
                     operation: Operation::Remove,
                     marketplace_id: Some("fixture-market".into()),

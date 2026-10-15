@@ -159,7 +159,7 @@ export function App() {
             </TabsList>
             <TabsContent value="marketplaces">
               <CodexMarketplacesPage {...codexMarketplaces}
-                plugins={{ ...codexPlugins, onSetEnabled: codexPlugins.setEnabled }}
+                plugins={{ ...codexPlugins, onSetEnabled: codexPlugins.setEnabled, onLifecycle: codexPlugins.change, onShowHooks: () => setCodexTab("hooks") }}
                 onRefresh={() => void Promise.all([codexMarketplaces.refresh(), codexPlugins.refresh()])}
                 onChange={codexMarketplaces.change} />
             </TabsContent>

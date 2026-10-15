@@ -22,12 +22,13 @@ struct Observation {
     id: String,
     home: PathBuf,
     config_target: PathBuf,
-    plugins: HashMap<String, (InstalledPlugin, Option<bool>)>,
+    config: DocumentMut,
+    plugins: HashMap<String, (InventoryPlugin, Option<bool>)>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct InstalledPlugin {
+struct InventoryPlugin {
     plugin_id: String,
     name: String,
     marketplace_name: String,
@@ -40,9 +41,13 @@ struct InstalledPlugin {
     marketplace_source: JsonValue,
     #[serde(default)]
     install_policy: JsonValue,
+    #[serde(default)]
+    auth_policy: JsonValue,
+    #[serde(default)]
+    installed_path: Option<PathBuf>,
 }
 
-impl InstalledPlugin {
+impl InventoryPlugin {
     fn editable(&self) -> bool {
         matches!(
             self.source["source"].as_str(),
@@ -81,6 +86,11 @@ struct PluginEntry {
     name: String,
     marketplace_name: String,
     version: Option<String>,
+    installed: bool,
+    install_policy: Option<String>,
+    auth_policy: Option<String>,
+    install_blocked_reason: Option<String>,
+    details: crate::codex_plugin_details::PluginDetails,
     default_enabled: Option<bool>,
     source_kind: Option<String>,
     source_location: Option<String>,
@@ -99,6 +109,7 @@ pub(crate) struct PluginChangeRequest {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub(crate) enum PluginChangeStatus {
     Saved,
+    Succeeded,
     Conflict,
     Failed,
 }
@@ -107,6 +118,21 @@ pub(crate) enum PluginChangeStatus {
 pub(crate) struct PluginChangeResult {
     status: PluginChangeStatus,
     message: String,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+pub(crate) enum LifecycleOperation {
+    Install,
+    Reinstall,
+    Uninstall,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PluginLifecycleRequest {
+    snapshot_id: String,
+    plugin_id: String,
+    operation: LifecycleOperation,
 }
 
 impl PluginChangeResult {
@@ -129,13 +155,13 @@ impl CodexPluginsState {
         let _operation = crate::codex_cli::OPERATIONS
             .lock()
             .map_err(|_| "Codex 操作状态不可用")?;
-        self.scan_with(resolve_home(), &list_installed)
+        self.scan_with(resolve_home(), &list_plugins)
     }
 
     fn scan_with(
         &self,
         home: Result<PathBuf, String>,
-        list: &impl Fn(&Path) -> Result<Vec<InstalledPlugin>, ListFailure>,
+        list: &impl Fn(&Path) -> Result<Vec<InventoryPlugin>, ListFailure>,
     ) -> Result<PluginScan, String> {
         let mut state = self
             .0
@@ -189,6 +215,19 @@ impl CodexPluginsState {
                 .find_map(|key| plugin.source[*key].as_str())
                 .map(str::to_owned);
             scan.plugins.push(PluginEntry {
+                installed: plugin.installed,
+                install_policy: plugin.install_policy.as_str().map(str::to_owned),
+                auth_policy: plugin.auth_policy.as_str().map(str::to_owned),
+                install_blocked_reason: install_blocked_reason(&plugin),
+                details: crate::codex_plugin_details::read(
+                    &home,
+                    &plugin.name,
+                    &plugin.marketplace_name,
+                    plugin.installed,
+                    plugin.version.as_deref(),
+                    plugin.installed_path.as_deref(),
+                    &plugin.source,
+                ),
                 source_kind: plugin.source["source"].as_str().map(str::to_owned),
                 source_location,
                 marketplace_location: plugin.marketplace_source["source"]
@@ -211,6 +250,7 @@ impl CodexPluginsState {
                 id: id.clone(),
                 home,
                 config_target: config.target,
+                config: config.document,
                 plugins: observed,
             });
             scan.snapshot_id = Some(id);
@@ -225,14 +265,14 @@ impl CodexPluginsState {
         let _operation = crate::codex_cli::OPERATIONS
             .lock()
             .map_err(|_| "Codex 操作状态不可用")?;
-        self.set_enabled_with(request, resolve_home(), &list_installed)
+        self.set_enabled_with(request, resolve_home(), &list_plugins)
     }
 
     fn set_enabled_with(
         &self,
         request: PluginChangeRequest,
         current_home: Result<PathBuf, String>,
-        list: &impl Fn(&Path) -> Result<Vec<InstalledPlugin>, ListFailure>,
+        list: &impl Fn(&Path) -> Result<Vec<InventoryPlugin>, ListFailure>,
     ) -> Result<PluginChangeResult, String> {
         let mut state = self
             .0
@@ -259,6 +299,12 @@ impl CodexPluginsState {
                 "该插件不在可修改的清单中，请刷新后核对。",
             ));
         };
+        if !expected_plugin.installed {
+            return Ok(PluginChangeResult::new(
+                PluginChangeStatus::Conflict,
+                "插件尚未安装，请重新读取。",
+            ));
+        }
         let installed = match list(&observation.home) {
             Ok(installed) => installed,
             Err(failure) => {
@@ -310,6 +356,135 @@ impl CodexPluginsState {
             Err(result) => result,
         })
     }
+
+    pub(crate) fn change(
+        &self,
+        request: PluginLifecycleRequest,
+    ) -> Result<PluginChangeResult, String> {
+        let _operation = crate::codex_cli::OPERATIONS
+            .lock()
+            .map_err(|_| "Codex 操作状态不可用")?;
+        self.change_with(request, resolve_home(), &list_plugins, &|home, args| {
+            crate::codex_cli::run(home, args, Duration::from_secs(120))
+        })
+    }
+
+    fn change_with(
+        &self,
+        request: PluginLifecycleRequest,
+        home: Result<PathBuf, String>,
+        list: &impl Fn(&Path) -> Result<Vec<InventoryPlugin>, ListFailure>,
+        run: &impl Fn(&Path, &[&str]) -> Result<crate::codex_cli::Output, String>,
+    ) -> Result<PluginChangeResult, String> {
+        let mut state = self.0.lock().map_err(|_| "插件状态不可用")?;
+        let conflict = || {
+            PluginChangeResult::new(
+                PluginChangeStatus::Conflict,
+                "插件、配置或安装状态已变化，请重新读取并确认。",
+            )
+        };
+        let Some(observation) = state.observation.take() else {
+            return Ok(conflict());
+        };
+        if observation.id != request.snapshot_id || home.as_ref().ok() != Some(&observation.home) {
+            return Ok(conflict());
+        }
+        let Some((expected, _)) = observation.plugins.get(&request.plugin_id) else {
+            return Ok(conflict());
+        };
+        if expected.installed == (request.operation == LifecycleOperation::Install) {
+            return Ok(conflict());
+        }
+        if request.operation != LifecycleOperation::Uninstall {
+            if let Some(reason) = install_blocked_reason(expected) {
+                return Ok(PluginChangeResult::new(PluginChangeStatus::Failed, reason));
+            }
+        }
+        let fresh = match list(&observation.home) {
+            Ok(items) => items,
+            Err(error) => {
+                return Ok(PluginChangeResult::new(
+                    PluginChangeStatus::Failed,
+                    error.message,
+                ))
+            }
+        };
+        if fresh
+            .iter()
+            .find(|item| item.plugin_id == request.plugin_id)
+            != Some(expected)
+        {
+            return Ok(conflict());
+        }
+        let config = match read_config(&observation.home.join("config.toml")) {
+            Ok(config) => config,
+            Err(error) => return Ok(PluginChangeResult::new(PluginChangeStatus::Failed, error)),
+        };
+        if config.target != observation.config_target
+            || config.document.to_string() != observation.config.to_string()
+        {
+            return Ok(conflict());
+        }
+        let command = if request.operation == LifecycleOperation::Uninstall {
+            "remove"
+        } else {
+            "add"
+        };
+        let output = match run(
+            &observation.home,
+            &["plugin", command, "--json", "--", &expected.plugin_id],
+        ) {
+            Ok(output) => output,
+            Err(error) => {
+                return Ok(PluginChangeResult::new(
+                    PluginChangeStatus::Failed,
+                    format!("未能确认命令结果：{error}。请重新读取核对，勿直接重复执行。"),
+                ))
+            }
+        };
+        let response = serde_json::from_str::<JsonValue>(&output.stdout).ok();
+        if !output.success {
+            return Ok(PluginChangeResult::new(
+                PluginChangeStatus::Failed,
+                format!(
+                    "插件操作未成功：{}。仍可能已产生变更，请核对重读结果。",
+                    crate::codex_cli::diagnostic(&output.stderr)
+                ),
+            ));
+        }
+        if !response.is_some_and(|value| {
+            value["pluginId"] == expected.plugin_id
+                && value["name"] == expected.name
+                && value["marketplaceName"] == expected.marketplace_name
+        }) {
+            return Ok(PluginChangeResult::new(
+                PluginChangeStatus::Failed,
+                "命令已结束，但返回结果不兼容；请核对重读后的清单，勿直接重复执行。",
+            ));
+        }
+        Ok(PluginChangeResult::new(
+            PluginChangeStatus::Succeeded,
+            match request.operation {
+                LifecycleOperation::Uninstall => {
+                    "卸载命令已完成，请核对安装清单。未追加删除原始来源或插件数据。"
+                }
+                LifecycleOperation::Install => {
+                    "安装命令已完成，插件已设为启用。连接认证请在 Codex 中完成，并在新会话中验证。"
+                }
+                LifecycleOperation::Reinstall => {
+                    "重新安装命令已完成，插件已设为启用。不保证取得上游最新版，请核对重读结果。"
+                }
+            },
+        ))
+    }
+}
+
+fn install_blocked_reason(plugin: &InventoryPlugin) -> Option<String> {
+    match plugin.install_policy.as_str() {
+        Some("AVAILABLE" | "INSTALLED_BY_DEFAULT") => None,
+        Some("NOT_AVAILABLE") => Some("市场策略不允许安装此插件。".into()),
+        _ => Some("无法确认安装策略，请更新 CLI 或检查市场目录。".into()),
+    }
 }
 
 pub(crate) fn resolve_home() -> Result<PathBuf, String> {
@@ -331,10 +506,11 @@ pub(crate) fn resolve_home() -> Result<PathBuf, String> {
     }
 }
 
-fn parse_inventory(stdout: &str) -> Result<Vec<InstalledPlugin>, ListFailure> {
+fn parse_inventory(stdout: &str) -> Result<Vec<InventoryPlugin>, ListFailure> {
     #[derive(Deserialize)]
     struct Inventory {
-        installed: Vec<InstalledPlugin>,
+        installed: Vec<InventoryPlugin>,
+        available: Vec<InventoryPlugin>,
     }
     let failure = || ListFailure {
         status: PluginScanStatus::Incompatible,
@@ -342,20 +518,24 @@ fn parse_inventory(stdout: &str) -> Result<Vec<InstalledPlugin>, ListFailure> {
     };
     let inventory: Inventory = serde_json::from_str(stdout).map_err(|_| failure())?;
     let mut ids = HashSet::new();
-    for plugin in &inventory.installed {
-        if !plugin.installed
-            || plugin.name.is_empty()
-            || plugin.marketplace_name.is_empty()
-            || plugin.plugin_id != format!("{}@{}", plugin.name, plugin.marketplace_name)
-            || !ids.insert(&plugin.plugin_id)
-        {
-            return Err(failure());
+    let mut plugins = Vec::new();
+    for (items, installed) in [(inventory.installed, true), (inventory.available, false)] {
+        for plugin in items {
+            if plugin.installed != installed
+                || plugin.name.trim().is_empty()
+                || plugin.marketplace_name.is_empty()
+                || plugin.plugin_id != format!("{}@{}", plugin.name, plugin.marketplace_name)
+                || !ids.insert(plugin.plugin_id.clone())
+            {
+                return Err(failure());
+            }
+            plugins.push(plugin);
         }
     }
-    Ok(inventory.installed)
+    Ok(plugins)
 }
 
-fn list_installed(home: &Path) -> Result<Vec<InstalledPlugin>, ListFailure> {
+fn list_plugins(home: &Path) -> Result<Vec<InventoryPlugin>, ListFailure> {
     let fail = |message: String| ListFailure {
         status: PluginScanStatus::Failed,
         message,
@@ -366,7 +546,7 @@ fn list_installed(home: &Path) -> Result<Vec<InstalledPlugin>, ListFailure> {
     let mut stderr =
         tempfile::tempfile().map_err(|error| fail(format!("无法准备插件清单读取：{error}")))?;
     let mut child = Command::new("codex")
-        .args(["plugin", "list", "--json"])
+        .args(["plugin", "list", "--available", "--json"])
         .current_dir("/")
         .env("CODEX_HOME", home)
         .stdin(Stdio::null())
@@ -557,7 +737,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn inventory() -> Vec<InstalledPlugin> {
+    fn inventory() -> Vec<InventoryPlugin> {
         parse_inventory(&json!({"installed": [
             {"pluginId":"writer@personal", "name":"writer", "marketplaceName":"personal", "installed":true,
              "enabled":true, "version":"1.0", "source":{"source":"local", "path":"/plugins/writer"},
@@ -565,7 +745,7 @@ mod tests {
             {"pluginId":"writer@other", "name":"writer", "marketplaceName":"other", "installed":true,
              "enabled":false, "source":{"source":"git", "url":"https://example.com/writer"},
              "marketplaceSource":{"sourceType":"local", "source":"/catalog"}}
-        ]}).to_string()).unwrap()
+        ], "available": []}).to_string()).unwrap()
     }
 
     fn fixture(content: &str) -> (tempfile::TempDir, PathBuf, CodexPluginsState) {
@@ -840,6 +1020,133 @@ mod tests {
         assert_eq!(parse_inventory(&json!({"installed": [{"pluginId":"x@y", "name":"other", "marketplaceName":"y", "installed":true}]}).to_string()).unwrap_err().status, PluginScanStatus::Incompatible);
     }
 
+    fn catalog(installed: bool) -> Vec<InventoryPlugin> {
+        let mut items = inventory();
+        items.truncate(1);
+        items[0].installed = installed;
+        items[0].install_policy = json!("AVAILABLE");
+        items
+    }
+
+    #[test]
+    fn catalog_and_installations_remain_distinct_and_available_items_cannot_be_toggled() {
+        let parsed = parse_inventory(&json!({"installed": [], "available": [{
+            "pluginId":"writer@personal", "name":"writer", "marketplaceName":"personal", "installed":false
+        }]}).to_string()).unwrap();
+        assert!(!parsed[0].installed);
+        let (_dir, home, state) = fixture("");
+        let scan = state
+            .scan_with(Ok(home.clone()), &|_| Ok(catalog(false)))
+            .unwrap();
+        assert!(!scan.plugins[0].installed);
+        let result = state
+            .set_enabled_with(request(&scan, true), Ok(home), &|_| {
+                panic!("must not toggle an uninstalled entry")
+            })
+            .unwrap();
+        assert_eq!(result.status, PluginChangeStatus::Conflict);
+    }
+
+    #[test]
+    fn lifecycle_executes_only_the_approved_identity_once() {
+        for operation in [
+            LifecycleOperation::Install,
+            LifecycleOperation::Reinstall,
+            LifecycleOperation::Uninstall,
+        ] {
+            let (_dir, home, state) = fixture("# preserve\n");
+            let installed = operation != LifecycleOperation::Install;
+            let scan = state
+                .scan_with(Ok(home.clone()), &|_| Ok(catalog(installed)))
+                .unwrap();
+            let command = if operation == LifecycleOperation::Uninstall {
+                "remove"
+            } else {
+                "add"
+            };
+            let result = state.change_with(PluginLifecycleRequest { snapshot_id: scan.snapshot_id.unwrap(), plugin_id: "writer@personal".into(), operation }, Ok(home), &|_| Ok(catalog(installed)), &|_, args| {
+                assert_eq!(args, &["plugin", command, "--json", "--", "writer@personal"]);
+                Ok(crate::codex_cli::Output { success: true, stdout: json!({"pluginId":"writer@personal","name":"writer","marketplaceName":"personal"}).to_string(), stderr: String::new() })
+            }).unwrap();
+            assert_eq!(result.status, PluginChangeStatus::Succeeded);
+            assert!(state.0.lock().unwrap().observation.is_none());
+        }
+    }
+
+    #[test]
+    fn lifecycle_rejects_policy_source_and_nested_configuration_changes() {
+        for scenario in ["policy", "source", "config", "snapshot", "installed"] {
+            let (_dir, home, state) =
+                fixture("[plugins.\"writer@personal\".mcp_servers.docs]\nenabled = true\n");
+            let mut items = catalog(true);
+            if scenario == "policy" {
+                items[0].install_policy = json!("NOT_AVAILABLE");
+            }
+            let scan = state
+                .scan_with(Ok(home.clone()), &|_| Ok(items.clone()))
+                .unwrap();
+            if scenario == "source" {
+                items[0].source["path"] = json!("/changed");
+            }
+            if scenario == "installed" {
+                items[0].installed = false;
+            }
+            if scenario == "config" {
+                fs::write(
+                    home.join("config.toml"),
+                    "[plugins.\"writer@personal\".mcp_servers.docs]\nenabled = false\n",
+                )
+                .unwrap();
+            }
+            let result = state
+                .change_with(
+                    PluginLifecycleRequest {
+                        snapshot_id: if scenario == "snapshot" {
+                            "stale".into()
+                        } else {
+                            scan.snapshot_id.unwrap()
+                        },
+                        plugin_id: "writer@personal".into(),
+                        operation: LifecycleOperation::Reinstall,
+                    },
+                    Ok(home),
+                    &|_| Ok(items.clone()),
+                    &|_, _| panic!("changed targets must not execute"),
+                )
+                .unwrap();
+            assert_ne!(result.status, PluginChangeStatus::Succeeded);
+        }
+    }
+
+    #[test]
+    fn lifecycle_does_not_report_invalid_or_failed_responses_as_success() {
+        for (success, stdout) in [(true, "{}"), (false, "{}"), (true, "not json")] {
+            let (_dir, home, state) = fixture("");
+            let scan = state
+                .scan_with(Ok(home.clone()), &|_| Ok(catalog(false)))
+                .unwrap();
+            let result = state
+                .change_with(
+                    PluginLifecycleRequest {
+                        snapshot_id: scan.snapshot_id.unwrap(),
+                        plugin_id: "writer@personal".into(),
+                        operation: LifecycleOperation::Install,
+                    },
+                    Ok(home),
+                    &|_| Ok(catalog(false)),
+                    &|_, _| {
+                        Ok(crate::codex_cli::Output {
+                            success,
+                            stdout: stdout.into(),
+                            stderr: "command unavailable".into(),
+                        })
+                    },
+                )
+                .unwrap();
+            assert_eq!(result.status, PluginChangeStatus::Failed);
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn preserves_symlinked_config_and_file_permissions() {
@@ -875,5 +1182,107 @@ mod tests {
         let scan = CodexPluginsState::default().scan().unwrap();
         assert_eq!(scan.status, PluginScanStatus::Ready, "{:?}", scan.message);
         assert_eq!(fs::read(home.join("config.toml")).unwrap(), before);
+    }
+
+    #[test]
+    #[ignore = "requires Codex CLI; only installs pure skill fixtures in a temporary Codex home"]
+    fn real_cli_plugin_lifecycle_in_temporary_home() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("codex");
+        fs::create_dir(&home).unwrap();
+        let home = fs::canonicalize(home).unwrap();
+        fs::write(home.join("config.toml"), "# isolated lifecycle\n").unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+        let plugin = source.join("plugins/hello");
+        fs::create_dir_all(plugin.join(".codex-plugin")).unwrap();
+        fs::create_dir_all(plugin.join("skills/hello")).unwrap();
+        fs::write(
+            plugin.join("skills/hello/SKILL.md"),
+            "---\nname: hello\ndescription: Test fixture\n---\nHello\n",
+        )
+        .unwrap();
+        fs::write(
+            plugin.join(".codex-plugin/plugin.json"),
+            json!({"name":"hello","version":"1.0.0","description":"Fixture","skills":"./skills/"})
+                .to_string(),
+        )
+        .unwrap();
+        fs::write(source.join(".agents/plugins/marketplace.json"), json!({"name":"lifecycle-fixture","plugins":[{"name":"hello","source":{"source":"local","path":"./plugins/hello"},"policy":{"installation":"AVAILABLE","authentication":"ON_INSTALL"},"category":"Productivity"}]}).to_string()).unwrap();
+        let runner =
+            |home: &Path, args: &[&str]| crate::codex_cli::run(home, args, Duration::from_secs(15));
+        assert!(
+            runner(
+                &home,
+                &[
+                    "plugin",
+                    "marketplace",
+                    "add",
+                    "--json",
+                    "--",
+                    source.to_str().unwrap()
+                ]
+            )
+            .unwrap()
+            .success
+        );
+        let state = CodexPluginsState::default();
+        for operation in [
+            LifecycleOperation::Install,
+            LifecycleOperation::Reinstall,
+            LifecycleOperation::Uninstall,
+        ] {
+            if operation == LifecycleOperation::Reinstall {
+                let scan = state.scan_with(Ok(home.clone()), &list_plugins).unwrap();
+                let result = state
+                    .set_enabled_with(
+                        PluginChangeRequest {
+                            snapshot_id: scan.snapshot_id.unwrap(),
+                            plugin_id: "hello@lifecycle-fixture".into(),
+                            enabled: false,
+                        },
+                        Ok(home.clone()),
+                        &list_plugins,
+                    )
+                    .unwrap();
+                assert_eq!(result.status, PluginChangeStatus::Saved);
+                fs::write(plugin.join("skills/hello/SKILL.md"), "changed fixture").unwrap();
+            }
+            let scan = state.scan_with(Ok(home.clone()), &list_plugins).unwrap();
+            let removing = operation == LifecycleOperation::Uninstall;
+            let result = state
+                .change_with(
+                    PluginLifecycleRequest {
+                        snapshot_id: scan.snapshot_id.unwrap(),
+                        plugin_id: "hello@lifecycle-fixture".into(),
+                        operation,
+                    },
+                    Ok(home.clone()),
+                    &list_plugins,
+                    &runner,
+                )
+                .unwrap();
+            assert_eq!(
+                result.status,
+                PluginChangeStatus::Succeeded,
+                "{}",
+                result.message
+            );
+            let inventory = list_plugins(&home).unwrap();
+            assert_eq!(
+                inventory
+                    .iter()
+                    .find(|p| p.plugin_id == "hello@lifecycle-fixture")
+                    .unwrap()
+                    .installed,
+                !removing
+            );
+            let config = read_config(&home.join("config.toml")).unwrap();
+            assert_eq!(
+                default_enabled(&config.document, "hello@lifecycle-fixture").unwrap(),
+                if removing { None } else { Some(true) }
+            );
+        }
+        assert!(plugin.join("skills/hello/SKILL.md").exists());
     }
 }

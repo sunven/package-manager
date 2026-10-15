@@ -3,11 +3,35 @@ export type CodexPlugin = {
   name: string;
   marketplaceName: string;
   version: string | null;
+  installed: boolean;
+  installPolicy: string | null;
+  authPolicy: string | null;
+  installBlockedReason: string | null;
+  details: CodexPluginDetails;
   defaultEnabled: boolean | null;
   sourceKind: string | null;
   sourceLocation: string | null;
   marketplaceLocation: string | null;
   readOnlyReason: string | null;
+};
+
+export type CodexPluginDetails = {
+  origin: "installed" | "source" | null;
+  root: string | null;
+  displayName: string | null;
+  description: string | null;
+  author: string | null;
+  category: string | null;
+  skills: string[] | null;
+  mcpServers: string[] | null;
+  hooks: string[] | null;
+  messages: string[];
+};
+
+export type CodexPluginLifecycleRequest = {
+  snapshotId: string;
+  pluginId: string;
+  operation: "Install" | "Reinstall" | "Uninstall";
 };
 
 export type CodexPluginScan = {
@@ -27,7 +51,7 @@ export type CodexPluginChangeRequest = {
 };
 
 export type CodexPluginChangeResult = {
-  status: "Saved" | "Conflict" | "Failed";
+  status: "Saved" | "Succeeded" | "Conflict" | "Failed";
   message: string;
 };
 

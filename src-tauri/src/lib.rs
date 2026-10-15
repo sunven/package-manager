@@ -1,6 +1,7 @@
 mod codex_cli;
 mod codex_hooks;
 mod codex_marketplaces;
+mod codex_plugin_details;
 mod codex_plugins;
 mod command;
 mod disk_usage;
@@ -105,6 +106,17 @@ async fn set_codex_plugin_enabled(
     tauri::async_runtime::spawn_blocking(move || state.set_enabled(request))
         .await
         .map_err(|error| format!("插件设置保存失败：{error}"))?
+}
+
+#[tauri::command]
+async fn change_codex_plugin(
+    request: codex_plugins::PluginLifecycleRequest,
+    state: tauri::State<'_, codex_plugins::CodexPluginsState>,
+) -> Result<codex_plugins::PluginChangeResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.change(request))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -404,6 +416,7 @@ pub fn run() {
             choose_codex_marketplace_directory,
             scan_codex_plugins,
             set_codex_plugin_enabled,
+            change_codex_plugin,
             remove_session_record,
             remove_session_records,
             remove_session_records_older_than,

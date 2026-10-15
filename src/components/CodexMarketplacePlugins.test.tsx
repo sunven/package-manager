@@ -68,8 +68,8 @@ async function openPage() {
 }
 
 function expand(name: string) {
-  fireEvent.click(screen.getByRole("button", { name: `查看 ${name} 的已安装插件与详情` }));
-  return screen.getByRole("region", { name: `${name} 的已安装插件` });
+  fireEvent.click(screen.getByRole("button", { name: `查看 ${name} 的插件与详情` }));
+  return screen.getByRole("region", { name: `${name} 的插件` });
 }
 
 describe("installed plugins organized by marketplace", () => {
@@ -96,12 +96,12 @@ describe("installed plugins organized by marketplace", () => {
 
   it("keeps empty markets and unmatched plugin groups without inventing source actions", async () => {
     await openPage();
-    expect(within(expand("local-tools")).getByText("该市场暂无已安装插件。")).toBeTruthy();
+    expect(within(expand("local-tools")).getByText("该市场暂无插件目录项或已安装插件。")).toBeTruthy();
     const orphan = expand("gone-tools");
     expect(within(orphan).getByRole("button", { name: "禁用 orphan（gone-tools）" })).toBeTruthy();
     expect(screen.getByText("未出现在市场清单中")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "移除市场 gone-tools" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "刷新市场 gone-tools" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "同步市场 gone-tools" })).toBeNull();
   });
 
   it("keeps plugin management available when the market inventory fails", async () => {
@@ -121,7 +121,7 @@ describe("installed plugins organized by marketplace", () => {
     expect(screen.getByText("插件清单读取失败")).toBeTruthy();
     expect((screen.getByRole("button", { name: "移除市场 team-tools" }) as HTMLButtonElement).disabled).toBe(false);
     expect(within(expand("team-tools")).getByText(/插件清单暂不可用/)).toBeTruthy();
-    expect(screen.queryByText("该市场暂无已安装插件。")).toBeNull();
+    expect(screen.queryByText("该市场暂无插件目录项或已安装插件。")).toBeNull();
   });
 
   it.each(["Succeeded", "Partial", "Failed"] as const)("regroups after an executed %s removal without leaving the page", async (status) => {

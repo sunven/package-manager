@@ -53,7 +53,7 @@
 - 打开 cache / store / package 目录。
 - 展示应用 PATH、可执行文件解析路径、失败命令与输出；可复制检查命令，单独重试目录测量、Homebrew 预演或 pip 更新检查。
 - 会话记录支持按标题、工作目录搜索，按使用状态筛选，并展示每条移除结果及跳过／失败原因。
-- Codex 页分为「插件市场／Hooks」：展开市场即可核对其已安装插件并单个启停，同页管理 Git／本地市场源；Hooks 保留查看与单项启停。
+- Codex 页分为「插件市场／Hooks」：展开市场可搜索插件目录、按安装状态筛选、查看详情并单项安装、启停、重新安装或卸载，同页管理 Git／本地市场源；Hooks 保留查看与单项启停。
 
 ## 当前边界
 
@@ -112,23 +112,29 @@ Codex 与 Claude 来源分别扫描、搜索、筛选和移除。搜索及使用
 
 入口为侧栏「Codex」，包含「插件市场／Hooks」两个页签，只管理当前 `CODEX_HOME`（默认 `~/.codex`）；使用相同目录的 CLI 与桌面 App 共用这份本地配置。即使只使用桌面 App，也需要应用的 PATH 中有兼容的 Codex CLI。已验证版本为 0.162.1，不代表最低支持版本，各项能力分别判断兼容性。
 
-「插件市场」默认展示市场列表，展开市场后查看其已安装插件、来源详情并单项启停。插件清单需要 CLI 支持 `codex plugin list --json`。首次进入读取，之后手动重新读取；不提供未安装插件目录、安装、更新、卸载或独立 skill 管理。配置未显式设置时显示未知，可确认后指定启用或禁用。保存前复核插件身份与目标设置，只更新该插件的 `enabled`，保留其他配置、注释和文件权限；检测到外部修改时要求重新确认。
+「插件市场」默认展示本机 Codex 发现或配置的市场，展开后浏览已安装与未安装插件，按名称或简介搜索，并以「全部／已安装／未安装」筛选。插件清单需要 CLI 支持 `codex plugin list --available --json`。首次进入、手动及操作后读取；安装状态与用户默认启用设置分别显示，不从缓存是否存在推断安装。
 
-没有已安装插件的市场仍展示。插件找不到对应市场时，按原市场名保留分组并注明「未出现在市场清单中」，不提供该分组的市场源维护操作。两份清单的错误与操作资格分别判断：市场读取失败不妨碍符合资格的插件启停，插件读取失败也不阻止独立可用的市场维护。页面重组的范围与验收见 [PRD](./.scratch/codex-plugin-marketplace-organization/PRD.md)。
+插件列表与详情展示版本、来源、安装和认证策略，并按本地可读文件补充简介、作者及技能名称、MCP 服务名和 Hooks 事件的只读清单。兼容 portable、Codex 和 Claude 插件 manifest；详情标明来自安装副本还是来源目录。未下载的远程插件保留目录信息，无法读取的字段和组件明确标为未知或尚不可读取，不为预览自动下载或安装。组件声明不代表已加载、连接或获得信任；可跳转现有 Hooks 管理页。
+
+安装、启停、重新安装和卸载均为确认后的单项操作，执行前复核插件身份、来源、安装状态、策略与配置。安装和重新安装委托 Codex 执行并将插件启用；重新安装已禁用插件也会启用，不承诺取得上游最新版。安装策略不允许或无法核实时不能安装或重新安装，连接认证仍在 Codex 中完成。卸载委托 Codex 移除安装副本及配置，应用不追加删除原始来源、凭据、插件数据或 Hooks 信任记录。
+
+用户配置未显式设置启用值时显示未知，可确认后指定启用或禁用；启停只更新该插件的 `enabled`，保留其他配置、注释和文件权限。检测到外部修改时要求重新确认。此次补全的范围、验证与执行边界见 [PRD](./.scratch/codex-marketplace-plugin-completion/PRD.md)、[验证记录](./.scratch/codex-marketplace-plugin-completion/VERIFICATION.md) 和 [ADR-0014](./docs/adr/0014-plugin-lifecycle-uses-cli-and-details-use-readable-local-files.md)。不提供公共插件目录、插件或市场发布、项目配置、批量操作、技能编辑、MCP 服务启停或认证管理。
+
+没有已安装插件的市场仍可浏览目录，空市场也保留。插件找不到对应市场时，按原市场名保留分组并注明「未出现在市场清单中」，不提供该分组的市场源维护操作。两份清单的错误与操作资格分别判断：市场读取失败不妨碍符合资格的插件操作，插件读取失败也不阻止独立可用的市场维护。
 
 保存成功不代表当前会话已生效，项目设置也可能覆盖用户默认值。配置读取失败时禁止修改；保存与后续刷新分别报告结果。接入边界见 [ADR-0011](./docs/adr/0011-codex-plugins-use-cli-inventory-and-user-config.md)。
 
-市场源在「插件市场」内管理，使用官方市场清单，支持添加 Git 仓库简写、HTTP(S)／SSH Git URL 或本地市场根目录。私有仓库沿用本机 Git 认证，应用不提供凭据保存。「重新读取」读取本机市场与已安装插件两份清单；「刷新市场」逐个同步 Git 来源，本地目录无需 Git 刷新。
+市场源在「插件市场」内管理，使用官方市场清单，支持添加 Git 仓库简写（含 `owner/repo@ref`）、HTTP(S)／SSH Git URL 或本地市场根目录。「Git 高级选项」可指定分支或标签及多个稀疏检出目录；本地来源支持 `.agents/plugins/marketplace.json` 和 `.claude-plugin/marketplace.json` 布局。私有仓库沿用本机 Git 认证，应用不提供凭据保存。「重新读取」读取本机市场与插件目录清单；「同步市场」逐个同步 Git 来源，本地目录修改后可重新读取，无需 Git 同步。
 
-市场维护需要 CLI 支持 `plugin marketplace` 命令及 `app-server` 的 `config/read` 配置来源信息（已验证 0.162.1）。只有来源、用户配置和官方配置归属都可核实时才提供维护动作；默认、受管理或归属不明的市场只读。刷新和移除前确认目标，执行前重新核实，外部变更时中止旧操作；同名不同来源不自动替换。
+市场维护需要 CLI 支持 `plugin marketplace` 命令及 `app-server` 的 `config/read` 配置来源信息（已验证 0.162.1）。只有来源、用户配置和官方配置归属都可核实时才提供维护动作；默认、受管理或归属不明的市场只读。同步和移除前确认目标，执行前重新核实，外部变更时中止旧操作；同名不同来源不自动替换。
 
-官方刷新可能同时同步已配置插件，即使插件已禁用。移除市场只委托官方命令，Git 市场本地副本会被移除，应用不追加插件卸载或原始来源删除。命令结果和随后清单读取结果分别报告。范围与验证见 [市场源 PRD](./.scratch/codex-marketplace-management/PRD.md) 和 [ADR-0012](./docs/adr/0012-marketplace-refresh-follows-codex-sync-semantics.md)。
+同步市场可能影响多个已配置插件，即使插件已禁用；它不等于单项重新安装，也不承诺取得上游最新版。移除市场只委托官方命令，Git 市场本地副本会被移除，应用不追加插件卸载或原始来源删除。命令结果和随后清单读取结果分别报告。同步语义见 [市场源 PRD](./.scratch/codex-marketplace-management/PRD.md) 和 [ADR-0012](./docs/adr/0012-marketplace-refresh-follows-codex-sync-semantics.md)。
 
 「Hooks」采用原生清单，展示事件、命令或 MCP 工具、来源、启用与信任状态，可展开完整操作、匹配条件、超时及配置路径。总开关开启时包含用户配置和已启用插件的 Hooks；项目配置及已禁用插件不展开。总开关关闭时说明无法枚举，不把空清单解释成没有配置。
 
 Hooks 依赖 CLI 的 `app-server` 清单、功能状态和配置读写能力。只有已信任、非托管且来源可核实的单条 Hook 才能确认后启停；信任审查使用 Codex CLI 的 `/hooks` 或桌面 App 的 Hooks 界面。本工具只写该 Hook 的用户级 `enabled`，不修改信任记录、定义、总开关或插件设置。保存前复核定义、信任、启用状态及配置版本，外部变化时中止并重新读取，不自动覆盖重试。
 
-Hooks 首次进入、手动刷新和操作后读取；插件启停或市场维护后，再次进入 Hooks 会重读。保存成功与随后读取失败分别报告，过期清单暂时不能修改；保存后请在新会话中验证。需求、验证与边界见 [Hooks PRD](./.scratch/codex-hooks-management/PRD.md)、[验证记录](./.scratch/codex-hooks-management/VERIFICATION.md) 和 [ADR-0013](./docs/adr/0013-codex-hooks-use-native-inventory-and-user-state.md)。
+Hooks 首次进入、手动刷新和操作后读取；插件安装、启停、重新安装、卸载或市场维护后，再次进入 Hooks 会重读。保存成功与随后读取失败分别报告，过期清单暂时不能修改；保存后请在新会话中验证。需求、验证与边界见 [Hooks PRD](./.scratch/codex-hooks-management/PRD.md)、[验证记录](./.scratch/codex-hooks-management/VERIFICATION.md) 和 [ADR-0013](./docs/adr/0013-codex-hooks-use-native-inventory-and-user-state.md)。
 
 ### 运行与验证
 

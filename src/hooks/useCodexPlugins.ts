@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CodexPluginChangeRequest, CodexPluginChangeResult, CodexPluginScan } from "../codexPlugins";
+import type { CodexPluginChangeRequest, CodexPluginChangeResult, CodexPluginLifecycleRequest, CodexPluginScan } from "../codexPlugins";
 import { errorToString } from "../utils/format";
 
 export function useCodexPlugins(active: boolean, revision = 0) {
@@ -24,6 +24,7 @@ export function useCodexPlugins(active: boolean, revision = 0) {
       if (next.status !== "Ready") setError(next.message ?? "插件清单读取失败，请刷新重试。");
     } catch (caught) {
       setError(errorToString(caught));
+      setScan((previous) => previous ? { ...previous, snapshotId: null } : null);
     } finally {
       setScanning(false);
     }
@@ -46,16 +47,16 @@ export function useCodexPlugins(active: boolean, revision = 0) {
     if (active && (!started.current || observedRevision.current !== revision)) void refresh();
   }, [active, refresh, revision]);
 
-  const setEnabled = useCallback(async (request: CodexPluginChangeRequest) => {
+  const mutate = useCallback(async (command: "set_codex_plugin_enabled" | "change_codex_plugin", request: CodexPluginChangeRequest | CodexPluginLifecycleRequest) => {
     if (busy.current) return;
     busy.current = true;
     setSaving(true);
     setResult(null);
     try {
       try {
-        setResult(await invoke<CodexPluginChangeResult>("set_codex_plugin_enabled", { request }));
+        setResult(await invoke<CodexPluginChangeResult>(command, { request }));
       } catch (caught) {
-        setResult({ status: "Failed", message: `未能确认保存结果：${errorToString(caught)}。请核对刷新后的用户默认设置。` });
+        setResult({ status: "Failed", message: `未能确认操作结果：${errorToString(caught)}。请核对重读后的插件清单和用户设置，勿直接重复执行。` });
       }
       // Refresh has its own error state: a saved configuration stays reported as saved.
       setHookRevision((value) => value + 1);
@@ -66,5 +67,7 @@ export function useCodexPlugins(active: boolean, revision = 0) {
     }
   }, [read]);
 
-  return { scan, scanning, saving, error, result, refresh, setEnabled, hookRevision };
+  const setEnabled = useCallback((request: CodexPluginChangeRequest) => mutate("set_codex_plugin_enabled", request), [mutate]);
+  const change = useCallback((request: CodexPluginLifecycleRequest) => mutate("change_codex_plugin", request), [mutate]);
+  return { scan, scanning, saving, error, result, refresh, setEnabled, change, hookRevision };
 }

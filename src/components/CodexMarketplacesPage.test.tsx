@@ -23,14 +23,14 @@ function Harness() {
 function setup() {
   mockedInvoke.mockResolvedValue(codexMarketplaceFixture());
   render(<Harness />);
-  return screen.findByRole("button", { name: "刷新市场 team-tools" });
+  return screen.findByRole("button", { name: "同步市场 team-tools" });
 }
 
 describe("Codex marketplace management", () => {
   it("shows all sources, limits writes by ownership, and keeps local sources free of Git refresh", async () => {
     await setup();
     expect(screen.getByRole("button", { name: "移除市场 local-tools" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "刷新市场 local-tools" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "同步市场 local-tools" })).toBeNull();
     expect(screen.queryByRole("button", { name: "移除市场 managed-tools" })).toBeNull();
     expect(screen.getByText(/归属/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
@@ -59,6 +59,18 @@ describe("Codex marketplace management", () => {
     await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("change_codex_marketplace", { request: { snapshotId: "market-scan-1", operation: "Add", sourceKind: "git", source: "owner/market" } }));
     expect(await screen.findByText("市场来源已存在")).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("form", { name: "添加市场源" })).toBeNull());
+  });
+
+  it("submits Git ref and multiple sparse paths as structured optional arguments", async () => {
+    await setup();
+    fireEvent.click(screen.getByRole("button", { name: "添加市场源" }));
+    fireEvent.change(screen.getByLabelText("Git 仓库地址"), { target: { value: "owner/market" } });
+    fireEvent.click(screen.getByText("Git 高级选项"));
+    fireEvent.change(screen.getByLabelText("分支或标签（可选）"), { target: { value: "main" } });
+    fireEvent.change(screen.getByLabelText("稀疏检出目录（每行一个，可选）"), { target: { value: ".agents/plugins\nplugins" } });
+    mockedInvoke.mockResolvedValueOnce({ status: "Succeeded", message: "完成", executed: true }).mockResolvedValueOnce(codexMarketplaceFixture());
+    fireEvent.click(screen.getByRole("button", { name: "确认添加" }));
+    await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("change_codex_marketplace", { request: { snapshotId: "market-scan-1", operation: "Add", sourceKind: "git", source: "owner/market", refName: "main", sparsePaths: [".agents/plugins", "plugins"] } }));
   });
 
   it("uses a selected local directory and cancels without adding", async () => {
@@ -91,12 +103,12 @@ describe("Codex marketplace management", () => {
     await setup();
     mockedInvoke.mockResolvedValueOnce({ status: "Succeeded", message: "市场刷新已完成。", executed: true })
       .mockResolvedValueOnce({ ...codexMarketplaceFixture(), snapshotId: null, status: "Failed", marketplaces: [], message: "网络读取失败" });
-    fireEvent.click(screen.getByRole("button", { name: "刷新市场 team-tools" }));
-    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "确认刷新" }));
+    fireEvent.click(screen.getByRole("button", { name: "同步市场 team-tools" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "确认同步" }));
     expect(await screen.findByText("操作已完成，但清单读取失败")).toBeTruthy();
     expect(screen.getByText(/上次结果，已过期/)).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect((screen.getByRole("button", { name: "刷新市场 team-tools" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "同步市场 team-tools" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it.each(["Conflict", "Partial"] as const)("reports %s and re-reads without retrying", async (status) => {

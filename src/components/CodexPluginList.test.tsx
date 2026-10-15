@@ -23,7 +23,7 @@ function PluginView(props: CodexPluginState & { onRefresh: () => void; marketpla
 
 function Harness({ marketplaceName = "personal" }: { marketplaceName?: string }) {
   const state = useCodexPlugins(true);
-  return <PluginView {...state} marketplaceName={marketplaceName} onRefresh={() => void state.refresh()} onSetEnabled={state.setEnabled} />;
+  return <PluginView {...state} marketplaceName={marketplaceName} onRefresh={() => void state.refresh()} onSetEnabled={state.setEnabled} onLifecycle={state.change} />;
 }
 
 function setupScan(scan = codexPluginFixture()) {
@@ -33,6 +33,60 @@ function setupScan(scan = codexPluginFixture()) {
 }
 
 describe("Codex plugin management", () => {
+  it("searches and filters catalog entries without treating unavailable details as empty components", async () => {
+    const scan = codexPluginFixture();
+    scan.plugins[0].installed = false;
+    scan.plugins[0].details.description = "编写文档";
+    mockedInvoke.mockResolvedValue(scan);
+    render(<Harness />);
+    await screen.findByRole("button", { name: "安装 writer（personal）" });
+    fireEvent.change(screen.getByLabelText("安装状态"), { target: { value: "available" } });
+    expect(screen.getByRole("button", { name: "安装 writer（personal）" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "启用 code-review（personal）" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("搜索此市场"), { target: { value: "编写文档" } });
+    fireEvent.click(screen.getByRole("button", { name: /writer查看插件详情/ }));
+    expect(screen.getAllByText("尚不可读取")).toHaveLength(3);
+    expect(screen.queryByText("未声明")).toBeNull();
+    fireEvent.change(screen.getByLabelText("搜索此市场"), { target: { value: "no-match" } });
+    expect(screen.getByText("没有符合搜索或筛选条件的插件。")).toBeTruthy();
+  });
+
+  it.each(["Install", "Reinstall", "Uninstall"] as const)("confirms %s and rereads instead of assuming the new state", async (operation) => {
+    const before = codexPluginFixture();
+    before.plugins[0].installed = operation !== "Install";
+    before.plugins[0].defaultEnabled = false;
+    const label = operation === "Install" ? "安装" : operation === "Reinstall" ? "重新安装" : "卸载";
+    const after = structuredClone(before);
+    after.plugins[0].installed = operation !== "Uninstall";
+    after.plugins[0].defaultEnabled = operation === "Uninstall" ? null : true;
+    mockedInvoke.mockResolvedValueOnce(before).mockResolvedValueOnce({ status: "Succeeded", message: "命令已完成" }).mockResolvedValueOnce(after);
+    render(<Harness />);
+    fireEvent.click(await screen.findByRole("button", { name: `${label} writer（personal）` }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain("writer（personal）");
+    if (operation === "Reinstall") expect(dialog.textContent).toContain("包括当前已禁用的插件");
+    expect(mockedInvoke).toHaveBeenCalledTimes(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: `确认${label}` }));
+    await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("change_codex_plugin", { request: { snapshotId: "scan-1", pluginId: "writer@personal", operation } }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === "scan_codex_plugins")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: operation === "Uninstall" ? "安装 writer（personal）" : "禁用 writer（personal）" })).toBeTruthy();
+  });
+
+  it("blocks NOT_AVAILABLE installation and keeps operation success visible after a failed reread", async () => {
+    const scan = codexPluginFixture();
+    scan.plugins[0].installed = false;
+    scan.plugins[0].installBlockedReason = "市场策略不允许安装此插件。";
+    mockedInvoke.mockResolvedValueOnce(scan).mockResolvedValueOnce({ status: "Succeeded", message: "重新安装已完成" }).mockRejectedValueOnce(new Error("offline"));
+    render(<Harness />);
+    expect((await screen.findByRole("button", { name: "安装 writer（personal）" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "重新安装 code-review（personal）" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "确认重新安装" }));
+    expect(await screen.findByText("操作已完成，但清单读取失败")).toBeTruthy();
+    expect(screen.getByText("重新安装已完成")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "卸载 code-review（personal）" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("confirms the exact plugin and market, cancels without writing and restores focus", async () => {
     const trigger = await setupScan();
     fireEvent.click(trigger);
@@ -97,14 +151,14 @@ describe("Codex plugin management", () => {
     mockedInvoke.mockResolvedValue({ ...codexPluginFixture(), snapshotId: null, status, plugins: [], message: "读取失败的具体原因" });
     render(<Harness />);
     expect(await screen.findByText(/读取失败的具体原因/)).toBeTruthy();
-    expect(screen.queryByText("该市场暂无已安装插件。")).toBeNull();
+    expect(screen.queryByText("该市场暂无插件目录项或已安装插件。")).toBeNull();
     expect(screen.getByText(/插件清单暂不可用/)).toBeTruthy();
   });
 
   it("shows a successful empty inventory and disables writes when configuration is unreadable", async () => {
     mockedInvoke.mockResolvedValueOnce({ ...codexPluginFixture(), plugins: [] });
     render(<Harness />);
-    expect(await screen.findByText("该市场暂无已安装插件。")).toBeTruthy();
+    expect(await screen.findByText("该市场暂无插件目录项或已安装插件。")).toBeTruthy();
     const invalid = codexPluginFixture();
     invalid.snapshotId = null;
     invalid.configError = "配置语法错误";

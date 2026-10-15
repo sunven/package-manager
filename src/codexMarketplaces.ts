@@ -5,6 +5,8 @@ export type CodexMarketplace = {
   sourceKind: string | null;
   source: string | null;
   readOnlyReason: string | null;
+  refName: string | null;
+  sparsePaths: string[];
 };
 
 export type CodexMarketplaceScan = {
@@ -23,6 +25,8 @@ export type CodexMarketplaceRequest = {
   marketplaceId?: string;
   sourceKind?: "git" | "local";
   source?: string;
+  refName?: string;
+  sparsePaths?: string[];
 };
 
 export type CodexMarketplaceResult = {
