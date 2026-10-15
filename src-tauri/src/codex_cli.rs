@@ -137,8 +137,17 @@ pub(crate) struct AppServer {
 
 impl AppServer {
     pub(crate) fn start(home: &Path) -> Result<Self, RpcError> {
+        Self::start_with_args(home, &["app-server"])
+    }
+
+    // Used only for definition inspection: never starts a thread or changes the user's feature flag.
+    pub(crate) fn inspect_hooks(home: &Path) -> Result<Self, RpcError> {
+        Self::start_with_args(home, &["app-server", "-c", "features.hooks=true"])
+    }
+
+    fn start_with_args(home: &Path, args: &[&str]) -> Result<Self, RpcError> {
         let mut server = Self {
-            process: start(home, &["app-server"], true).map_err(RpcError::transport)?,
+            process: start(home, args, true).map_err(RpcError::transport)?,
             sequence: 0,
         };
         server.request(

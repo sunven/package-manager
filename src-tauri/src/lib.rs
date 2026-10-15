@@ -44,6 +44,28 @@ async fn scan_codex_hooks(
 }
 
 #[tauri::command]
+async fn prepare_codex_hook_definition(
+    request: codex_hooks::DefinitionRequest,
+    state: tauri::State<'_, codex_hooks::HooksState>,
+) -> Result<codex_hooks::DefinitionPreview, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.prepare_definition(request))
+        .await
+        .map_err(|error| format!("无法准备 Hook 变更：{error}"))?
+}
+
+#[tauri::command]
+async fn commit_codex_hook_definition(
+    request: codex_hooks::DefinitionCommitRequest,
+    state: tauri::State<'_, codex_hooks::HooksState>,
+) -> Result<codex_hooks::DefinitionResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.commit_definition(request))
+        .await
+        .map_err(|error| format!("无法确认 Hook 保存结果：{error}"))?
+}
+
+#[tauri::command]
 async fn set_codex_hook_enabled(
     request: codex_hooks::HookChangeRequest,
     state: tauri::State<'_, codex_hooks::HooksState>,
@@ -410,6 +432,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             scan_codex_hooks,
+            prepare_codex_hook_definition,
+            commit_codex_hook_definition,
             set_codex_hook_enabled,
             scan_codex_marketplaces,
             change_codex_marketplace,

@@ -37,3 +37,25 @@ export function codexHookScanFixture(): CodexHookScan {
     ],
   };
 }
+
+export function codexHookDefinitionScanFixture(): CodexHookScan {
+  const scan = codexHookScanFixture();
+  scan.definitions = {
+    snapshotId: "definitions-1", defaultSource: null, readOnlyReason: null,
+    sources: [
+      { format: "json", path: scan.directory + "/hooks.json", hasDefinitions: true, error: null },
+      { format: "toml", path: scan.configPath, hasDefinitions: true, error: null },
+    ],
+    entries: scan.hooks.filter((hook) => hook.source === "user").map((hook) => ({
+      id: hook.handlerType === "command" ? "hooks.json:Stop:0:0" : "config.toml:SessionStart:0:0",
+      source: hook.handlerType === "command" ? "json" : "toml", sourcePath: hook.sourcePath,
+      event: hook.eventName[0].toUpperCase() + hook.eventName.slice(1), matcher: hook.matcher,
+      handler: hook.handlerType === "command" ? {
+        type: "command", command: hook.command, commandWindows: "powershell -File C:\\scripts\\notify.ps1",
+        statusMessage: hook.statusMessage, timeout: 30,
+      } : { type: "mcp_tool", server: hook.server, tool: hook.tool, input: { project: "${cwd}", options: { concise: true } } },
+      nativeKey: hook.key, enabled: hook.enabled, trustStatus: hook.trustStatus, readOnlyReason: null,
+    })),
+  };
+  return scan;
+}

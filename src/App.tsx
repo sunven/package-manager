@@ -164,7 +164,8 @@ export function App() {
                 onChange={codexMarketplaces.change} />
             </TabsContent>
             <TabsContent value="hooks">
-              <CodexHooksPage {...codexHooks} onRefresh={() => void codexHooks.refresh()} onSetEnabled={codexHooks.setEnabled} onShowPlugins={() => setCodexTab("marketplaces")} />
+              <CodexHooksPage {...codexHooks} onRefresh={() => void codexHooks.refresh()} onSetEnabled={codexHooks.setEnabled} onShowPlugins={() => setCodexTab("marketplaces")}
+                onPrepareDefinition={codexHooks.prepareDefinition} onCommitDefinition={codexHooks.commitDefinition} />
             </TabsContent>
           </Tabs>
         ) : activeView === "sessions" ? (

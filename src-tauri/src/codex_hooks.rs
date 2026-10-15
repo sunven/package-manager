@@ -6,6 +6,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+#[path = "codex_hook_definitions.rs"]
+mod definitions;
+pub(crate) use definitions::{DefinitionRequest, DefinitionPreview, DefinitionCommitRequest, DefinitionResult};
+
 #[derive(Clone, Default)]
 pub(crate) struct HooksState(Arc<Mutex<State>>);
 
@@ -13,6 +17,7 @@ pub(crate) struct HooksState(Arc<Mutex<State>>);
 struct State {
     sequence: u64,
     observation: Option<Observation>,
+    definitions: definitions::DefinitionStore,
 }
 
 struct Observation {
@@ -75,6 +80,7 @@ pub(crate) struct HookScan {
     warnings: Vec<String>,
     config_error: Option<String>,
     message: Option<String>,
+    definitions: Option<definitions::DefinitionScan>,
 }
 
 #[derive(Deserialize)]
@@ -331,7 +337,15 @@ impl HooksState {
         let _operation = codex_cli::OPERATIONS
             .lock()
             .map_err(|_| "Codex 操作状态不可用")?;
-        self.scan_with(resolve_home(), &load)
+        let home = resolve_home();
+        let mut scan = self.scan_with(home.clone(), &load)?;
+        if let Ok(home) = home {
+            let (view, observation) = definitions::observe(&home);
+            let mut state = self.0.lock().map_err(|_| "Hooks 状态不可用")?;
+            let id = format!("hook-definitions-{}", state.sequence);
+            scan.definitions = Some(state.definitions.register(id, view, observation));
+        }
+        Ok(scan)
     }
 
     fn scan_with(
@@ -344,6 +358,7 @@ impl HooksState {
             .lock()
             .map_err(|_| "Hooks 状态不可用，请重新打开应用")?;
         state.observation = None;
+        state.definitions = Default::default();
         state.sequence += 1;
         let mut scan = HookScan {
             snapshot_id: None,
@@ -355,6 +370,7 @@ impl HooksState {
             warnings: Vec::new(),
             config_error: None,
             message: None,
+            definitions: None,
         };
         let home = match home {
             Ok(home) => home,

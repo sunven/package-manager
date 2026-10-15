@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Hooks 配置管理 · 合成数据验证</title></head>
+  <body>
+    <div id="app"></div>
+    <aside role="note" style="position:fixed;right:12px;bottom:8px;z-index:60;padding:4px 8px;background:#182235;color:white;border-radius:4px;font:12px sans-serif">合成数据验证 · 不连接本机 Codex</aside>
+    <script type="module">
+      import { codexHookDefinitionScanFixture } from "/src/test/codexHookFixtures.ts";
+      import { codexMarketplaceFixture } from "/src/test/codexMarketplaceFixtures.ts";
+      import { codexPluginFixture } from "/src/test/codexPluginFixtures.ts";
+      import { managerFixture } from "/src/test/fixtures.ts";
+      const state = window.hookReview = { scan: codexHookDefinitionScanFixture(), calls: [], mode: "saved", readError: null, sequence: 0, plan: null };
+      const sibling = structuredClone(state.scan.definitions.entries[0]);
+      sibling.id = "hooks.json:Stop:0:1"; sibling.nativeKey += "-sibling"; sibling.enabled = false;
+      sibling.handler.command = "/Users/example/scripts/save-summary.sh"; sibling.handler.statusMessage = "保存本轮摘要";
+      state.scan.definitions.entries.push(sibling);
+      const native = structuredClone(state.scan.hooks[0]);
+      native.key = sibling.nativeKey; native.enabled = false; native.command = sibling.handler.command; native.statusMessage = sibling.handler.statusMessage;
+      state.scan.hooks.push(native);
+      window.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+        invoke: async (command, args = {}) => {
+          state.calls.push({ command, args });
+          if (command === "plugin:path|resolve_directory") return "/Users/example";
+          if (command === "plugin:window|set_theme") return;
+          if (command === "get_project_cleanup_settings") return { presets: [], activePresetId: null };
+          if (command === "scan_manager") return { manager: managerFixture("Npm", { paths: [] }), scanDurationMs: 1, diagnostics: [] };
+          if (command === "scan_codex_marketplaces") return codexMarketplaceFixture();
+          if (command === "scan_codex_plugins") return codexPluginFixture();
+          if (command === "scan_codex_hooks") {
+            if (state.readError) throw new Error(state.readError);
+            state.scan.definitions.snapshotId = "definitions-" + ++state.sequence;
+            return structuredClone(state.scan);
+          }
+          if (command === "prepare_codex_hook_definition") {
+            const request = args.request;
+            if (request.snapshotId !== state.scan.definitions.snapshotId) throw new Error("配置已变化，请刷新并重新确认。");
+            const before = state.scan.definitions.entries.find((d) => d.id === request.id);
+            const handler = { ...(before?.handler ?? {}), ...(request.fields ?? {}), type: request.fields?.kind };
+            delete handler.kind;
+            Object.keys(handler).forEach((key) => { if (handler[key] == null) delete handler[key]; });
+            const raw = (definition) => definition ? { event: definition.event, matcher: definition.matcher, handler: definition.handler } : null;
+            const after = request.action === "delete" ? null : { event: request.event, matcher: request.matcher, handler };
+            const impacts = before ? [{ event: before.event, operation: before.handler.command ?? `${before.handler.server} / ${before.handler.tool}`, enabled: before.enabled, target: true }] : [];
+            if (request.id === "hooks.json:Stop:0:0" && request.action === "delete") impacts.push({ event: "Stop", operation: sibling.handler.command, enabled: false, target: false });
+            state.plan = { request, before, after };
+            return { planId: "review-plan", action: request.action, sourcePath: state.scan.directory + (request.source === "json" ? "/hooks.json" : "/config.toml"),
+              before: raw(before), after, enabled: after ? before?.enabled ?? request.enabled : null, impacts };
+          }
+          if (command === "commit_codex_hook_definition") {
+            if (state.mode === "partial") {
+              if (state.plan.before && state.plan.after) {
+                Object.assign(state.plan.before, state.plan.after, { enabled: false, trustStatus: "untrusted" });
+                const hook = state.scan.hooks.find((h) => h.key === state.plan.before.nativeKey);
+                if (hook) Object.assign(hook, { enabled: false, trustStatus: "untrusted", tool: state.plan.after.handler.tool ?? null });
+              }
+              return { status: "Partial", message: "定义已保存，但启用选择未能完整恢复。受影响条目保持禁用；请刷新核对，在 Codex 审查后恢复所需启用选择。" };
+            }
+            if (state.mode === "read-failure") state.readError = "模拟的 CLI 读取失败";
+            return { status: "Saved", message: "定义已保存，请在 Codex 中审查，并在新会话中验证。" };
+          }
+          if (command === "set_codex_hook_enabled") return { status: "Saved", message: "启用选择已保存。" };
+          throw new Error(`Review does not implement: ${command}`);
+        },
+      };
+      localStorage.setItem("package-manager.enabledManagers", '["Npm"]');
+      localStorage.setItem("package-manager.migratedFvm", "1");
+      await import("/src/main.tsx");
+    </script>
+  </body>
+</html>
