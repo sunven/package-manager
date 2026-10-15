@@ -57,7 +57,7 @@ _Avoid_: VS Code 清理、VS Code 缓存清理
 ### 代理扩展
 
 **Codex 插件 (Codex Plugin)**:
-由 Codex 作为一个单元安装的扩展包，可包含技能、MCP 服务、钩子等能力。
+属于某个插件市场、由 Codex 作为一个单元安装的扩展包，可包含技能、MCP 服务、钩子等能力。插件身份由所属市场与插件名称共同确定。
 _Avoid_: 技能、MCP 服务
 
 **Codex 钩子 (Codex Hook)**:

@@ -1,36 +1,58 @@
-import { ArrowClockwise as RefreshCw } from "@phosphor-icons/react";
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useId, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import { Button } from "../../components/ui/button";
-import { CardContent } from "../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import {
   pluginDefaultLabel,
   type CodexPlugin, type CodexPluginChangeRequest, type CodexPluginChangeResult, type CodexPluginScan,
 } from "../codexPlugins";
-import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
+import { EmptyState, SkeletonRows } from "./ui";
 
 type Confirmation = { plugin: CodexPlugin; request: CodexPluginChangeRequest; configPath: string };
 
-export function CodexPluginsPage({ scan, scanning, saving, error, result, onRefresh, onSetEnabled }: {
+export type CodexPluginState = {
   scan: CodexPluginScan | null;
   scanning: boolean;
   saving: boolean;
   error: string | null;
   result: CodexPluginChangeResult | null;
-  onRefresh: () => void;
   onSetEnabled: (request: CodexPluginChangeRequest) => Promise<void>;
+};
+
+export function CodexPluginFeedback({ scan, error, result }: Pick<CodexPluginState, "scan" | "error" | "result">) {
+  const scanFailure = error ?? (scan?.status !== "Ready" ? scan?.message : null);
+  return <>
+    {result ? <Alert variant={result.status === "Failed" ? "destructive" : "default"} role="status">
+      <AlertTitle>{result.status === "Saved" ? "配置已保存" : result.status === "Conflict" ? "设置已变化，请重新确认" : "保存设置时遇到问题"}</AlertTitle>
+      <AlertDescription>{result.message}</AlertDescription>
+    </Alert> : null}
+    {scanFailure ? <Alert variant="destructive">
+      <AlertTitle>{result?.status === "Saved" ? "配置已保存，但清单刷新失败" : scan?.status === "MissingCli" ? "插件清单需要 Codex CLI" : scan?.status === "Incompatible" ? "插件清单与 Codex CLI 版本不兼容" : "插件清单读取失败"}</AlertTitle>
+      <AlertDescription>{scanFailure}{scan?.plugins.length ? " 下方插件为上次读取结果，已过期，暂时不能修改。" : ""}</AlertDescription>
+    </Alert> : null}
+    {scan?.configError ? <Alert variant="destructive">
+      <AlertTitle>用户默认设置无法读取</AlertTitle>
+      <AlertDescription>{scan.configError} 配置修复后请重新读取，当前禁止修改插件设置。</AlertDescription>
+    </Alert> : null}
+  </>;
+}
+
+export function CodexPluginList({ scan, scanning, saving, error, onSetEnabled, marketplaceName, blocked, onRestoreFocus }: Omit<CodexPluginState, "result"> & {
+  marketplaceName: string;
+  blocked: boolean;
+  onRestoreFocus: () => void;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
-  const refreshButton = useRef<HTMLButtonElement | null>(null);
+  const id = useId();
+  const plugins = scan?.plugins.filter((plugin) => plugin.marketplaceName === marketplaceName) ?? [];
   const busy = scanning || saving;
-  const disabled = busy || Boolean(error || scan?.configError) || scan?.status !== "Ready" || !scan?.snapshotId;
+  const disabled = busy || blocked || Boolean(error || scan?.configError) || scan?.status !== "Ready" || !scan?.snapshotId;
   const scanFailure = error ?? (scan?.status !== "Ready" ? scan?.message : null);
 
   function requestChange(plugin: CodexPlugin, enabled: boolean, button: HTMLButtonElement) {
@@ -43,63 +65,22 @@ export function CodexPluginsPage({ scan, scanning, saving, error, result, onRefr
   }
 
   return (
-    <section className="view-grid" aria-label="已安装插件管理" aria-busy={busy}>
-      <Panel>
-        <PanelHead title="Codex 插件" action={
-          <Button ref={refreshButton} disabled={busy || Boolean(confirmation)} onClick={onRefresh} size="sm" type="button" variant="outline">
-            <RefreshCw aria-hidden="true" className={scanning ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
-            {scanning ? "读取中" : "刷新"}
-          </Button>
-        } />
-        <CardContent className="grid gap-2 p-4">
-          <p className="text-sm">查看已安装插件，管理用户默认启用设置。</p>
-          <p className="text-xs text-muted-foreground">仅作用于使用下方目录的 Codex CLI 和桌面 App；项目设置可能覆盖用户默认值。</p>
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
-            <span className="shrink-0 text-muted-foreground">Codex 目录</span>
-            <code className="min-w-0 break-all">{scan?.directory || "尚未读取"}</code>
-          </div>
-          <p className="text-xs text-muted-foreground" role="status">
-            {saving ? "正在保存并重新核对设置…" : scanning ? scan ? "正在读取，暂时显示上次结果。" : "正在读取已安装插件…" : "切换页面保留结果；在其他地方修改设置后，请手动刷新。"}
-          </p>
-        </CardContent>
-      </Panel>
-
-      {result ? (
-        <Alert variant={result.status === "Failed" ? "destructive" : "default"} role="status">
-          <AlertTitle>{result.status === "Saved" ? "配置已保存" : result.status === "Conflict" ? "设置已变化，请重新确认" : "保存设置时遇到问题"}</AlertTitle>
-          <AlertDescription>{result.message}</AlertDescription>
-        </Alert>
-      ) : null}
-      {scanFailure ? (
-        <Alert variant="destructive">
-          <AlertTitle>{result?.status === "Saved" ? "配置已保存，但清单刷新失败" : scan?.status === "MissingCli" ? "需要 Codex CLI" : scan?.status === "Incompatible" ? "Codex CLI 版本不兼容" : "插件清单读取失败"}</AlertTitle>
-          <AlertDescription>{scanFailure}{scan?.plugins.length ? " 下方为上次读取结果，暂时不能修改。" : ""}</AlertDescription>
-        </Alert>
-      ) : null}
-      {scan?.configError ? (
-        <Alert variant="destructive">
-          <AlertTitle>用户默认设置无法读取</AlertTitle>
-          <AlertDescription>{scan.configError} 配置修复后请刷新，当前禁止修改。</AlertDescription>
-        </Alert>
-      ) : null}
-
-      <Panel className="overflow-hidden">
-        <PanelHead title="已安装插件" action={<span className="text-xs text-muted-foreground">{scan?.status === "Ready" && !error ? `${scan.plugins.length} 个` : "数量未知"}</span>} />
-        {!scan && scanning ? <SkeletonRows label="正在读取插件清单" /> : scan?.plugins.length ? (
-          <Table className="min-w-[680px] table-fixed">
+    <section className="min-w-0" aria-label={`${marketplaceName} 的已安装插件`} aria-busy={busy}>
+        <h3 className="mb-3 text-sm font-medium">已安装插件</h3>
+        {!scan && scanning ? <SkeletonRows label="正在读取插件清单" /> : plugins.length ? (
+          <Table className="min-w-[580px] table-fixed">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[27%]">插件</TableHead>
-                <TableHead className="w-[13%]">版本</TableHead>
-                <TableHead className="w-[18%]">所属市场</TableHead>
-                <TableHead className="w-[22%]">用户默认设置</TableHead>
-                <TableHead className="w-[20%] text-right">操作</TableHead>
+                <TableHead className="w-[30%]">插件</TableHead>
+                <TableHead className="w-[15%]">版本</TableHead>
+                <TableHead className="w-[30%]">用户默认设置</TableHead>
+                <TableHead className="w-[25%] text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {scan.plugins.map((plugin, index) => {
+              {plugins.map((plugin, index) => {
                 const open = expanded === plugin.pluginId;
-                const detailId = `codex-plugin-detail-${index}`;
+                const detailId = `${id}-plugin-${index}`;
                 const readOnly = disabled || Boolean(plugin.readOnlyReason);
                 return (
                   <Fragment key={plugin.pluginId}>
@@ -111,7 +92,6 @@ export function CodexPluginsPage({ scan, scanning, saving, error, result, onRefr
                         </button>
                       </TableCell>
                       <TableCell className="whitespace-normal break-all align-top font-mono text-xs">{plugin.version || "未知"}</TableCell>
-                      <TableCell className="whitespace-normal break-all align-top">{plugin.marketplaceName}</TableCell>
                       <TableCell className="whitespace-normal align-top">
                         <span className="block text-sm font-medium leading-5 text-foreground">
                           {plugin.readOnlyReason && plugin.defaultEnabled === null ? "未知" : pluginDefaultLabel(plugin.defaultEnabled)}
@@ -125,13 +105,13 @@ export function CodexPluginsPage({ scan, scanning, saving, error, result, onRefr
                         </div>
                       </TableCell>
                     </TableRow>
-                    {open ? <TableRow id={detailId}><TableCell className="whitespace-normal bg-muted/30" colSpan={5}>
+                    {open ? <TableRow id={detailId}><TableCell className="whitespace-normal bg-muted/30" colSpan={4}>
                       <dl className="grid gap-3 py-1 sm:grid-cols-2">
                         <PluginDetail label="来源类型" value={plugin.sourceKind === "local" ? "本地路径" : plugin.sourceKind === "git" ? "Git" : plugin.sourceKind === "npm" ? "npm" : "未知"} />
                         <PluginDetail label="插件身份" value={plugin.pluginId} mono />
                         <PluginDetail label="来源位置" value={plugin.sourceLocation} mono />
                         <PluginDetail label="市场来源" value={plugin.marketplaceLocation} mono />
-                        <PluginDetail label="用户配置路径" value={scan.configPath} mono />
+                        <PluginDetail label="用户配置路径" value={scan?.configPath ?? null} mono />
                       </dl>
                     </TableCell></TableRow> : null}
                   </Fragment>
@@ -139,14 +119,13 @@ export function CodexPluginsPage({ scan, scanning, saving, error, result, onRefr
               })}
             </TableBody>
           </Table>
-        ) : <EmptyState message={scan?.status === "Ready" && !error ? "当前 Codex 环境没有已安装插件。" : scanFailure ? "清单暂不可用。解决上方问题后，请重新刷新。" : "进入页面后读取已安装插件。"} />}
-      </Panel>
+        ) : <EmptyState message={scanning ? "正在读取已安装插件…" : scan?.status === "Ready" && !error ? "该市场暂无已安装插件。" : scanFailure ? "插件清单暂不可用。解决上方问题后，请重新读取。" : "等待读取已安装插件。"} />}
 
       <AlertDialog open={confirmation !== null} onOpenChange={(open) => { if (!open && !saving) setConfirmation(null); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onCloseAutoFocus={(event) => {
           event.preventDefault();
           if (trigger.current?.isConnected && !trigger.current.disabled) trigger.current.focus();
-          else refreshButton.current?.focus();
+          else onRestoreFocus();
         }}>
           <AlertDialogHeader>
             <AlertDialogTitle>确认{confirmation?.request.enabled ? "启用" : "禁用"}插件</AlertDialogTitle>
@@ -159,7 +138,7 @@ export function CodexPluginsPage({ scan, scanning, saving, error, result, onRefr
           </dl> : null}
           <AlertDialogFooter>
             <AlertDialogCancel asChild><Button disabled={saving} type="button" variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction asChild><Button disabled={saving || scanning} onClick={async (event) => {
+            <AlertDialogAction asChild><Button disabled={disabled} onClick={async (event) => {
               event.preventDefault();
               if (!confirmation) return;
               await onSetEnabled(confirmation.request);

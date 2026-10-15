@@ -10,7 +10,7 @@
 - 保存前复核清单身份、配置目标和原启用值；检测到外部修改时中止旧操作。配置异常和未知来源禁止修改，未显式设置允许确认后指定。
 - CLI 缺失、不兼容、读取失败、空清单分别表达；配置保存结果与后续刷新结果分别报告。
 
-主要实现：[Rust 接入](../../src-tauri/src/codex_plugins.rs)、[页面](../../src/components/CodexPluginsPage.tsx)、[状态与调用](../../src/hooks/useCodexPlugins.ts)。
+主要实现：[Rust 接入](../../src-tauri/src/codex_plugins.rs)、[插件列表](../../src/components/CodexPluginList.tsx)、[状态与调用](../../src/hooks/useCodexPlugins.ts)。原 `CodexPluginsPage` 已于 2026-10-15 合并到市场展开区域，见[按市场管理的验收记录](../codex-plugin-marketplace-organization/VERIFICATION.md)；下文保留本次原始验证记录。
 
 ## 自动验证
 

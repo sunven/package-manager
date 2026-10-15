@@ -61,7 +61,7 @@ export function CodexHooksPage({ scan, scanning, saving, error, result, onRefres
           </div>
           <p className="text-xs text-muted-foreground">
             原生清单包含用户配置及已启用插件的 Hooks；项目配置与已禁用插件未展开。{" "}
-            <button className="cursor-pointer text-primary underline underline-offset-4 disabled:cursor-default disabled:opacity-50" disabled={busy || Boolean(confirmation)} onClick={onShowPlugins} type="button">查看已安装插件</button>
+            <button className="cursor-pointer text-primary underline underline-offset-4 disabled:cursor-default disabled:opacity-50" disabled={busy || Boolean(confirmation)} onClick={onShowPlugins} type="button">前往插件市场</button>
           </p>
           <p className="text-xs text-muted-foreground" role="status">
             {saving ? "正在保存并重新核对设置…" : scanning ? scan ? "正在读取，暂时显示上次结果。" : "正在读取 Hooks…" : "在其他地方修改设置后，请手动刷新；保存后请在新会话中验证。"}

@@ -103,7 +103,7 @@ describe("Codex hooks management", () => {
     render(<CodexHooksPage scan={{ ...codexHookScanFixture(), hooks: [], snapshotId: null, featureEnabled: false }} scanning={false} saving={false} error={null} result={null} onRefresh={vi.fn()} onSetEnabled={vi.fn()} onShowPlugins={onShowPlugins} />);
     expect(screen.getByText("Hooks 总开关已关闭")).toBeTruthy();
     expect(screen.queryByText(/当前范围未返回 Hooks/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "查看已安装插件" }));
+    fireEvent.click(screen.getByRole("button", { name: "前往插件市场" }));
     expect(onShowPlugins).toHaveBeenCalledOnce();
   });
 

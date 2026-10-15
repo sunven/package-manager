@@ -4,7 +4,6 @@ import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
 import { useSessionRecords } from "./hooks/useSessionRecords";
 import { useCodexPlugins } from "./hooks/useCodexPlugins";
-import { CodexPluginsPage } from "./components/CodexPluginsPage";
 import { CodexMarketplacesPage } from "./components/CodexMarketplacesPage";
 import { useCodexMarketplaces } from "./hooks/useCodexMarketplaces";
 import { useCodexHooks } from "./hooks/useCodexHooks";
@@ -50,9 +49,9 @@ export function App() {
   const state = usePackageManagers();
   const projectCleanup = useProjectCleanup();
   const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "settings">("health");
-  const [codexTab, setCodexTab] = useState("installed");
+  const [codexTab, setCodexTab] = useState("marketplaces");
   const codexMarketplaces = useCodexMarketplaces(activeView === "plugins" && codexTab === "marketplaces");
-  const codexPlugins = useCodexPlugins(activeView === "plugins" && codexTab === "installed", codexMarketplaces.pluginRevision);
+  const codexPlugins = useCodexPlugins(activeView === "plugins" && codexTab === "marketplaces", codexMarketplaces.pluginRevision);
   const codexHooks = useCodexHooks(activeView === "plugins" && codexTab === "hooks", codexPlugins.hookRevision + codexMarketplaces.pluginRevision);
   const codexBusy = codexPlugins.scanning || codexPlugins.saving || codexMarketplaces.scanning || codexMarketplaces.pending || codexHooks.scanning || codexHooks.saving;
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
@@ -155,26 +154,17 @@ export function App() {
         {activeView === "plugins" ? (
           <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
             <TabsList aria-label="Codex 管理视图">
-              <TabsTrigger value="installed" disabled={codexBusy}>已安装插件</TabsTrigger>
-              <TabsTrigger value="marketplaces" disabled={codexBusy}>市场源</TabsTrigger>
+              <TabsTrigger value="marketplaces" disabled={codexBusy}>插件市场</TabsTrigger>
               <TabsTrigger value="hooks" disabled={codexBusy}>Hooks</TabsTrigger>
             </TabsList>
-            <TabsContent value="installed">
-              <CodexPluginsPage
-                scan={codexPlugins.scan}
-                scanning={codexPlugins.scanning}
-                saving={codexPlugins.saving}
-                error={codexPlugins.error}
-                result={codexPlugins.result}
-                onRefresh={() => void codexPlugins.refresh()}
-                onSetEnabled={codexPlugins.setEnabled}
-              />
-            </TabsContent>
             <TabsContent value="marketplaces">
-              <CodexMarketplacesPage {...codexMarketplaces} onRefresh={() => void codexMarketplaces.refresh()} onChange={codexMarketplaces.change} />
+              <CodexMarketplacesPage {...codexMarketplaces}
+                plugins={{ ...codexPlugins, onSetEnabled: codexPlugins.setEnabled }}
+                onRefresh={() => void Promise.all([codexMarketplaces.refresh(), codexPlugins.refresh()])}
+                onChange={codexMarketplaces.change} />
             </TabsContent>
             <TabsContent value="hooks">
-              <CodexHooksPage {...codexHooks} onRefresh={() => void codexHooks.refresh()} onSetEnabled={codexHooks.setEnabled} onShowPlugins={() => setCodexTab("installed")} />
+              <CodexHooksPage {...codexHooks} onRefresh={() => void codexHooks.refresh()} onSetEnabled={codexHooks.setEnabled} onShowPlugins={() => setCodexTab("marketplaces")} />
             </TabsContent>
           </Tabs>
         ) : activeView === "sessions" ? (

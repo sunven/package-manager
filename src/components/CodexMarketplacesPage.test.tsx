@@ -11,12 +11,13 @@ import type { CodexMarketplaceResult } from "../codexMarketplaces";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const mockedInvoke = vi.mocked(invoke);
+const plugins = { scan: codexPluginFixture(), scanning: false, saving: false, error: null, result: null, onSetEnabled: vi.fn() };
 afterEach(cleanup);
 beforeEach(() => { vi.resetAllMocks(); });
 
 function Harness() {
   const state = useCodexMarketplaces(true);
-  return <CodexMarketplacesPage {...state} onRefresh={() => void state.refresh()} onChange={state.change} />;
+  return <CodexMarketplacesPage {...state} plugins={plugins} onRefresh={() => void state.refresh()} onChange={state.change} />;
 }
 
 function setup() {
@@ -75,12 +76,12 @@ describe("Codex marketplace management", () => {
   it("allows removal with no plugin-count gate, preserving the frozen confirmation", async () => {
     const onChange = vi.fn().mockResolvedValue({ status: "Succeeded", message: "已移除", executed: true });
     const props = { scan: codexMarketplaceFixture(), scanning: false, pending: false, error: null, result: null, onRefresh: vi.fn(), onChange };
-    const view = render(<CodexMarketplacesPage {...props} />);
+    const view = render(<CodexMarketplacesPage {...props} plugins={plugins} />);
     fireEvent.click(screen.getByRole("button", { name: "移除市场 team-tools" }));
     expect(screen.getByRole("alertdialog").textContent).toContain("本地副本");
     expect(screen.getByRole("alertdialog").textContent).toContain("不会追加卸载插件");
     const next = codexMarketplaceFixture(); next.snapshotId = "new"; next.marketplaces[0].name = "changed";
-    view.rerender(<CodexMarketplacesPage {...props} scan={next} />);
+    view.rerender(<CodexMarketplacesPage {...props} plugins={plugins} scan={next} />);
     expect(within(screen.getByRole("alertdialog")).getByText("team-tools")).toBeTruthy();
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "确认移除" }));
     await waitFor(() => expect(onChange).toHaveBeenCalledExactlyOnceWith({ snapshotId: "market-scan-1", marketplaceId: "team-tools", operation: "Remove" }));
@@ -118,10 +119,11 @@ describe("Codex marketplace management", () => {
 
   it("provides an add action for an empty successful inventory and disables it on config failure", () => {
     const props = { scan: { ...codexMarketplaceFixture(), marketplaces: [] }, scanning: false, pending: false, error: null, result: null, onRefresh: vi.fn(), onChange: vi.fn() };
-    const view = render(<CodexMarketplacesPage {...props} />);
+    const emptyPlugins = { ...plugins, scan: { ...plugins.scan, plugins: [] } };
+    const view = render(<CodexMarketplacesPage {...props} plugins={emptyPlugins} />);
     expect(screen.getByText(/当前没有可见的市场来源/)).toBeTruthy();
     expect((screen.getByRole("button", { name: "添加市场源" }) as HTMLButtonElement).disabled).toBe(false);
-    view.rerender(<CodexMarketplacesPage {...props} scan={{ ...props.scan, snapshotId: null, configError: "来源无法核实" }} />);
+    view.rerender(<CodexMarketplacesPage {...props} plugins={emptyPlugins} scan={{ ...props.scan, snapshotId: null, configError: "来源无法核实" }} />);
     expect((screen.getByRole("button", { name: "添加市场源" }) as HTMLButtonElement).disabled).toBe(true);
   });
 

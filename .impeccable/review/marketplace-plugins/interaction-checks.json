@@ -1,0 +1,30 @@
+{
+  "cancel": {
+    "focus": "禁用 writer（team-tools）",
+    "writes": 0
+  },
+  "independentPermissions": {
+    "marketDisabled": true,
+    "pluginEnabled": true
+  },
+  "narrow": {
+    "document": 390,
+    "viewport": 390
+  },
+  "save": {
+    "disabled": true,
+    "focus": "重新读取",
+    "saved": [
+      {
+        "args": {
+          "request": {
+            "enabled": false,
+            "pluginId": "writer@team-tools",
+            "snapshotId": "scan-1"
+          }
+        },
+        "command": "set_codex_plugin_enabled"
+      }
+    ]
+  }
+}

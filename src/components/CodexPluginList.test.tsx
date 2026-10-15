@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { CodexPluginsPage } from "./CodexPluginsPage";
+import { CodexPluginFeedback, CodexPluginList, type CodexPluginState } from "./CodexPluginList";
 import { useCodexPlugins } from "../hooks/useCodexPlugins";
 import { codexPluginFixture } from "../test/codexPluginFixtures";
 import type { CodexPluginScan } from "../codexPlugins";
@@ -13,9 +13,17 @@ const mockedInvoke = vi.mocked(invoke);
 afterEach(cleanup);
 beforeEach(() => { vi.resetAllMocks(); });
 
-function Harness() {
+function PluginView(props: CodexPluginState & { onRefresh: () => void; marketplaceName?: string }) {
+  return <>
+    <button onClick={props.onRefresh}>刷新</button>
+    <CodexPluginFeedback {...props} />
+    <CodexPluginList {...props} marketplaceName={props.marketplaceName ?? "personal"} blocked={false} onRestoreFocus={vi.fn()} />
+  </>;
+}
+
+function Harness({ marketplaceName = "personal" }: { marketplaceName?: string }) {
   const state = useCodexPlugins(true);
-  return <CodexPluginsPage {...state} onRefresh={() => void state.refresh()} onSetEnabled={state.setEnabled} />;
+  return <PluginView {...state} marketplaceName={marketplaceName} onRefresh={() => void state.refresh()} onSetEnabled={state.setEnabled} />;
 }
 
 function setupScan(scan = codexPluginFixture()) {
@@ -47,7 +55,7 @@ describe("Codex plugin management", () => {
     mockedInvoke.mockResolvedValueOnce(before)
       .mockResolvedValueOnce({ status: "Saved", message: "配置已保存，请在新会话中验证。" })
       .mockResolvedValueOnce(after);
-    render(<Harness />);
+    render(<Harness marketplaceName="community" />);
     fireEvent.click(await screen.findByRole("button", { name: "启用 writer（community）" }));
     expect(screen.getByRole("alertdialog").textContent).toContain("未知（用户未显式设置） → 启用");
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "保存设置" }));
@@ -89,14 +97,14 @@ describe("Codex plugin management", () => {
     mockedInvoke.mockResolvedValue({ ...codexPluginFixture(), snapshotId: null, status, plugins: [], message: "读取失败的具体原因" });
     render(<Harness />);
     expect(await screen.findByText(/读取失败的具体原因/)).toBeTruthy();
-    expect(screen.queryByText("当前 Codex 环境没有已安装插件。")).toBeNull();
-    expect(screen.getByText("数量未知")).toBeTruthy();
+    expect(screen.queryByText("该市场暂无已安装插件。")).toBeNull();
+    expect(screen.getByText(/插件清单暂不可用/)).toBeTruthy();
   });
 
   it("shows a successful empty inventory and disables writes when configuration is unreadable", async () => {
     mockedInvoke.mockResolvedValueOnce({ ...codexPluginFixture(), plugins: [] });
     render(<Harness />);
-    expect(await screen.findByText("当前 Codex 环境没有已安装插件。")).toBeTruthy();
+    expect(await screen.findByText("该市场暂无已安装插件。")).toBeTruthy();
     const invalid = codexPluginFixture();
     invalid.snapshotId = null;
     invalid.configError = "配置语法错误";
@@ -111,12 +119,12 @@ describe("Codex plugin management", () => {
   it("keeps the approved target frozen while incoming props change", async () => {
     const onSetEnabled = vi.fn().mockResolvedValue(undefined);
     const props = { scan: codexPluginFixture(), scanning: false, saving: false, error: null, result: null, onRefresh: vi.fn(), onSetEnabled };
-    const view = render(<CodexPluginsPage {...props} />);
+    const view = render(<PluginView {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "禁用 writer（personal）" }));
     const changed = codexPluginFixture();
     changed.snapshotId = "scan-new";
     changed.plugins[0].name = "new-name";
-    view.rerender(<CodexPluginsPage {...props} scan={changed} />);
+    view.rerender(<PluginView {...props} scan={changed} />);
     expect(within(screen.getByRole("alertdialog")).getByText("writer（personal）")).toBeTruthy();
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "保存设置" }));
     await waitFor(() => expect(onSetEnabled).toHaveBeenCalledExactlyOnceWith({ snapshotId: "scan-1", pluginId: "writer@personal", enabled: false }));

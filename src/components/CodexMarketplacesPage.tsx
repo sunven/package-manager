@@ -15,16 +15,18 @@ import {
   type CodexMarketplaceResult, type CodexMarketplaceScan,
 } from "../codexMarketplaces";
 import { errorToString } from "../utils/format";
+import { CodexPluginFeedback, CodexPluginList, type CodexPluginState } from "./CodexPluginList";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
 type Confirmation = { market: CodexMarketplace; request: CodexMarketplaceRequest; directory: string };
 
-export function CodexMarketplacesPage({ scan, scanning, pending, error, result, onRefresh, onChange }: {
+export function CodexMarketplacesPage({ scan, scanning, pending, error, result, plugins, onRefresh, onChange }: {
   scan: CodexMarketplaceScan | null;
   scanning: boolean;
   pending: boolean;
   error: string | null;
   result: CodexMarketplaceResult | null;
+  plugins: CodexPluginState;
   onRefresh: () => void;
   onChange: (request: CodexMarketplaceRequest) => Promise<CodexMarketplaceResult | null>;
 }) {
@@ -43,9 +45,16 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
     if (formWasOpen.current && !adding) addButton.current?.focus();
     formWasOpen.current = adding;
   }, [adding]);
-  const busy = scanning || pending || choosing;
+  const reading = scanning || plugins.scanning;
+  const busy = reading || pending || choosing || plugins.saving;
   const disabled = busy || Boolean(error || scan?.configError) || scan?.status !== "Ready" || !scan?.snapshotId;
   const readError = error ?? (scan?.status !== "Ready" ? scan?.message : null);
+  const groups = new Map<string, CodexMarketplace | null>(scan?.marketplaces.map((market) => [market.name, market]));
+  for (const plugin of plugins.scan?.plugins ?? []) {
+    if (!groups.has(plugin.marketplaceName)) groups.set(plugin.marketplaceName, null);
+  }
+  const unmatchedLabel = scanning ? "正在核实市场信息"
+    : readError || scan?.status !== "Ready" ? "市场信息未能核实" : "未出现在市场清单中";
   const resultTitle = result?.status === "Succeeded" ? "市场操作已完成"
     : result?.status === "AlreadyExists" ? "市场来源已存在"
       : result?.status === "Conflict" ? "来源已变化，请重新确认"
@@ -64,23 +73,24 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
   }
 
   return (
-    <section className="view-grid" aria-label="Codex 市场源管理" aria-busy={busy}>
+    <section className="view-grid" aria-label="Codex 插件市场管理" aria-busy={busy}>
       <Panel>
-        <PanelHead title="Codex 插件" action={
+        <PanelHead title="Codex 插件市场" action={
           <Button ref={readButton} disabled={busy || Boolean(confirmation)} onClick={onRefresh} size="sm" type="button" variant="outline">
-            <ArrowClockwise aria-hidden="true" className={scanning ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
-            {scanning ? "读取中" : "重新读取"}
+            <ArrowClockwise aria-hidden="true" className={reading ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
+            {reading ? "读取中" : "重新读取"}
           </Button>
         } />
         <CardContent className="grid gap-2 p-4">
-          <p className="text-sm">管理 Codex 用于发现插件的市场来源。</p>
+          <p className="text-sm">展开市场，查看已安装插件并管理用户默认启用设置。</p>
           <p className="text-xs text-muted-foreground">仅维护当前用户配置中的来源；默认、受管理或归属不明的市场只供查看。</p>
+          <p className="text-xs text-muted-foreground">插件设置作用于使用下方目录的 Codex CLI 和桌面 App；项目设置可能覆盖用户默认值。</p>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
             <span className="shrink-0 text-muted-foreground">Codex 目录</span>
-            <code className="min-w-0 break-all">{scan?.directory || "尚未读取"}</code>
+            <code className="min-w-0 break-all">{scan?.directory || plugins.scan?.directory || "尚未读取"}</code>
           </div>
           <p className="text-xs text-muted-foreground" role="status">
-            {pending ? "正在执行并重新核对市场，请稍候…" : scanning ? scan ? "正在读取，暂时显示上次结果。" : "正在读取市场来源…" : "重新读取查看本机清单；刷新市场会从 Git 来源同步内容。"}
+            {pending ? "正在执行并重新核对市场，请稍候…" : plugins.saving ? "正在保存并重新核对插件设置…" : reading ? "正在读取市场与已安装插件，已有内容为上次结果。" : "重新读取查看本机市场与插件清单；刷新市场会从 Git 来源同步内容。"}
           </p>
         </CardContent>
       </Panel>
@@ -91,14 +101,15 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
       {readError ? <Alert variant="destructive">
         <AlertTitle>{result?.status === "Succeeded" || result?.status === "AlreadyExists" ? "操作已完成，但清单读取失败"
           : scan?.status === "MissingCli" ? "需要 Codex CLI" : scan?.status === "Incompatible" ? "Codex CLI 版本不兼容" : "市场清单读取失败"}</AlertTitle>
-        <AlertDescription>{readError}{scan?.marketplaces.length ? " 下方为上次结果，已过期，暂时不能操作。" : ""}</AlertDescription>
+        <AlertDescription>{readError}{scan?.marketplaces.length ? " 下方市场来源为上次结果，已过期，暂时不能维护来源。" : ""}</AlertDescription>
       </Alert> : null}
       {scan?.configError ? <Alert variant="destructive">
         <AlertTitle>市场来源暂时只读</AlertTitle><AlertDescription>{scan.configError} 解决后请重新读取。</AlertDescription>
       </Alert> : null}
+      <CodexPluginFeedback {...plugins} />
 
       <Panel className="overflow-hidden">
-        <PanelHead title="市场源" action={
+        <PanelHead title="市场" action={
           <Button ref={addButton} disabled={disabled || adding || Boolean(confirmation)} onClick={() => { setAdding(true); setSource(""); setFormError(null); }} size="sm" type="button">
             <Plus aria-hidden="true" data-icon="inline-start" />添加市场源
           </Button>
@@ -138,37 +149,40 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
             <Button disabled={disabled || !source.trim()} type="submit">{pending ? "正在添加…" : "确认添加"}</Button>
           </div>
         </form> : null}
-        {!scan && scanning ? <SkeletonRows label="正在读取市场清单" /> : scan?.marketplaces.length ? (
+        {!groups.size && reading ? <SkeletonRows label="正在读取市场与插件清单" /> : groups.size ? (
           <Table className="min-w-[700px] table-fixed">
             <TableHeader><TableRow>
               <TableHead className="w-[24%]">市场</TableHead><TableHead className="w-[13%]">类型</TableHead>
               <TableHead className="w-[36%]">来源</TableHead><TableHead className="w-[27%] text-right">操作</TableHead>
             </TableRow></TableHeader>
-            <TableBody>{scan.marketplaces.map((market, index) => {
-              const open = expanded === market.id;
+            <TableBody>{Array.from(groups, ([name, market], index) => {
+              const open = expanded === name;
               const detailId = `codex-marketplace-detail-${index}`;
-              return <Fragment key={market.id}>
+              return <Fragment key={name}>
                 <TableRow>
                   <TableCell className="whitespace-normal align-top">
-                    <button type="button" aria-expanded={open} aria-controls={open ? detailId : undefined} className="w-full cursor-pointer break-all text-left font-medium text-primary underline-offset-4 hover:underline" onClick={() => setExpanded(open ? null : market.id)}>
-                      {market.name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{open ? "收起来源详情" : "查看来源详情"}</span>
+                    <button type="button" disabled={busy} aria-label={`${open ? "收起" : "查看"} ${name} 的已安装插件与详情`} aria-expanded={open} aria-controls={open ? detailId : undefined} className="w-full cursor-pointer break-all text-left font-medium text-primary underline-offset-4 hover:underline disabled:cursor-default disabled:opacity-50" onClick={() => setExpanded(open ? null : name)}>
+                      {name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{open ? "收起插件与详情" : "查看已安装插件与详情"}</span>
                     </button>
                   </TableCell>
-                  <TableCell className="whitespace-normal align-top">{marketplaceSourceLabel(market.sourceKind)}</TableCell>
-                  <TableCell className="whitespace-normal break-all align-top font-mono text-xs">{market.source || "未提供来源信息"}</TableCell>
+                  <TableCell className="whitespace-normal align-top">{market ? marketplaceSourceLabel(market.sourceKind) : "未知"}</TableCell>
+                  <TableCell className="whitespace-normal break-all align-top text-xs">{market ? <span className="font-mono">{market.source || "未提供来源信息"}</span> : unmatchedLabel}</TableCell>
                   <TableCell className="whitespace-normal align-top">
-                    {market.readOnlyReason ? <p className="text-xs text-muted-foreground">{market.readOnlyReason}</p> : <div className="flex flex-wrap justify-end gap-1">
+                    {!market ? <p className="text-xs text-muted-foreground">仅管理已安装插件</p> : market.readOnlyReason ? <p className="text-xs text-muted-foreground">{market.readOnlyReason}</p> : <div className="flex flex-wrap justify-end gap-1">
                       {market.sourceKind === "git" ? <Button aria-label={`刷新市场 ${market.name}`} disabled={disabled} onClick={(event) => requestChange(market, "Refresh", event.currentTarget)} size="sm" type="button" variant="outline">刷新市场</Button> : null}
                       <Button aria-label={`移除市场 ${market.name}`} disabled={disabled} onClick={(event) => requestChange(market, "Remove", event.currentTarget)} size="sm" type="button" variant="outline">移除</Button>
                     </div>}
                   </TableCell>
                 </TableRow>
                 {open ? <TableRow id={detailId}><TableCell className="whitespace-normal bg-muted/30" colSpan={4}>
-                  <dl className="grid gap-3 py-1 sm:grid-cols-2">
+                  <div className="grid gap-6 py-3">
+                  <CodexPluginList {...plugins} marketplaceName={name} blocked={busy} onRestoreFocus={() => readButton.current?.focus()} />
+                  {market ? <div className="border-t pt-4"><dl className="grid gap-3 sm:grid-cols-2">
                     <MarketDetail label={market.sourceKind === "git" ? "市场本地副本" : "实际本地目录"} value={market.root} />
-                    <MarketDetail label="用户配置路径" value={scan.configPath} />
+                    <MarketDetail label="用户配置路径" value={scan?.configPath ?? null} />
                   </dl>
-                  {market.sourceKind === "local" ? <p className="mt-3 text-xs text-muted-foreground">本地目录无需 Git 刷新，修改后可重新读取清单。</p> : null}
+                  {market.sourceKind === "local" ? <p className="mt-3 text-xs text-muted-foreground">本地目录无需 Git 刷新，修改后可重新读取清单。</p> : null}</div> : null}
+                  </div>
                 </TableCell></TableRow> : null}
               </Fragment>;
             })}</TableBody>
