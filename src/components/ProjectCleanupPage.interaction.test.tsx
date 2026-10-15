@@ -37,11 +37,12 @@ it("filters candidate types by keyboard while retaining the selected candidates"
   const measurement: DirectoryMeasurement = { status: "Ready", bytes: 1024, human: "1 KiB", files: 1, directories: 1, skipped: 0, latestModifiedMs: null, message: null };
   const candidates: ProjectDataCandidate[] = [
     { candidateId: "rust", kind: "RustTarget", projectPath: "/code/rust-app", directoryPath: "/code/rust-app/target", status: "Ready", message: null, measurement },
+    { candidateId: "maven", kind: "MavenTarget", projectPath: "/code/maven-app", directoryPath: "/code/maven-app/target", status: "Ready", message: null, measurement },
     { candidateId: "node", kind: "NodeModules", projectPath: "/code/node-app", directoryPath: "/code/node-app/node_modules", status: "Ready", message: null, measurement },
   ];
   const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
     readSettings: async () => presetSettings(),
-    scan: async () => ({ rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8, status: "Ready", candidates, skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null }),
+    scan: async () => ({ rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8, status: "Ready", candidates, skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null, mavenAvailable: true, mavenMessage: null }),
     measure: async () => measurement,
   }));
   await workflow.initialize();
@@ -53,6 +54,7 @@ it("filters candidate types by keyboard while retaining the selected candidates"
   render(<Page />);
   const filters = screen.getByRole("radiogroup", { name: "候选类型" });
   const rust = within(filters).getByRole("radio", { name: /Rust target/ });
+  const maven = within(filters).getByRole("radio", { name: /Maven target/ });
   const node = within(filters).getByRole("radio", { name: /Node node_modules/ });
   expect(rust.getAttribute("aria-checked")).toBe("true");
   expect(screen.queryByRole("tab")).toBeNull();
@@ -60,14 +62,20 @@ it("filters candidate types by keyboard while retaining the selected candidates"
 
   rust.focus();
   await user.keyboard("{ArrowRight} ");
-  expect(document.activeElement).toBe(node);
-  expect(node.getAttribute("aria-checked")).toBe("true");
+  expect(document.activeElement).toBe(maven);
+  expect(maven.getAttribute("aria-checked")).toBe("true");
   expect(screen.queryByRole("checkbox", { name: "选择 rust-app" })).toBeNull();
-  expect(screen.getByRole("checkbox", { name: "选择 node-app" })).toBeTruthy();
+  expect(screen.getByRole("checkbox", { name: "选择 maven-app" })).toBeTruthy();
   expect(workflow.read().totals.selectedCount).toBe(1);
 
-  await user.keyboard(" ");
+  await user.keyboard("{ArrowRight} ");
   expect(node.getAttribute("aria-checked")).toBe("true");
+  expect(screen.queryByRole("checkbox", { name: "选择 maven-app" })).toBeNull();
+  expect(screen.getByRole("checkbox", { name: "选择 node-app" })).toBeTruthy();
+
+  await user.keyboard("{ArrowLeft}{Enter}");
+  expect(maven.getAttribute("aria-checked")).toBe("true");
+  expect(screen.getByRole("checkbox", { name: "选择 maven-app" }).getAttribute("aria-checked")).toBe("false");
   await user.keyboard("{ArrowLeft}{Enter}");
   expect(rust.getAttribute("aria-checked")).toBe("true");
   expect(screen.getByRole("checkbox", { name: "选择 rust-app" }).getAttribute("aria-checked")).toBe("true");

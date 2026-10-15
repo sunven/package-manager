@@ -82,6 +82,8 @@ function scan(candidates: ProjectDataCandidate[]): ProjectDataScan {
     errors: [],
     cargoAvailable: true,
     cargoMessage: null,
+    mavenAvailable: true,
+    mavenMessage: null,
   };
 }
 
@@ -314,6 +316,7 @@ describe("Project Cleanup workflow", () => {
     const candidates = [
       pendingCandidate("node"),
       pendingCandidate("rust", "RustTarget"),
+      pendingCandidate("maven", "MavenTarget"),
       pendingCandidate("unknown", "NodeModules", "Unrecognized"),
       pendingCandidate("partial"),
     ];
@@ -324,7 +327,7 @@ describe("Project Cleanup workflow", () => {
     const workflow = createProjectCleanupWorkflow(
       effects({
         readSettings: async () => settings(),
-        scan: async () => ({ ...scan(candidates), cargoAvailable: false }),
+        scan: async () => ({ ...scan(candidates), cargoAvailable: false, mavenAvailable: false }),
         measure: async ({ candidateId }) => gates.get(candidateId)!.promise,
       }),
     );
@@ -343,6 +346,7 @@ describe("Project Cleanup workflow", () => {
     expect(workflow.read().scan.phase).toBe("measuring");
 
     gates.get("rust")!.resolve(measurement(200));
+    gates.get("maven")!.resolve(measurement(250));
     gates.get("unknown")!.resolve(measurement(300));
     gates.get("partial")!.resolve({
       ...measurement(50),
@@ -356,6 +360,7 @@ describe("Project Cleanup workflow", () => {
       workflow.read().scan.session?.candidates.map((candidate) => candidate.cleanability),
     ).toEqual([
       { kind: "cleanable" },
+      { kind: "blocked", reason: "cleanup-mechanism-unavailable" },
       { kind: "blocked", reason: "cleanup-mechanism-unavailable" },
       { kind: "blocked", reason: "identity-not-verified" },
       { kind: "blocked", reason: "directory-footprint-incomplete" },

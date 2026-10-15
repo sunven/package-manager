@@ -308,7 +308,7 @@ export function createProjectCleanupWorkflow(
         const session: ProjectCleanupScanSessionView = {
           ...discovered,
           candidates: discovered.candidates.map((candidate) =>
-            candidateView(candidate, discovered.cargoAvailable),
+            candidateView(candidate, discovered),
           ),
         };
         const candidates = session.candidates.filter(
@@ -351,7 +351,7 @@ export function createProjectCleanupWorkflow(
                     current.candidateId === candidate.candidateId
                       ? candidateView(
                           { ...current, measurement },
-                          currentSession.cargoAvailable,
+                          currentSession,
                           current.selected,
                         )
                       : current,
@@ -725,7 +725,7 @@ function errorText(error: unknown) {
 
 function candidateView(
   candidate: ProjectDataCandidate,
-  cargoAvailable: boolean,
+  availability: Pick<ProjectDataScan, "cargoAvailable" | "mavenAvailable">,
   selected = false,
 ): ProjectCleanupCandidateView {
   const cleanup: CandidateCleanupState =
@@ -747,7 +747,10 @@ function candidateView(
       kind: "blocked",
       reason: "directory-footprint-incomplete",
     };
-  } else if (candidate.kind === "RustTarget" && !cargoAvailable) {
+  } else if (
+    (candidate.kind === "RustTarget" && !availability.cargoAvailable) ||
+    (candidate.kind === "MavenTarget" && !availability.mavenAvailable)
+  ) {
     cleanability = {
       kind: "blocked",
       reason: "cleanup-mechanism-unavailable",

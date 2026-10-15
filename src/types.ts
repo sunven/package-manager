@@ -292,7 +292,7 @@ export interface ProjectCleanupPreset {
 }
 
 export type ProjectDataScanStatus = "Ready" | "Partial";
-export type ProjectDataKind = "RustTarget" | "NodeModules";
+export type ProjectDataKind = "RustTarget" | "MavenTarget" | "NodeModules";
 export type ProjectDataCandidateStatus = "Ready" | "Symlink" | "NotDirectory" | "Unrecognized";
 export type DirectoryMeasurementStatus = "Pending" | "Ready" | "Partial" | "Missing" | "PermissionDenied" | "Error";
 export type ProjectCleanupStatus = "Succeeded" | "PartiallyCompleted" | "Failed" | "Skipped" | "Rejected";
@@ -334,6 +334,8 @@ export interface ProjectDataScan {
   errors: ProjectDataScanError[];
   cargoAvailable: boolean;
   cargoMessage: string | null;
+  mavenAvailable: boolean;
+  mavenMessage: string | null;
 }
 
 export interface ProjectCleanupResult {

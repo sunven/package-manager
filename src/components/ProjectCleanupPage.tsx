@@ -78,6 +78,10 @@ export function ProjectCleanupPage({
     () => candidates.filter((candidate) => candidate.kind === "NodeModules").length,
     [candidates],
   );
+  const mavenTotal = useMemo(
+    () => candidates.filter((candidate) => candidate.kind === "MavenTarget").length,
+    [candidates],
+  );
   const orderedCandidates = useMemo(
     () => filterAndSortProjectData(candidates, "", sort, "all", sortDir),
     [candidates, sort, sortDir],
@@ -255,7 +259,7 @@ export function ProjectCleanupPage({
             <ToggleGroup
               aria-label="候选类型"
               onValueChange={(value) => {
-                if (value === "RustTarget" || value === "NodeModules") setKind(value);
+                if (value === "RustTarget" || value === "MavenTarget" || value === "NodeModules") setKind(value);
               }}
               type="single"
               value={kind}
@@ -263,6 +267,10 @@ export function ProjectCleanupPage({
               <ToggleGroupItem value="RustTarget">
                 Rust target
                 <span className="font-mono text-xs tabular-nums text-muted-foreground">{rustTotal}</span>
+              </ToggleGroupItem>
+              <ToggleGroupItem value="MavenTarget">
+                Maven target
+                <span className="font-mono text-xs tabular-nums text-muted-foreground">{mavenTotal}</span>
               </ToggleGroupItem>
               <ToggleGroupItem value="NodeModules">
                 Node node_modules
@@ -412,7 +420,9 @@ export function ProjectCleanupPage({
                 : view.scan.session
                   ? kind === "RustTarget"
                     ? "扫描范围内没有发现 Rust target"
-                    : "扫描范围内没有发现 Node node_modules"
+                    : kind === "MavenTarget"
+                      ? "扫描范围内没有发现 Maven target"
+                      : "扫描范围内没有发现 Node node_modules"
                   : "添加或选择目录预设后，点击「扫描项目目录」"
             }
           />
@@ -452,6 +462,9 @@ function ProjectDataScanNotice({ view }: { view: ProjectCleanupView }) {
   const hasRustCandidates = session?.candidates.some(
     (candidate) => candidate.kind === "RustTarget",
   );
+  const hasMavenCandidates = session?.candidates.some(
+    (candidate) => candidate.kind === "MavenTarget",
+  );
   return session ? (
     <div className="grid gap-2 md:grid-cols-2">
       {session.status === "Partial" ? (
@@ -465,7 +478,13 @@ function ProjectDataScanNotice({ view }: { view: ProjectCleanupView }) {
       {!session.cargoAvailable && hasRustCandidates ? (
         <Alert>
           <AlertTitle>Cargo 不可用</AlertTitle>
-          <AlertDescription>{session.cargoMessage ?? "Rust target 不可清理；node_modules 不受影响。"}</AlertDescription>
+          <AlertDescription>{session.cargoMessage ?? "Rust target 不可清理；其他类型不受影响。"}</AlertDescription>
+        </Alert>
+      ) : null}
+      {!session.mavenAvailable && hasMavenCandidates ? (
+        <Alert>
+          <AlertTitle>Maven 不可用</AlertTitle>
+          <AlertDescription>{session.mavenMessage ?? "Maven target 不可清理；其他类型不受影响。"}</AlertDescription>
         </Alert>
       ) : null}
     </div>
@@ -624,7 +643,11 @@ function CandidateStatusBadge({
     candidate.cleanability.kind === "blocked"
     && candidate.cleanability.reason === "cleanup-mechanism-unavailable"
   ) {
-    return <Badge variant="outline">Cargo 不可用</Badge>;
+    return (
+      <Badge variant="outline">
+        {candidate.kind === "RustTarget" ? "Cargo 不可用" : "Maven 不可用"}
+      </Badge>
+    );
   }
   if (candidate.cleanability.kind === "cleanable") return <Badge>可清理</Badge>;
   return <Badge variant="outline">需要重新扫描</Badge>;
@@ -643,9 +666,11 @@ function ProjectCleanupDialog({
 }) {
   const candidates = batch?.candidates ?? [];
   const rustCount = candidates.filter((candidate) => candidate.kind === "RustTarget").length;
-  const nodeCount = candidates.length - rustCount;
+  const mavenCount = candidates.filter((candidate) => candidate.kind === "MavenTarget").length;
+  const nodeCount = candidates.length - rustCount - mavenCount;
   const candidateSummary = [
     rustCount ? `${rustCount} 个 Rust target` : null,
+    mavenCount ? `${mavenCount} 个 Maven target` : null,
     nodeCount ? `${nodeCount} 个 Node node_modules` : null,
   ].filter(Boolean).join("、");
   const failed = candidates.filter((candidate) => {
@@ -726,7 +751,7 @@ function ProjectCleanupDialog({
         {batch?.phase === "confirmation" ? (
           <Alert>
             <AlertTitle>清理不可撤销</AlertTitle>
-            <AlertDescription>{cleanupWarning(rustCount, nodeCount)}</AlertDescription>
+            <AlertDescription>{cleanupWarning(rustCount, mavenCount, nodeCount)}</AlertDescription>
           </Alert>
         ) : null}
         {batch?.phase === "result" && failed > 0 ? (
@@ -789,11 +814,13 @@ function ProjectCleanupDialog({
 }
 
 function candidateDirectoryName(candidate: Pick<ProjectCleanupCandidateView, "kind">) {
-  return candidate.kind === "RustTarget" ? "target" : "node_modules";
+  return candidate.kind === "NodeModules" ? "node_modules" : "target";
 }
 
 function candidateTypeLabel(candidate: Pick<ProjectCleanupCandidateView, "kind">) {
-  return candidate.kind === "RustTarget" ? "Rust target" : "Node node_modules";
+  if (candidate.kind === "RustTarget") return "Rust target";
+  if (candidate.kind === "MavenTarget") return "Maven target";
+  return "Node node_modules";
 }
 
 function highlightPathName(formattedPath: string, name: string) {
@@ -823,9 +850,10 @@ function rowProjectName(candidate: Pick<ProjectCleanupCandidateView, "kind" | "p
   return projectName(candidate.projectPath);
 }
 
-function cleanupWarning(rustCount: number, nodeCount: number) {
+function cleanupWarning(rustCount: number, mavenCount: number, nodeCount: number) {
   const recovery = [
     rustCount ? "Rust target 需要重新构建" : null,
+    mavenCount ? "Maven target 需要重新构建" : null,
     nodeCount ? "Node node_modules 需要重新安装依赖" : null,
   ].filter(Boolean).join("；");
   return `${recovery}。目录不会进入废纸篓，正在运行的构建、开发或测试任务可能受影响。`;

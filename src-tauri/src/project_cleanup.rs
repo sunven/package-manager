@@ -30,6 +30,14 @@ pub(crate) struct ProjectCleanupSettings {
     pub(crate) root_message: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ToolAvailability {
+    pub(crate) cargo_available: bool,
+    pub(crate) cargo_message: Option<String>,
+    pub(crate) maven_available: bool,
+    pub(crate) maven_message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectDataScan {
@@ -43,6 +51,8 @@ pub(crate) struct ProjectDataScan {
     pub(crate) errors: Vec<ProjectDataScanError>,
     pub(crate) cargo_available: bool,
     pub(crate) cargo_message: Option<String>,
+    pub(crate) maven_available: bool,
+    pub(crate) maven_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -73,6 +83,7 @@ pub(crate) struct ProjectDataCandidate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(crate) enum ProjectDataKind {
     RustTarget,
+    MavenTarget,
     NodeModules,
 }
 
@@ -259,18 +270,10 @@ impl ProjectCleanupState {
         root_path: PathBuf,
         max_depth: u8,
         discovery: Discovery,
-        cargo_available: bool,
-        cargo_message: Option<String>,
+        tools: ToolAvailability,
     ) -> Result<ProjectDataScan, String> {
-        self.lock()?.install_scan(
-            root_id,
-            scan_id,
-            root_path,
-            max_depth,
-            discovery,
-            cargo_available,
-            cargo_message,
-        )
+        self.lock()?
+            .install_scan(root_id, scan_id, root_path, max_depth, discovery, tools)
     }
 
     pub(crate) fn candidate_for_measurement(
@@ -526,8 +529,7 @@ impl Registry {
         root_path: PathBuf,
         max_depth: u8,
         discovery: Discovery,
-        cargo_available: bool,
-        cargo_message: Option<String>,
+        tools: ToolAvailability,
     ) -> Result<ProjectDataScan, String> {
         let current_root = self
             .root
@@ -581,8 +583,10 @@ impl Registry {
             candidates: response_candidates,
             skipped: discovery.skipped,
             errors: discovery.errors,
-            cargo_available,
-            cargo_message,
+            cargo_available: tools.cargo_available,
+            cargo_message: tools.cargo_message,
+            maven_available: tools.maven_available,
+            maven_message: tools.maven_message,
         })
     }
 
@@ -768,6 +772,11 @@ pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
                 discovery.candidates.push(candidate);
             }
         }
+        if is_maven_project(&directory) {
+            if let Some(candidate) = inspect_maven_candidate(&directory) {
+                discovery.candidates.push(candidate);
+            }
+        }
         if is_node_project(&directory) {
             if let Some(candidate) = inspect_node_candidate(&directory) {
                 discovery.candidates.push(candidate);
@@ -817,6 +826,12 @@ pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
 }
 
 impl Discovery {
+    pub(crate) fn has_maven_candidates(&self) -> bool {
+        self.candidates
+            .iter()
+            .any(|candidate| candidate.kind == ProjectDataKind::MavenTarget)
+    }
+
     fn record_error(&mut self, path: &Path, message: String) {
         self.skipped = self.skipped.saturating_add(1);
         if self.errors.len() < MAX_REPORTED_SCAN_ERRORS {
@@ -847,6 +862,10 @@ fn should_prune(name: &str) -> bool {
 
 fn is_cargo_project(directory: &Path) -> bool {
     is_regular_file(&directory.join("Cargo.toml"))
+}
+
+fn is_maven_project(directory: &Path) -> bool {
+    is_regular_file(&directory.join("pom.xml"))
 }
 
 fn is_node_project(directory: &Path) -> bool {
@@ -890,6 +909,50 @@ fn inspect_rust_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
 
     Some(DiscoveredCandidate {
         kind: ProjectDataKind::RustTarget,
+        project_path: project_path.to_path_buf(),
+        directory_path,
+        status,
+        message,
+    })
+}
+
+fn inspect_maven_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
+    let directory_path = project_path.join("target");
+    let metadata = match fs::symlink_metadata(&directory_path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(err) => {
+            return Some(DiscoveredCandidate {
+                kind: ProjectDataKind::MavenTarget,
+                project_path: project_path.to_path_buf(),
+                directory_path,
+                status: ProjectDataCandidateStatus::Unrecognized,
+                message: Some(format!("Could not inspect target: {err}")),
+            })
+        }
+    };
+
+    let (status, message) = if is_link(&metadata) {
+        (
+            ProjectDataCandidateStatus::Symlink,
+            Some("The target path is a symbolic link".to_string()),
+        )
+    } else if !metadata.is_dir() {
+        (
+            ProjectDataCandidateStatus::NotDirectory,
+            Some("The target path is not a directory".to_string()),
+        )
+    } else if has_maven_marker(&directory_path) {
+        (ProjectDataCandidateStatus::Ready, None)
+    } else {
+        (
+            ProjectDataCandidateStatus::Unrecognized,
+            Some("No root-level Maven build output directory was found".to_string()),
+        )
+    };
+
+    Some(DiscoveredCandidate {
+        kind: ProjectDataKind::MavenTarget,
         project_path: project_path.to_path_buf(),
         directory_path,
         status,
@@ -942,9 +1005,29 @@ fn has_cargo_marker(directory_path: &Path) -> bool {
         .any(|name| is_regular_file(&directory_path.join(name)))
 }
 
+fn has_maven_marker(directory_path: &Path) -> bool {
+    [
+        "maven-status",
+        "classes",
+        "test-classes",
+        "generated-sources",
+        "generated-test-sources",
+        "maven-archiver",
+        "surefire-reports",
+    ]
+    .iter()
+    .any(|name| is_regular_dir(&directory_path.join(name)))
+}
+
 fn is_regular_file(path: &Path) -> bool {
     fs::symlink_metadata(path)
         .map(|metadata| metadata.is_file() && !is_link(&metadata))
+        .unwrap_or(false)
+}
+
+fn is_regular_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.is_dir() && !is_link(&metadata))
         .unwrap_or(false)
 }
 
@@ -1261,6 +1344,7 @@ where
 
     match candidate.kind {
         ProjectDataKind::RustTarget => run_rust_cleanup(candidate, runner, before_bytes),
+        ProjectDataKind::MavenTarget => run_maven_cleanup(candidate, runner, before_bytes),
         ProjectDataKind::NodeModules => run_node_cleanup(candidate, deleter, before_bytes),
     }
 }
@@ -1321,6 +1405,94 @@ where
             let stdout = run.stdout.clone();
             let stderr = run.stderr.clone();
             let failure = command_failure(FailureKind::CommandFailed, "cargo clean failed", run);
+            failed_cleanup(
+                candidate,
+                command,
+                before_bytes,
+                after_bytes,
+                cleaned_bytes,
+                measurement,
+                stdout,
+                stderr,
+                failure,
+            )
+        }
+        Err(failure) => {
+            let stdout = failure.stdout.clone();
+            let stderr = failure.stderr.clone();
+            failed_cleanup(
+                candidate,
+                command,
+                before_bytes,
+                after_bytes,
+                cleaned_bytes,
+                measurement,
+                stdout,
+                stderr,
+                failure,
+            )
+        }
+    }
+}
+
+fn run_maven_cleanup<F>(
+    candidate: &CandidateRecord,
+    runner: &F,
+    before_bytes: u64,
+) -> ProjectCleanupResult
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let pom_path = candidate.project_path.join("pom.xml");
+    let args = vec![
+        "-B".to_string(),
+        "-N".to_string(),
+        "-f".to_string(),
+        pom_path.display().to_string(),
+        "clean".to_string(),
+    ];
+    let command = envelope_owned("mvn", args.clone(), CLEAN_TIMEOUT.as_millis() as u64);
+    let run = runner("mvn", &args, CLEAN_TIMEOUT);
+    let measurement = measure_project_data(candidate.kind, &candidate.directory_path);
+    let measurement_complete = matches!(
+        measurement.status,
+        DirectoryMeasurementStatus::Ready | DirectoryMeasurementStatus::Missing
+    );
+    let after_bytes = if measurement_complete {
+        measurement.bytes.unwrap_or(before_bytes)
+    } else {
+        before_bytes
+    };
+    let cleaned_bytes = before_bytes.saturating_sub(after_bytes);
+
+    match run {
+        Ok(run) if run.exit_code == Some(0) => {
+            let removed = measurement.status == DirectoryMeasurementStatus::Missing;
+            ProjectCleanupResult {
+                candidate_id: candidate.id.clone(),
+                status: if removed {
+                    ProjectCleanupStatus::Succeeded
+                } else {
+                    ProjectCleanupStatus::PartiallyCompleted
+                },
+                command: Some(command),
+                before_bytes,
+                after_bytes,
+                cleaned_bytes,
+                measurement,
+                stdout: run.stdout,
+                stderr: run.stderr,
+                message: (!removed).then(|| {
+                    "mvn clean succeeded, but the target directory still exists or could not be remeasured"
+                        .to_string()
+                }),
+                failure: None,
+            }
+        }
+        Ok(run) => {
+            let stdout = run.stdout.clone();
+            let stderr = run.stderr.clone();
+            let failure = command_failure(FailureKind::CommandFailed, "mvn clean failed", run);
             failed_cleanup(
                 candidate,
                 command,
@@ -1500,7 +1672,7 @@ fn validate_for_cleanup(root: &Path, candidate: &CandidateRecord) -> Result<Vali
         );
     }
     let expected_name = match candidate.kind {
-        ProjectDataKind::RustTarget => "target",
+        ProjectDataKind::RustTarget | ProjectDataKind::MavenTarget => "target",
         ProjectDataKind::NodeModules => "node_modules",
     };
     if candidate
@@ -1516,6 +1688,7 @@ fn validate_for_cleanup(root: &Path, candidate: &CandidateRecord) -> Result<Vali
     }
     let manifest_name = match candidate.kind {
         ProjectDataKind::RustTarget => "Cargo.toml",
+        ProjectDataKind::MavenTarget => "pom.xml",
         ProjectDataKind::NodeModules => "package.json",
     };
     let manifest_path = candidate.project_path.join(manifest_name);
@@ -1527,6 +1700,11 @@ fn validate_for_cleanup(root: &Path, candidate: &CandidateRecord) -> Result<Vali
     if candidate.kind == ProjectDataKind::RustTarget && !has_cargo_marker(&candidate.directory_path)
     {
         return Err("The target no longer contains a trusted Cargo marker".to_string());
+    }
+    if candidate.kind == ProjectDataKind::MavenTarget
+        && !has_maven_marker(&candidate.directory_path)
+    {
+        return Err("The target no longer contains a trusted Maven marker".to_string());
     }
 
     let project = fs::canonicalize(&candidate.project_path)
@@ -1669,6 +1847,39 @@ mod tests {
             candidate.kind == ProjectDataKind::NodeModules
                 && candidate.directory_path == node_project.join("node_modules")
         }));
+    }
+
+    #[test]
+    fn discovers_maven_target_candidates_with_maven_markers() {
+        let root = temp_dir("discover-maven");
+        let _guard = TempDirGuard(root.clone());
+        create_maven_project(&root.join("a-status"), Some("maven-status"));
+        create_maven_project(&root.join("b-classes"), Some("classes"));
+        create_maven_project(&root.join("c-unknown"), None);
+        let bare = root.join("d-bare");
+        fs::create_dir_all(&bare).expect("create bare project");
+        fs::write(bare.join("pom.xml"), "<project/>").expect("write pom");
+
+        let discovery = discover_project_data(&root, 8);
+
+        assert!(discovery.has_maven_candidates());
+        assert_eq!(discovery.candidates.len(), 3);
+        assert_eq!(
+            discovery
+                .candidates
+                .iter()
+                .map(|candidate| candidate.status)
+                .collect::<Vec<_>>(),
+            vec![
+                ProjectDataCandidateStatus::Ready,
+                ProjectDataCandidateStatus::Ready,
+                ProjectDataCandidateStatus::Unrecognized,
+            ]
+        );
+        assert!(discovery
+            .candidates
+            .iter()
+            .all(|candidate| candidate.kind == ProjectDataKind::MavenTarget));
     }
 
     #[cfg(unix)]
@@ -1842,8 +2053,7 @@ mod tests {
                 root_path,
                 depth,
                 discover_project_data(&first, 8),
-                true,
-                None,
+                available_tools(),
             )
             .expect("install scan");
 
@@ -1875,8 +2085,7 @@ mod tests {
                 first_root,
                 first_depth,
                 discover_project_data(&root, 8),
-                true,
-                None,
+                available_tools(),
             )
             .is_err());
         let installed = registry
@@ -1886,8 +2095,7 @@ mod tests {
                 second_root,
                 second_depth,
                 discover_project_data(&root, 8),
-                true,
-                None,
+                available_tools(),
             )
             .expect("install latest scan");
 
@@ -1913,8 +2121,12 @@ mod tests {
                 root_path,
                 depth,
                 discover_project_data(&root, 8),
-                false,
-                Some("Cargo unavailable".to_string()),
+                ToolAvailability {
+                    cargo_available: false,
+                    cargo_message: Some("Cargo unavailable".to_string()),
+                    maven_available: true,
+                    maven_message: None,
+                },
             )
             .expect("install scan");
         let candidate_id = scan.candidates[0].candidate_id.clone();
@@ -1984,6 +2196,117 @@ mod tests {
                 target.to_str().expect("target"),
             ]
         );
+    }
+
+    #[test]
+    fn cleanup_uses_fixed_non_recursive_maven_arguments() {
+        let root = temp_dir("cleanup-maven");
+        let _guard = TempDirGuard(root.clone());
+        let project = root.join("project");
+        create_maven_project(&project, Some("maven-status"));
+        fs::write(project.join("target/artifact"), vec![1_u8; 1024]).expect("write artifact");
+        let target = project.join("target");
+        let candidate = maven_candidate(&project);
+
+        let result =
+            run_project_cleanup_with_runner(&root, &candidate, &|program, args, timeout| {
+                assert_eq!(program, "mvn");
+                assert_eq!(timeout, Duration::from_secs(300));
+                assert_eq!(
+                    args,
+                    &[
+                        "-B".to_string(),
+                        "-N".to_string(),
+                        "-f".to_string(),
+                        project.join("pom.xml").display().to_string(),
+                        "clean".to_string(),
+                    ]
+                );
+                fs::remove_dir_all(&target).expect("remove target");
+                Ok(CommandRun {
+                    envelope: envelope(program, &[], timeout.as_millis() as u64),
+                    stdout: "cleaned".to_string(),
+                    stderr: String::new(),
+                    exit_code: Some(0),
+                    duration_ms: 1,
+                })
+            });
+
+        assert_eq!(result.status, ProjectCleanupStatus::Succeeded);
+        assert!(result.cleaned_bytes > 0);
+        assert_eq!(result.measurement.status, DirectoryMeasurementStatus::Missing);
+        assert_eq!(
+            result.command.expect("command").args,
+            vec![
+                "-B",
+                "-N",
+                "-f",
+                project.join("pom.xml").to_str().expect("pom"),
+                "clean",
+            ]
+        );
+    }
+
+    #[test]
+    fn successful_maven_cleanup_requires_the_target_to_disappear() {
+        let root = temp_dir("maven-target-remains");
+        let _guard = TempDirGuard(root.clone());
+        let project = root.join("project");
+        create_maven_project(&project, Some("maven-status"));
+        fs::write(project.join("target/artifact"), vec![1_u8; 1024]).expect("write artifact");
+        let candidate = maven_candidate(&project);
+
+        let result = run_project_cleanup_with_runner(&root, &candidate, &|program, _, timeout| {
+            Ok(CommandRun {
+                envelope: envelope(program, &[], timeout.as_millis() as u64),
+                stdout: "cleaned".to_string(),
+                stderr: String::new(),
+                exit_code: Some(0),
+                duration_ms: 1,
+            })
+        });
+
+        assert_eq!(result.status, ProjectCleanupStatus::PartiallyCompleted);
+        assert_eq!(result.cleaned_bytes, 0);
+        assert!(result
+            .message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("still exists"));
+    }
+
+    #[test]
+    fn cleanup_rejects_a_maven_target_whose_pom_is_missing() {
+        let root = temp_dir("maven-pom-missing");
+        let _guard = TempDirGuard(root.clone());
+        let project = root.join("project");
+        create_maven_project(&project, Some("maven-status"));
+        let candidate = maven_candidate(&project);
+        fs::remove_file(project.join("pom.xml")).expect("remove pom");
+
+        let result = run_project_cleanup_with_runner(&root, &candidate, &|_, _, _| {
+            panic!("mvn must not run when pom.xml is missing")
+        });
+
+        assert_eq!(result.status, ProjectCleanupStatus::Rejected);
+        assert_eq!(result.cleaned_bytes, 0);
+    }
+
+    #[test]
+    fn cleanup_rejects_a_maven_target_that_lost_its_markers() {
+        let root = temp_dir("maven-marker-missing");
+        let _guard = TempDirGuard(root.clone());
+        let project = root.join("project");
+        create_maven_project(&project, Some("maven-status"));
+        let candidate = maven_candidate(&project);
+        fs::remove_dir_all(project.join("target/maven-status")).expect("remove marker");
+
+        let result = run_project_cleanup_with_runner(&root, &candidate, &|_, _, _| {
+            panic!("mvn must not run when the Maven marker is gone")
+        });
+
+        assert_eq!(result.status, ProjectCleanupStatus::Rejected);
+        assert_eq!(result.cleaned_bytes, 0);
     }
 
     #[test]
@@ -2100,6 +2423,37 @@ mod tests {
         fs::write(path.join("package.json"), "{}").expect("write package.json");
         fs::write(path.join("node_modules/package.js"), vec![1_u8; 1024])
             .expect("write dependency");
+    }
+
+    fn create_maven_project(path: &Path, marker: Option<&str>) {
+        fs::create_dir_all(path.join("target")).expect("create target");
+        fs::write(path.join("pom.xml"), "<project/>").expect("write pom");
+        if let Some(marker) = marker {
+            fs::create_dir_all(path.join("target").join(marker)).expect("create marker");
+        }
+    }
+
+    fn available_tools() -> ToolAvailability {
+        ToolAvailability {
+            cargo_available: true,
+            cargo_message: None,
+            maven_available: true,
+            maven_message: None,
+        }
+    }
+
+    fn maven_candidate(project: &Path) -> CandidateRecord {
+        let directory_path = project.join("target");
+        CandidateRecord {
+            id: "candidate-maven".to_string(),
+            kind: ProjectDataKind::MavenTarget,
+            project_path: project.to_path_buf(),
+            directory_path: directory_path.clone(),
+            status: ProjectDataCandidateStatus::Ready,
+            message: None,
+            measurement: measure_project_data(ProjectDataKind::MavenTarget, &directory_path),
+            cleanup_attempted: false,
+        }
     }
 
     fn node_candidate(project: &Path) -> CandidateRecord {

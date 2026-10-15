@@ -22,7 +22,7 @@ use crate::managers::{
 use crate::project_cleanup::{
     discover_project_data, measure_project_data, run_project_cleanup_with_runner,
     DirectoryMeasurement, ProjectCleanupResult, ProjectCleanupSettings, ProjectCleanupState,
-    ProjectDataOpenTarget, ProjectDataScan,
+    ProjectDataOpenTarget, ProjectDataScan, ToolAvailability,
 };
 use crate::types::{
     CacheCleanupRun, DiskUsage, HomebrewCleanupPreview, MaintenanceRunPreview, ManagerId,
@@ -259,32 +259,38 @@ async fn scan_project_data(
 ) -> Result<ProjectDataScan, String> {
     let (root_path, max_depth, scan_id) = state.prepare_scan(&root_id, max_depth)?;
     let scan_root = root_path.clone();
-    let (discovery, cargo_available, cargo_message) =
-        tauri::async_runtime::spawn_blocking(move || {
-            let discovery = discover_project_data(&scan_root, max_depth);
-            let cargo_probe =
-                run_command("cargo", &["--version"], std::time::Duration::from_secs(5));
-            match cargo_probe {
-                Ok(run) if run.exit_code == Some(0) => (discovery, true, None),
-                Ok(run) => (
-                    discovery,
-                    false,
-                    Some(run.stderr.trim().to_string()).filter(|message| !message.is_empty()),
-                ),
-                Err(failure) => (discovery, false, Some(failure.message)),
-            }
-        })
-        .await
-        .map_err(|err| format!("Project data scan failed: {err}"))?;
-    state.install_scan(
-        &root_id,
-        scan_id,
-        root_path,
-        max_depth,
-        discovery,
-        cargo_available,
-        cargo_message,
-    )
+    let (discovery, tools) = tauri::async_runtime::spawn_blocking(move || {
+        let discovery = discover_project_data(&scan_root, max_depth);
+        let (cargo_available, cargo_message) = probe_tool("cargo");
+        let (maven_available, maven_message) = if discovery.has_maven_candidates() {
+            probe_tool("mvn")
+        } else {
+            (true, None)
+        };
+        (
+            discovery,
+            ToolAvailability {
+                cargo_available,
+                cargo_message,
+                maven_available,
+                maven_message,
+            },
+        )
+    })
+    .await
+    .map_err(|err| format!("Project data scan failed: {err}"))?;
+    state.install_scan(&root_id, scan_id, root_path, max_depth, discovery, tools)
+}
+
+fn probe_tool(program: &str) -> (bool, Option<String>) {
+    match run_command(program, &["--version"], std::time::Duration::from_secs(5)) {
+        Ok(run) if run.exit_code == Some(0) => (true, None),
+        Ok(run) => (
+            false,
+            Some(run.stderr.trim().to_string()).filter(|message| !message.is_empty()),
+        ),
+        Err(failure) => (false, Some(failure.message)),
+    }
 }
 
 #[tauri::command]

@@ -156,12 +156,16 @@ _Avoid_: Cargo 包、Cargo workspace
 扫描根目录内由常规文件 `package.json` 标识的本地项目目录。
 _Avoid_: npm 项目、Node 包
 
+**Maven 项目 (Maven Project)**:
+扫描根目录内由常规文件 `pom.xml` 标识的本地项目目录。
+_Avoid_: Java 项目、Maven 工程
+
 **构建目录候选 (Build Directory Candidate)**:
-Rust 项目中与 `Cargo.toml` 直接同级、名为 `target` 的文件系统条目。候选会出现在扫描结果中，但只有通过身份检查后才是可清理的构建目录。
+Rust 或 Maven 项目中与项目标识文件（`Cargo.toml` 或 `pom.xml`）直接同级、名为 `target` 的文件系统条目。候选会出现在扫描结果中，但只有通过身份检查后才是可清理的构建目录。
 _Avoid_: 构建目录、清理候选
 
 **构建目录 (Build Directory)**:
-不是符号链接、且根级包含 `CACHEDIR.TAG` 或 `.rustc_info.json` 的构建目录候选。v1 不把 Cargo 配置指向的自定义或共享 `target-dir` 视为构建目录。
+不是符号链接、且根级包含对应构建工具产物标记（Cargo 的 `CACHEDIR.TAG` 或 `.rustc_info.json`；Maven 的 `maven-status/`、`classes/`、`test-classes/` 等产物目录）的构建目录候选。v1 不识别 Cargo 配置指向的自定义或共享 `target-dir`，也不识别 pom 自定义的 `<directory>`。
 _Avoid_: target 缓存、Cargo 缓存
 
 **依赖目录候选 (Dependency Directory Candidate)**:
@@ -183,12 +187,12 @@ _Avoid_: 已发现候选、Ready 候选
 _Avoid_: 清除、删除、清空
 
 **项目清理 (Project Cleanup)**:
-面向用户的项目派生数据维护能力，统一呈现并清理 Rust `target` 和 Node `node_modules`。
+面向用户的项目派生数据维护能力，统一呈现并清理 Rust 与 Maven 的 `target` 和 Node 的 `node_modules`。
 _Avoid_: 构建产物清理、Rust 项目清理
 
 **构建目录清理 (Build Directory Cleanup)**:
-通过 Cargo 对用户选中的构建目录执行清理。它维护的是项目构建产物，不是 Cargo 管理器缓存。
-_Avoid_: Cargo 缓存清理、target 删除
+通过 Cargo 或 Maven 对用户选中的构建目录执行清理。它维护的是项目构建产物，不是管理器缓存。
+_Avoid_: Cargo 缓存清理、Maven 缓存清理、target 删除
 
 **依赖目录清理 (Dependency Directory Cleanup)**:
 对用户选中的依赖目录执行不进入废纸篓的永久护栏删除。它不依赖 Node 或特定包管理器可用，只回收已安装的项目依赖，不清理管理器缓存，也不自动重新安装依赖。

@@ -1,10 +1,10 @@
 # Package Manager Control Center
 
-一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv 和 FVM 的包、缓存/仓库占用与维护信号，清理 Rust / Node 项目派生数据，以及查看 VS Code 占用和管理 Codex / Claude 会话记录。
+一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv 和 FVM 的包、缓存/仓库占用与维护信号，清理 Rust / Maven / Node 项目派生数据，以及查看 VS Code 占用和管理 Codex / Claude 会话记录。
 
 当前目标是 **observe first, then act**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；其中 8 个管理器支持确认后执行 allowlisted 的缓存清理。
 
-清理的安全性是结构性的：默认委托给拥有派生数据的 CLI；npm 的 `_npx` 和扫描会话授权的 Node `node_modules` 使用带路径身份检查的护栏删除。Rust 项目 `target` 通过固定参数的 `cargo clean` 清理。会话记录不可重建，因此独立处理并移入废纸篓。详见 [ADR-0001](./docs/adr/0001-delegated-cache-cleanup.md) 和 [ADR-0003](./docs/adr/0003-build-cleanup-uses-scan-session-candidates.md)。
+清理的安全性是结构性的：默认委托给拥有派生数据的 CLI；npm 的 `_npx` 和扫描会话授权的 Node `node_modules` 使用带路径身份检查的护栏删除。Rust 项目 `target` 通过固定参数的 `cargo clean` 清理，Maven 项目 `target` 通过固定参数的 `mvn clean` 清理。会话记录不可重建，因此独立处理并移入废纸篓。详见 [ADR-0001](./docs/adr/0001-delegated-cache-cleanup.md)、[ADR-0003](./docs/adr/0003-build-cleanup-uses-scan-session-candidates.md) 和 [ADR-0016](./docs/adr/0016-maven-build-directories-use-delegated-cleanup.md)。
 
 术语定义见 [CONTEXT.md](./CONTEXT.md)，架构决策见 [docs/adr/](./docs/adr/)。
 
@@ -26,6 +26,7 @@
 - pip 支持当前 Python interpreter 的 installed/outdated package、editable/direct-url/user-site 信号、cache/site-packages 路径。
 - Cargo 支持 `cargo install --list` 的已安装二进制 crate、Cargo bin、registry cache/source、git cache/checkouts 路径。
 - 从用户选择的根目录递归发现与 `Cargo.toml` 同级的 `target`，并行测量占用、筛选排序、确认后批量执行 `cargo clean --offline`。
+- 同一扫描也发现与 `pom.xml` 同级的 `target`，确认后按模块执行 `mvn -B -N -f <pom.xml> clean`，不连带清理未选中的子模块。
 - 同一扫描也发现与 `package.json` 同级的 `node_modules`，通过身份和完整测量检查后可确认永久清理。
 - 保存多个扫描目录预设，每个预设保留独立深度；切换预设后重新扫描。
 - Docker 支持镜像/容器/卷清单、运行中容器数、dangling 与未使用镜像统计、`docker system df` 的 reclaimable 空间、config/buildx/Desktop data 路径。
@@ -63,6 +64,7 @@
 - 只有 npm 和 pnpm 支持确认后卸载全局包；其他管理器不做 uninstall。
 - 缓存清理覆盖 8 个管理器。**nvm、Maven、Cargo、FVM 的管理器缓存没有清理能力，这是有意的架构决定**，不是遗漏：nvm、Maven、Cargo 都没有官方子命令能清自己的缓存，做它们就意味着本工具自己 `rm -rf` 推导出来的路径；FVM 的 `fvm remove` 删除的是用户安装的 SDK（按卸载对待，需单独安全论证），`fvm destroy` 则超出本工具的能力范围。Rust 项目构建产物是独立功能，不计入 Cargo 管理器缓存或健康汇总。
 - Rust 构建产物 v1 只认 `Cargo.toml` 同级、非符号链接且根级包含 `CACHEDIR.TAG` 或 `.rustc_info.json` 的 `target`；不解析自定义或共享 `target-dir`。
+- Maven 构建产物 v1 只认 `pom.xml` 同级、非符号链接且根级包含 Maven 产物目录（如 `maven-status`、`classes`、`test-classes`）的 `target`；不解析 pom 自定义的 `<directory>`，也不偏好项目内 `mvnw`。
 - Node 依赖目录只认常规文件 `package.json` 同级、非符号链接的 `node_modules`；扫描不深入依赖目录，清理不自动重新安装。
 - Homebrew 清理有意超出「只清缓存」的范围：`brew cleanup` 会连带删除已安装 formula 的旧版本（当前版本不受影响）。理由和边界见 [ADR-0002](./docs/adr/0002-homebrew-cleanup-exceeds-cache-scope.md)。
 - 不做跨管理器的批量清理，也不在健康页直接执行。
@@ -263,6 +265,9 @@ nvm / Maven / Cargo / FVM: no cleanup plan (ADR-0001)
 Rust build artifact cleanup:
 cargo clean --offline --manifest-path <Cargo.toml> --target-dir <target>
 
+Maven build artifact cleanup:
+mvn -B -N -f <pom.xml> clean
+
 mvn --version
 
 python3 --version
@@ -325,7 +330,7 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 - 用系统 opener 打开本机目录。
 - 确认后执行 allowlisted 全局包卸载：`npm uninstall -g <pkg>`、`pnpm remove --global <pkg>`。
 - 确认后执行 allowlisted 缓存清理，命令固定在 Rust 静态表里（见上方功能列表）。
-- 确认后清理扫描会话中的 Rust 构建目录候选；前端只能提交后端签发的根目录、扫描和候选 ID，执行前会重新验证项目、`target` 身份及根目录边界。
+- 确认后清理扫描会话中的 Rust / Maven 构建目录候选；前端只能提交后端签发的根目录、扫描和候选 ID，执行前会重新验证项目、`target` 身份及根目录边界。
 - 确认后永久清理同一扫描会话中已验证的 Node 依赖目录；执行前再次检查项目、目录身份和根目录边界。
 - 确认后把合格的会话记录移入废纸篓；每条记录动手前重判资格。
 - 带路径身份断言地删除 npm 的 `_npx` 目录：断言绝对路径、以 `npm config get cache` 的返回值为前缀、basename 恰为 `_npx`，任一条不满足就报失败而不继续。
