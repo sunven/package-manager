@@ -1,0 +1,15 @@
+{
+  "command": [
+    "/usr/bin/sandbox-exec",
+    "-f",
+    "/private/var/folders/38/s1qf24m11tn897xgx9khf2gm0000gn/T/pm-claude-smoke-s17dqnoa/sandbox.sb",
+    "/Users/sunven/github/package-manager/src-tauri/target/debug/deps/package_manager_control_center_lib-5404cd1aafebe8e4",
+    "--exact",
+    "claude_plugins::tests::native_user_lifecycle",
+    "--ignored",
+    "--nocapture"
+  ],
+  "exit": 0,
+  "stdout": "\nrunning 1 test\ntest claude_plugins::tests::native_user_lifecycle ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 206 filtered out; finished in 9.08s\n\n",
+  "stderr": ""
+}

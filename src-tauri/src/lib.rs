@@ -1,3 +1,8 @@
+mod claude_cli;
+mod claude_documents;
+mod claude_hooks;
+mod claude_plugin_details;
+mod claude_plugins;
 mod codex_cli;
 mod codex_hooks;
 mod codex_marketplaces;
@@ -32,6 +37,81 @@ use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+async fn scan_claude_extensions(
+    state: tauri::State<'_, claude_plugins::ExtensionsState>,
+) -> Result<claude_plugins::ExtensionScan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.scan())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn change_claude_extension(
+    request: claude_plugins::ChangeRequest,
+    state: tauri::State<'_, claude_plugins::ExtensionsState>,
+) -> Result<claude_plugins::ChangeResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.change(request))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn scan_claude_hooks(
+    state: tauri::State<'_, claude_hooks::HooksState>,
+) -> Result<claude_hooks::HookScan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.scan())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn prepare_claude_hook(
+    request: claude_hooks::DefinitionRequest,
+    state: tauri::State<'_, claude_hooks::HooksState>,
+) -> Result<claude_hooks::Preview, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.prepare(request))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn commit_claude_hook(
+    request: claude_hooks::CommitRequest,
+    state: tauri::State<'_, claude_hooks::HooksState>,
+) -> Result<claude_plugins::ChangeResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.commit(request))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn choose_claude_marketplace_path(
+    app: tauri::AppHandle,
+    file: bool,
+) -> Result<Option<String>, String> {
+    let picker = app.dialog().file();
+    let selected = if file {
+        picker
+            .add_filter("Marketplace JSON", &["json"])
+            .blocking_pick_file()
+    } else {
+        picker.blocking_pick_folder()
+    };
+    selected
+        .map(|file| {
+            file.into_path()
+                .map(|p| p.display().to_string())
+                .map_err(|e| e.to_string())
+        })
+        .transpose()
+}
 
 #[tauri::command]
 async fn scan_codex_hooks(
@@ -421,6 +501,8 @@ async fn run_cache_cleanup(manager: ManagerId) -> Result<CacheCleanupRun, String
 pub fn run() {
     tauri::Builder::default()
         .manage(codex_hooks::HooksState::default())
+        .manage(claude_plugins::ExtensionsState::default())
+        .manage(claude_hooks::HooksState::default())
         .manage(codex_plugins::CodexPluginsState::default())
         .manage(codex_marketplaces::MarketplacesState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -437,6 +519,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scan_claude_extensions,
+            change_claude_extension,
+            scan_claude_hooks,
+            prepare_claude_hook,
+            commit_claude_hook,
+            choose_claude_marketplace_path,
             scan_codex_hooks,
             prepare_codex_hook_definition,
             commit_codex_hook_definition,

@@ -4,6 +4,8 @@ import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
 import { useSessionRecords } from "./hooks/useSessionRecords";
 import { useCodexPlugins } from "./hooks/useCodexPlugins";
+import { useClaudeCode } from "./hooks/useClaudeCode";
+import { ClaudeCodePage } from "./components/ClaudeCodePage";
 import { CodexMarketplacesPage } from "./components/CodexMarketplacesPage";
 import { useCodexMarketplaces } from "./hooks/useCodexMarketplaces";
 import { useCodexHooks } from "./hooks/useCodexHooks";
@@ -48,7 +50,9 @@ function initialTheme(): Theme {
 export function App() {
   const state = usePackageManagers();
   const projectCleanup = useProjectCleanup();
-  const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "settings">("health");
+  const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
+  const [claudeTab, setClaudeTab] = useState("marketplaces");
+  const claude = useClaudeCode(activeView === "claude", claudeTab);
   const [codexTab, setCodexTab] = useState("marketplaces");
   const codexMarketplaces = useCodexMarketplaces(activeView === "plugins" && codexTab === "marketplaces");
   const codexPlugins = useCodexPlugins(activeView === "plugins" && codexTab === "marketplaces", codexMarketplaces.pluginRevision);
@@ -119,6 +123,10 @@ export function App() {
         actions.closePackageActions();
         setActiveView("plugins");
       }}
+      onShowClaudeCode={() => {
+        actions.closePackageActions();
+        setActiveView("claude");
+      }}
       onShowHealth={() => {
         actions.closePackageActions();
         setActiveView("health");
@@ -168,6 +176,8 @@ export function App() {
                 onPrepareDefinition={codexHooks.prepareDefinition} onCommitDefinition={codexHooks.commitDefinition} />
             </TabsContent>
           </Tabs>
+        ) : activeView === "claude" ? (
+          <ClaudeCodePage state={claude} tab={claudeTab} onTabChange={setClaudeTab} />
         ) : activeView === "sessions" ? (
           <SessionRecordsPage
             error={sessionRecords.error}

@@ -12,7 +12,7 @@ import {
 } from "@phosphor-icons/react";
 import type { ManagerId, ManagerSnapshot } from "../types";
 
-type ViewId = "health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "settings";
+type ViewId = "health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings";
 
 const views: { id: ViewId; label: string; icon: typeof House }[] = [
   { id: "health", label: "总览", icon: House },
@@ -21,6 +21,7 @@ const views: { id: ViewId; label: string; icon: typeof House }[] = [
   { id: "vscode", label: "VS Code 占用", icon: Code2 },
   { id: "sessions", label: "会话记录", icon: MessagesSquare },
   { id: "plugins", label: "Codex", icon: PuzzlePiece },
+  { id: "claude", label: "Claude Code", icon: PuzzlePiece },
   { id: "settings", label: "设置", icon: Settings },
 ];
 
@@ -32,6 +33,7 @@ export function Shell({
   onShowVscodeStorage,
   onShowSessionRecords,
   onShowCodexPlugins,
+  onShowClaudeCode,
   onShowManagers,
   onShowSettings,
   onToggleTheme,
@@ -47,6 +49,7 @@ export function Shell({
   onShowVscodeStorage: () => void;
   onShowSessionRecords: () => void;
   onShowCodexPlugins: () => void;
+  onShowClaudeCode: () => void;
   onShowManagers: () => void;
   onShowSettings: () => void;
   onToggleTheme: () => void;
@@ -62,6 +65,7 @@ export function Shell({
     vscode: onShowVscodeStorage,
     sessions: onShowSessionRecords,
     plugins: onShowCodexPlugins,
+    claude: onShowClaudeCode,
     settings: onShowSettings,
   };
 
