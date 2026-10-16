@@ -4,18 +4,8 @@ import {
   cacheCleanupFailureMessage,
   cacheCleanupPartialMessage,
   cacheCleanupStepSummary,
-  cancelMaintenanceConfirmation,
-  completeMaintenanceOperation,
-  failMaintenanceOperation,
-  finishMaintenanceOperationWithResult,
-  requestCacheCleanup,
-  requestNpmPackageUninstall,
-  requestPackageUninstall,
-  shouldApplyHydrationResult,
-  startConfirmedMaintenanceOperation,
   type CacheCleanupRunLike,
   type CleanupStepLike,
-  type MaintenanceUiState,
   type PipSnapshotLike,
 } from "./state";
 
@@ -83,11 +73,6 @@ function snapshot(): PipSnapshotLike {
 }
 
 describe("pip outdated hydration state", () => {
-  it("ignores stale hydration tokens", () => {
-    expect(shouldApplyHydrationResult(1, 2)).toBe(false);
-    expect(shouldApplyHydrationResult(2, 2)).toBe(true);
-  });
-
   it("replaces outdated signals with the current result", () => {
     const state = snapshot();
 
@@ -118,134 +103,6 @@ describe("pip outdated hydration state", () => {
     expect(state.pip?.outdatedCount).toBe(0);
     expect(state.pip?.outdatedStatus).toBe("Failed");
     expect(state.pip?.outdatedMessage).toBe("index unavailable");
-  });
-});
-
-describe("npm maintenance operation state", () => {
-  it("confirms an npm package uninstall once and prevents duplicate starts while pending", () => {
-    let state: MaintenanceUiState = { confirmation: null, pending: null };
-
-    state = requestNpmPackageUninstall(state, 0, "@scope/tool");
-    expect(state.confirmation).toEqual({
-      kind: "uninstallGlobalPackage",
-      managerId: "Npm",
-      packageIndex: 0,
-      packageName: "@scope/tool",
-    });
-
-    state = startConfirmedMaintenanceOperation(state);
-    expect(state.pending).toEqual({
-      kind: "uninstallGlobalPackage",
-      managerId: "Npm",
-      packageIndex: 0,
-      packageName: "@scope/tool",
-    });
-    expect(state.confirmation).toEqual({
-      kind: "uninstallGlobalPackage",
-      managerId: "Npm",
-      packageIndex: 0,
-      packageName: "@scope/tool",
-    });
-
-    state = startConfirmedMaintenanceOperation(state);
-    expect(state.pending).toEqual({
-      kind: "uninstallGlobalPackage",
-      managerId: "Npm",
-      packageIndex: 0,
-      packageName: "@scope/tool",
-    });
-  });
-
-  it("can cancel npm cache clean confirmation and close the dialog after success", () => {
-    let state: MaintenanceUiState = { confirmation: null, pending: null };
-
-    state = requestCacheCleanup(state, "Npm");
-    expect(state.confirmation).toEqual({ kind: "cleanupCache", managerId: "Npm" });
-
-    state = cancelMaintenanceConfirmation(state);
-    expect(state.confirmation).toBeNull();
-
-    state = requestCacheCleanup(state, "Npm");
-    state = startConfirmedMaintenanceOperation(state);
-    expect(state.pending).toEqual({ kind: "cleanupCache", managerId: "Npm" });
-
-    state = completeMaintenanceOperation(state);
-    expect(state).toEqual({
-      confirmation: null,
-      pending: null,
-      result: null,
-    });
-  });
-
-  it("keeps the dialog open and records a failure result", () => {
-    let state: MaintenanceUiState = { confirmation: null, pending: null };
-
-    state = requestNpmPackageUninstall(state, 1, "missing-tool");
-    state = startConfirmedMaintenanceOperation(state);
-    state = failMaintenanceOperation(state, "not installed");
-
-    expect(state).toEqual({
-      confirmation: {
-        kind: "uninstallGlobalPackage",
-        managerId: "Npm",
-        packageIndex: 1,
-        packageName: "missing-tool",
-      },
-      pending: null,
-      result: { tone: "bad", message: "not installed" },
-    });
-  });
-});
-
-describe("package manager maintenance operation state", () => {
-  it("confirms a pnpm package uninstall once and prevents duplicate starts while pending", () => {
-    let state: MaintenanceUiState = { confirmation: null, pending: null };
-
-    state = requestPackageUninstall(state, "Pnpm", 0, "@scope/tool");
-    expect(state.confirmation).toEqual({
-      kind: "uninstallGlobalPackage",
-      managerId: "Pnpm",
-      packageIndex: 0,
-      packageName: "@scope/tool",
-    });
-
-    state = startConfirmedMaintenanceOperation(state);
-    expect(state.pending).toEqual({
-      kind: "uninstallGlobalPackage",
-      managerId: "Pnpm",
-      packageIndex: 0,
-      packageName: "@scope/tool",
-    });
-
-    state = requestPackageUninstall(state, "Pnpm", 1, "other-tool");
-    expect(state.confirmation).toEqual({
-      kind: "uninstallGlobalPackage",
-      managerId: "Pnpm",
-      packageIndex: 0,
-      packageName: "@scope/tool",
-    });
-  });
-
-  it("confirms pnpm store prune and prevents replacement while pending", () => {
-    let state: MaintenanceUiState = { confirmation: null, pending: null };
-
-    state = requestCacheCleanup(state, "Pnpm");
-    expect(state.confirmation).toEqual({
-      kind: "cleanupCache",
-      managerId: "Pnpm",
-    });
-
-    state = startConfirmedMaintenanceOperation(state);
-    state = requestCacheCleanup(state, "Pnpm");
-
-    expect(state.pending).toEqual({
-      kind: "cleanupCache",
-      managerId: "Pnpm",
-    });
-    expect(state.confirmation).toEqual({
-      kind: "cleanupCache",
-      managerId: "Pnpm",
-    });
   });
 });
 
@@ -308,22 +165,6 @@ describe("Docker two-step cleanup reporting", () => {
 
     expect(message).toContain("已完成：docker builder prune -f");
     expect(message).toContain("未完成：docker image prune -f");
-  });
-
-  it("renders a partial run in the warn tone, not as a failure", () => {
-    let state: MaintenanceUiState = { confirmation: null, pending: null };
-
-    state = requestCacheCleanup(state, "Docker");
-    state = startConfirmedMaintenanceOperation(state);
-    state = finishMaintenanceOperationWithResult(state, {
-      tone: "warn",
-      message: cacheCleanupPartialMessage(partiallyCompletedDockerRun()),
-    });
-
-    expect(state.pending).toBeNull();
-    expect(state.result?.tone).toBe("warn");
-    // The dialog stays open on a partial result so the user can read what ran.
-    expect(state.confirmation).toEqual({ kind: "cleanupCache", managerId: "Docker" });
   });
 
   it("skips the second step when the daemon is unreachable and reports plain failure", () => {

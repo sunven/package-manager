@@ -5,11 +5,13 @@ import { Panel, PanelHead, StatusBadge } from "./ui";
 
 export function SettingsPage({
   enabledManagers,
+  lockedManager,
   managerSnapshots,
   onSetManagerEnabled,
   scanningManagers,
 }: {
   enabledManagers: ManagerId[];
+  lockedManager?: ManagerId | null;
   managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
   onSetManagerEnabled: (managerId: ManagerId, enabled: boolean) => void;
   scanningManagers: Set<ManagerId>;
@@ -33,7 +35,7 @@ export function SettingsPage({
         <div className="grid grid-cols-1 gap-px bg-border min-[720px]:grid-cols-2 min-[1100px]:grid-cols-3">
           {managerOrder.map((managerId) => {
             const enabled = enabledSet.has(managerId);
-            const locked = enabled && enabledManagers.length === 1;
+            const locked = managerId === lockedManager || (enabled && enabledManagers.length === 1);
             const manager = managerSnapshots[managerId];
             const status: DisplayStatus = scanningManagers.has(managerId) ? "Scanning" : manager?.status ?? "Not scanned";
             const version = manager?.version ?? null;

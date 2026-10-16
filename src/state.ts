@@ -45,21 +45,6 @@ export type MaintenanceRequest =
       managerId: ManagerId;
     };
 
-export type NpmMaintenanceRequest = Extract<MaintenanceRequest, { managerId: "Npm" }>;
-
-export interface MaintenanceUiState {
-  confirmation: MaintenanceRequest | null;
-  pending: MaintenanceRequest | null;
-  result?: MaintenanceResult | null;
-}
-
-export interface MaintenanceResult {
-  /// `warn` is a partially completed multi-step cleanup: some steps deleted
-  /// things, a later one did not. Neither success nor failure describes it.
-  tone: "ok" | "bad" | "warn";
-  message: string;
-}
-
 export function applyPipOutdatedPreview<T extends PipSnapshotLike>(
   snapshot: T,
   preview: PipOutdatedPreviewLike,
@@ -79,92 +64,6 @@ export function applyPipOutdatedPreview<T extends PipSnapshotLike>(
   snapshot.pip.outdatedMessage = preview.message;
 
   return snapshot;
-}
-
-export function shouldApplyHydrationResult(token: number, currentToken: number) {
-  return token === currentToken;
-}
-
-export function requestNpmPackageUninstall(
-  state: MaintenanceUiState,
-  packageIndex: number,
-  packageName: string,
-): MaintenanceUiState {
-  return requestPackageUninstall(state, "Npm", packageIndex, packageName);
-}
-
-export function requestPackageUninstall(
-  state: MaintenanceUiState,
-  managerId: Extract<ManagerId, "Npm" | "Pnpm">,
-  packageIndex: number,
-  packageName: string,
-): MaintenanceUiState {
-  if (state.pending) return state;
-  return {
-    ...state,
-    confirmation: {
-      kind: "uninstallGlobalPackage",
-      managerId,
-      packageIndex,
-      packageName,
-    },
-    result: null,
-  };
-}
-
-export function requestCacheCleanup(
-  state: MaintenanceUiState,
-  managerId: ManagerId,
-): MaintenanceUiState {
-  if (state.pending) return state;
-  return {
-    ...state,
-    confirmation: { kind: "cleanupCache", managerId },
-    result: null,
-  };
-}
-
-export function cancelMaintenanceConfirmation(state: MaintenanceUiState): MaintenanceUiState {
-  return {
-    ...state,
-    confirmation: null,
-  };
-}
-
-export function startConfirmedMaintenanceOperation(state: MaintenanceUiState): MaintenanceUiState {
-  if (!state.confirmation || state.pending) return state;
-  return {
-    ...state,
-    pending: state.confirmation,
-  };
-}
-
-export function finishMaintenanceOperation(state: MaintenanceUiState): MaintenanceUiState {
-  return finishMaintenanceOperationWithResult(state, null);
-}
-
-export function finishMaintenanceOperationWithResult(
-  state: MaintenanceUiState,
-  result: MaintenanceResult | null,
-): MaintenanceUiState {
-  return {
-    ...state,
-    pending: null,
-    result,
-  };
-}
-
-export function completeMaintenanceOperation(state: MaintenanceUiState): MaintenanceUiState {
-  return {
-    ...state,
-    confirmation: null,
-    pending: null,
-    result: null,
-  };
-}
-
-export function failMaintenanceOperation(state: MaintenanceUiState, message: string): MaintenanceUiState {
-  return finishMaintenanceOperationWithResult(state, { tone: "bad", message });
 }
 
 export interface CleanupStepLike {

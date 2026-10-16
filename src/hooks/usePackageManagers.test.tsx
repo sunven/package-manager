@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { StrictMode } from "react";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
@@ -102,4 +103,48 @@ describe("manager scan lifecycle", () => {
     expect(result.current.scanStates.Npm?.error).toBeNull();
     expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual(["scan_manager", "measure_path_size", "measure_path_size"]);
   });
+});
+
+
+it("initializes once through StrictMode remount and keeps subscriptions and stale dialog callbacks safe", async () => {
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId; });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => { frames.delete(id); });
+  vi.mocked(invoke).mockResolvedValue({ manager: managerFixture(), scanDurationMs: 1 });
+  const { result, unmount } = renderHook(usePackageManagers, { wrapper: StrictMode });
+  expect(frames.size).toBe(1);
+  await act(async () => {
+    for (const callback of frames.values()) callback(0);
+    frames.clear();
+  });
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(result.current.currentManager?.id).toBe("Npm");
+  act(() => result.current.actions.requestCacheCleanup());
+  const oldActions = result.current.actions;
+  act(() => result.current.actions.cancelMaintenance());
+  act(() => result.current.actions.requestCacheCleanup());
+  const newId = result.current.maintenance!.id;
+  await act(async () => {
+    await oldActions.confirmMaintenance();
+    oldActions.cancelMaintenance();
+  });
+  expect(result.current.maintenance?.id).toBe(newId);
+  expect(result.current.maintenance?.phase).toBe("confirming");
+  expect(invoke).toHaveBeenCalledTimes(1);
+  unmount();
+});
+
+it("keeps the confirmed manager when selection changes and sends the existing native uninstall payload", async () => {
+  vi.mocked(invoke).mockResolvedValue({ manager: managerFixture("Npm", { packages: [{ name: "@scope/tool", version: "1", source: "global", kind: "Generic", path: null, actions: [], signals: [] }] }), scanDurationMs: 1 });
+  const { result } = renderHook(usePackageManagers);
+  await act(async () => { await result.current.actions.refresh(); });
+  act(() => result.current.actions.requestPackageUninstall(0));
+  act(() => result.current.actions.selectManager("Pip"));
+  vi.mocked(invoke).mockResolvedValueOnce({ status: "Ready", command: { preview: "npm uninstall -g @scope/tool" }, stdout: "", stderr: "", message: null, failure: null });
+  await act(async () => { await result.current.actions.confirmMaintenance(); });
+  expect(invoke).toHaveBeenNthCalledWith(2, "run_npm_maintenance", { operation: { kind: "uninstallGlobalPackage", packageName: "@scope/tool" } });
+  expect(invoke).toHaveBeenNthCalledWith(3, "scan_manager", { manager: "Npm" });
+  expect(result.current.selectedManager).toBe("Pip");
+  expect(result.current.maintenance?.execution?.status).toBe("succeeded");
 });

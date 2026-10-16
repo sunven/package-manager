@@ -304,6 +304,8 @@ fvm api list
 
 扫描分为排队、读取清单和补充测量阶段，清单先显示，目录占用与补充检查逐步填入。重复请求复用同一任务；排队期间停用的管理器不会启动。刷新失败保留上次可用快照并标记异常及数据时间。扫描诊断只读，不修改 shell 配置或权限。
 
+管理器维护由一个工作流统一管理确认、执行和快照核对。确认期间冻结目标与预演，暂停新的手动扫描和维护，已入队的扫描继续。执行结果立即展示，之后读取目标的完整快照及适用补充信息；读取失败会保留执行结果，“重新读取”只重试读取。执行失败或回执未确认也会尝试核对，不自动重放维护。明确未执行的无方案结果跳过核对。
+
 Homebrew 扫描会禁用 auto-update，避免只读扫描触发 Homebrew 更新。`brew cleanup --dry-run` 不阻塞首屏扫描；Homebrew tab 先展示已安装、outdated、leaves 和路径，再单独加载 cleanup dry-run 预览。
 
 nvm 扫描不运行 `nvm` 命令，因为 nvm 通常是 shell function，不是可直接 spawn 的二进制；后端只读取 `NVM_DIR` 或 `~/.nvm` 下的 `versions/node/v*` 目录，并为每个 Node 版本提供复制 `nvm use <version>` 的命令。
@@ -383,10 +385,12 @@ src/
   main.tsx         React entry
   App.tsx          前端应用骨架
   components/      React UI 组件
-  hooks/           Tauri 扫描、hydration、复制/打开行为
+  hooks/           React 工作流接入、选择与复制/打开行为
   utils/           展示文案、筛选和格式化工具
   styles.css       Tailwind 入口和全局基础样式
-  state.ts         前端状态纯函数
+  state.ts         pip 信号合并与清理结果文案
+  managerMaintenanceWorkflow.ts 管理器扫描、维护与核对的统一状态所有者
+  managerMaintenanceTauriEffects.ts 原生命令与设置存储适配
   cleanupCopy.ts   每个管理器的清理文案、按钮位置、回收量来源
 
 src-tauri/
@@ -455,12 +459,13 @@ pnpm test
 - Homebrew 的回收量取自 dry-run 而非路径占用，并展示逐条清单
 - Homebrew 在 dry-run 落地前不提供执行入口
 - Docker 只展示本次会清理的资源类型，卷被排除
-- 部分完成渲染为 warn 而非失败，弹窗保持打开
+- 部分完成保留已执行步骤，执行结果与快照核对独立展示，弹窗保持打开
 - Yarn 2+ 在 `Unsupported` 下仍有清理入口；管理器 `Missing` 时没有
 - 健康页建议只跳转、不执行，也没有批量入口
 - FVM 只读：版本清单紧凑表格、版本目录与 git 缓存内联路径、文案表缺席且路径卡片无清理入口、存量偏好自动补启用
 - 总览入口、未扫描与缺失状态、目录占用下限
 - 扫描并发限制、任务去重、停用排队任务、失败保留快照、定向重试与维护互斥
+- 冻结确认、过期回调、重复确认、执行回执超时、核对失败后只读重试及 StrictMode 订阅
 - 软件包搜索后复制和卸载保持正确对象
 - 预设切换使候选失效、批次期间禁止切换、深度编辑和保存失败处理
 - 会话记录筛选清空选择、按年龄操作全来源、逐项结果与操作错误

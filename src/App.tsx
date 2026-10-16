@@ -15,7 +15,6 @@ import { VscodeStoragePage } from "./components/VscodeStoragePage";
 import { ProjectCleanupPage } from "./components/ProjectCleanupPage";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { ManagerTabs } from "./components/ManagerTabs";
-import { cleanupPreviewDetails, cleanupReclaimable } from "./cleanupCopy";
 import { MaintenanceConfirmationBanner } from "./components/MaintenanceConfirmationBanner";
 import { MessageBanner } from "./components/MessageBanner";
 import { PackageTable } from "./components/PackageTable";
@@ -137,21 +136,10 @@ export function App() {
     >
       <MessageBanner homeDirectory={state.homeDirectory} message={state.uiMessage} />
       <MaintenanceConfirmationBanner
-        confirmation={state.maintenanceConfirmation}
+        operation={state.maintenance}
         onCancel={actions.cancelMaintenance}
         onConfirm={() => void actions.confirmMaintenance()}
-        pending={state.maintenancePending}
-        reclaimDetails={
-          state.maintenanceConfirmation?.kind === "cleanupCache"
-            ? cleanupPreviewDetails(state.managerSnapshots[state.maintenanceConfirmation.managerId])
-            : null
-        }
-        reclaimable={
-          state.maintenanceConfirmation?.kind === "cleanupCache"
-            ? cleanupReclaimable(state.managerSnapshots[state.maintenanceConfirmation.managerId])
-            : null
-        }
-        result={state.maintenanceResult}
+        onRetryVerification={() => void actions.retryVerification()}
       />
       <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
         {activeView === "plugins" ? (
@@ -196,6 +184,7 @@ export function App() {
           />
         ) : activeView === "settings" ? (
           <SettingsPage
+            lockedManager={state.lockedManager}
             enabledManagers={state.enabledManagers}
             managerSnapshots={state.managerSnapshots}
             onSetManagerEnabled={actions.setManagerEnabled}
@@ -208,7 +197,7 @@ export function App() {
             managerSnapshots={state.managerSnapshots}
             scanStates={state.scanStates}
             scanningAll={state.scanningAll}
-            maintenanceBusy={Boolean(state.maintenanceConfirmation || state.maintenancePending)}
+            maintenanceBusy={state.maintenanceBusy}
             onRefreshAll={() => void actions.refreshEnabled()}
             onOpenManager={(managerId) => {
               actions.closePackageActions();
@@ -227,7 +216,7 @@ export function App() {
           >
             <div className="mb-3 mt-2 flex flex-wrap items-center justify-between gap-2" aria-live="polite">
               <div className="text-xs text-muted-foreground"><p>{scanStateLabel(state.scanStates[selectedManager], currentManager ?? undefined)}{state.scanStates[selectedManager]?.scannedAt ? ` · 数据时间 ${new Date(state.scanStates[selectedManager]!.scannedAt!).toLocaleString()}` : ""}</p><p>{state.scanMeta}</p></div>
-              <Button variant="outline" type="button" disabled={scanning || Boolean(state.maintenanceConfirmation || state.maintenancePending)} onClick={() => void actions.refresh()}>刷新当前管理器</Button>
+              <Button variant="outline" type="button" disabled={scanning || state.maintenanceBusy} onClick={() => void actions.refresh()}>刷新当前管理器</Button>
             </div>
             <main className="view-grid min-[1100px]:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.7fr)] min-[1100px]:items-start">
               <Panel className="overflow-hidden">
@@ -261,7 +250,7 @@ export function App() {
                 <ManagerDiagnostics
                   manager={currentManager} state={state.scanStates[selectedManager]}
                   homeDirectory={state.homeDirectory}
-                  busy={scanning || Boolean(state.maintenanceConfirmation || state.maintenancePending)}
+                  busy={scanning || state.maintenanceBusy}
                   onRefresh={() => void actions.refresh()}
                   onRetry={(kind) => void actions.retrySupplement(kind)}
                   onCopy={(value) => void actions.copyCommand(value)}
