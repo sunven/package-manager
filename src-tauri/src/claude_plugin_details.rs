@@ -90,8 +90,8 @@ fn hook_file(
         }
     };
     match Document::read(&path) {
-        Ok(doc) if doc.text.is_none() && !required => (),
-        Ok(doc) if doc.text.is_some() && doc.value["hooks"].is_object() => {
+        Ok(doc) if doc.file.text.is_none() && !required => (),
+        Ok(doc) if doc.file.text.is_some() && doc.value["hooks"].is_object() => {
             sources.push(HookSource {
                 path: path.display().to_string(),
                 events: doc.value["hooks"].clone(),
@@ -141,7 +141,7 @@ pub(crate) fn read(root: &Path, origin: &str) -> (Details, Vec<HookSource>) {
     let manifest =
         local_path(root, ".claude-plugin/plugin.json").and_then(|path| Document::read(&path));
     let manifest = match manifest {
-        Ok(doc) if doc.text.is_some() => doc.value,
+        Ok(doc) if doc.file.text.is_some() => doc.value,
         Ok(_) => {
             details
                 .messages
@@ -173,7 +173,7 @@ pub(crate) fn read(root: &Path, origin: &str) -> (Details, Vec<HookSource>) {
     for item in mcp {
         let servers = if let Some(relative) = item.as_str() {
             match local_path(root, relative).and_then(|path| Document::read(&path)) {
-                Ok(doc) if doc.text.is_some() => doc.value,
+                Ok(doc) if doc.file.text.is_some() => doc.value,
                 Ok(_) => {
                     if relative != ".mcp.json" {
                         details

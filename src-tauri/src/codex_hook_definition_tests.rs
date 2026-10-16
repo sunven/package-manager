@@ -109,6 +109,18 @@ fn fields(command: &str) -> Fields {
 }
 
 #[test]
+fn saving_requires_an_existing_codex_home() {
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("missing/nested");
+    for format in [Format::Json, Format::Toml] {
+        let source = Source::read(&home, format).unwrap();
+        let error = source.write(&source.text().unwrap()).err().unwrap();
+        assert!(error.starts_with("无法准备保存："));
+        assert!(!home.exists());
+    }
+}
+
+#[test]
 fn deleting_first_duplicate_preserves_disabled_sibling_and_unrelated_trust_in_both_formats() {
     for format in [Format::Json, Format::Toml] {
         let (_temp, home) = fixture(format);
@@ -210,7 +222,7 @@ fn json_interrupted_commit_leaves_affected_identities_disabled_without_old_trust
             if calls.get() == fail_at {
                 Err("injected disk failure".into())
             } else {
-                source.file.write(text)
+                source.write(text)
             }
         });
         assert_eq!(result.status, "Partial");

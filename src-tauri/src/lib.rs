@@ -11,6 +11,7 @@ mod codex_plugins;
 mod command;
 mod disk_usage;
 mod managers;
+mod observed_file;
 mod project_cleanup;
 mod scan_diagnostics;
 mod session_records;

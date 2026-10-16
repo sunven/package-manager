@@ -1,10 +1,8 @@
+pub(super) use crate::observed_file::ObservedFile as FileSnapshot;
+use crate::observed_file::{ReadError, WriteError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table};
 
 pub(super) const EVENTS: &[(&str, &str)] = &[
@@ -35,98 +33,6 @@ impl Format {
             Self::Json => "hooks.json",
             Self::Toml => "config.toml",
         }
-    }
-}
-
-#[derive(Clone)]
-pub(super) struct FileSnapshot {
-    pub path: PathBuf,
-    pub text: Option<String>,
-    permissions: Option<fs::Permissions>,
-    identity: Option<(u64, u64)>,
-}
-
-impl FileSnapshot {
-    pub fn read(path: &Path) -> Result<Self, String> {
-        let metadata = match fs::symlink_metadata(path) {
-            Ok(m) if m.is_file() && !m.file_type().is_symlink() => Some(m),
-            Ok(_) => {
-                return Err(format!(
-                    "{} 不是普通文件，定义维护仅供查看。",
-                    path.display()
-                ))
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(format!("无法读取 {}：{e}", path.display())),
-        };
-        if metadata.as_ref().is_some_and(|m| m.len() > 4 * 1024 * 1024) {
-            return Err("配置文件超过 4 MiB，当前仅供查看。".into());
-        }
-        #[cfg(unix)]
-        let identity = {
-            use std::os::unix::fs::MetadataExt;
-            metadata.as_ref().map(|m| (m.dev(), m.ino()))
-        };
-        #[cfg(not(unix))]
-        let identity = metadata.as_ref().map(|m| (m.len(), 0));
-        Ok(Self {
-            path: path.into(),
-            text: metadata
-                .as_ref()
-                .map(|_| {
-                    fs::read_to_string(path)
-                        .map_err(|_| format!("无法读取 {} 的 UTF-8 内容。", path.display()))
-                })
-                .transpose()?,
-            permissions: metadata.map(|m| m.permissions()),
-            identity,
-        })
-    }
-
-    pub fn unchanged(&self) -> bool {
-        Self::read(&self.path).is_ok_and(|next| {
-            next.text == self.text
-                && next.identity == self.identity
-                && next.permissions == self.permissions
-        })
-    }
-
-    pub fn write(&self, text: &str) -> Result<Self, String> {
-        let parent = self.path.parent().ok_or("无法确定配置目录。")?;
-        let mut temp =
-            tempfile::NamedTempFile::new_in(parent).map_err(|e| format!("无法准备保存：{e}"))?;
-        if let Some(permissions) = &self.permissions {
-            temp.as_file()
-                .set_permissions(permissions.clone())
-                .map_err(|e| e.to_string())?;
-        }
-        temp.write_all(text.as_bytes())
-            .and_then(|_| temp.as_file().sync_all())
-            .map_err(|e| e.to_string())?;
-        let metadata = temp.as_file().metadata().map_err(|e| e.to_string())?;
-        #[cfg(unix)]
-        let identity = {
-            use std::os::unix::fs::MetadataExt;
-            Some((metadata.dev(), metadata.ino()))
-        };
-        #[cfg(not(unix))]
-        let identity = Some((metadata.len(), 0));
-        if !self.unchanged() {
-            return Err("配置文件已被外部修改，请刷新并重新确认。".into());
-        }
-        if self.text.is_none() {
-            temp.persist_noclobber(&self.path)
-        } else {
-            temp.persist(&self.path)
-        }
-        .map_err(|e| format!("配置保存失败：{}", e.error))?;
-        // A failed reread after a successful rename must not report the write as untouched.
-        Ok(Self {
-            path: self.path.clone(),
-            text: Some(text.into()),
-            permissions: Some(metadata.permissions()),
-            identity,
-        })
     }
 }
 
@@ -182,7 +88,15 @@ pub(super) struct Source {
 
 impl Source {
     pub fn read(home: &Path, format: Format) -> Result<Self, String> {
-        let file = FileSnapshot::read(&home.join(format.filename()))?;
+        let path = home.join(format.filename());
+        let file = FileSnapshot::read(&path).map_err(|error| match error {
+            ReadError::NotRegularFile => {
+                format!("{} 不是普通文件，定义维护仅供查看。", path.display())
+            }
+            ReadError::TooLarge => "配置文件超过 4 MiB，当前仅供查看。".into(),
+            ReadError::Metadata(error) => format!("无法读取 {}：{error}", path.display()),
+            ReadError::Utf8 => format!("无法读取 {} 的 UTF-8 内容。", path.display()),
+        })?;
         let (value, toml) = match format {
             Format::Json => (
                 file.text
@@ -211,6 +125,16 @@ impl Source {
             file,
             value,
             toml,
+        })
+    }
+
+    pub fn write(&self, text: &str) -> Result<FileSnapshot, String> {
+        self.file.write(text).map_err(|error| match error {
+            WriteError::NoParent => "无法确定配置目录。".into(),
+            WriteError::Prepare(error) => format!("无法准备保存：{error}"),
+            WriteError::Io(error) => error.to_string(),
+            WriteError::Conflict => "配置文件已被外部修改，请刷新并重新确认。".into(),
+            WriteError::Persist(error) => format!("配置保存失败：{error}"),
         })
     }
 

@@ -1,36 +1,24 @@
+use crate::observed_file::{ObservedFile, ReadError, WriteError};
 use serde_json::{json, Value};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub(crate) struct Document {
-    pub path: PathBuf,
-    pub text: Option<String>,
+    pub file: ObservedFile,
     pub value: Value,
-    identity: Option<(u64, u64)>,
-    permissions: Option<fs::Permissions>,
 }
 
 impl Document {
     pub(crate) fn read(path: &Path) -> Result<Self, String> {
-        let metadata = match fs::symlink_metadata(path) {
-            Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => Some(meta),
-            Ok(_) => return Err(format!("{} 不是普通文件，仅供查看。", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) => return Err(format!("无法读取 {}。", path.display())),
-        };
-        if metadata.as_ref().is_some_and(|m| m.len() > 4 * 1024 * 1024) {
-            return Err(format!("{} 超过 4 MiB，不能安全读取。", path.display()));
-        }
-        let text = metadata
-            .as_ref()
-            .map(|_| {
-                fs::read_to_string(path)
-                    .map_err(|_| format!("无法读取 {} 的 UTF-8 内容。", path.display()))
-            })
-            .transpose()?;
-        let value = text
+        let file = ObservedFile::read(path).map_err(|error| match error {
+            ReadError::NotRegularFile => format!("{} 不是普通文件，仅供查看。", path.display()),
+            ReadError::TooLarge => format!("{} 超过 4 MiB，不能安全读取。", path.display()),
+            ReadError::Metadata(_) => format!("无法读取 {}。", path.display()),
+            ReadError::Utf8 => format!("无法读取 {} 的 UTF-8 内容。", path.display()),
+        })?;
+        let value = file
+            .text
             .as_ref()
             .map(|text| {
                 serde_json::from_str::<Value>(text)
@@ -41,53 +29,26 @@ impl Document {
         if !value.is_object() {
             return Err(format!("{} 顶层不是 JSON 对象。", path.display()));
         }
-        #[cfg(unix)]
-        let identity = {
-            use std::os::unix::fs::MetadataExt;
-            metadata.as_ref().map(|m| (m.dev(), m.ino()))
-        };
-        #[cfg(not(unix))]
-        let identity = metadata.as_ref().map(|m| (m.len(), 0));
-        Ok(Self {
-            path: path.into(),
-            text,
-            value,
-            identity,
-            permissions: metadata.map(|m| m.permissions()),
-        })
+        Ok(Self { file, value })
     }
 
     pub(crate) fn unchanged(&self) -> bool {
-        Self::read(&self.path).is_ok_and(|next| {
-            next.text == self.text
-                && next.identity == self.identity
-                && next.permissions == self.permissions
-        })
+        self.file.unchanged()
     }
 
     pub(crate) fn write(&self, value: &Value) -> Result<(), String> {
-        let text = hook_text(self.text.as_deref(), &self.value, value)?;
-        let parent = self.path.parent().ok_or("无法确定配置目录。")?;
+        let text = hook_text(self.file.text.as_deref(), &self.value, value)?;
+        let parent = self.file.path.parent().ok_or("无法确定配置目录。")?;
         fs::create_dir_all(parent).map_err(|e| format!("无法创建配置目录：{e}"))?;
-        let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        if let Some(permissions) = &self.permissions {
-            temp.as_file()
-                .set_permissions(permissions.clone())
-                .map_err(|e| e.to_string())?;
-        }
-        temp.write_all(text.as_bytes())
-            .and_then(|_| temp.as_file().sync_all())
-            .map_err(|e| e.to_string())?;
-        if !self.unchanged() {
-            return Err("配置文件已被外部修改，请重新读取并确认。".into());
-        }
-        if self.text.is_none() {
-            temp.persist_noclobber(&self.path)
-        } else {
-            temp.persist(&self.path)
-        }
-        .map_err(|e| format!("配置保存失败：{}", e.error))?;
-        Ok(())
+        self.file
+            .write(&text)
+            .map(|_| ())
+            .map_err(|error| match error {
+                WriteError::NoParent => "无法确定配置目录。".into(),
+                WriteError::Prepare(error) | WriteError::Io(error) => error.to_string(),
+                WriteError::Conflict => "配置文件已被外部修改，请重新读取并确认。".into(),
+                WriteError::Persist(error) => format!("配置保存失败：{error}"),
+            })
     }
 }
 

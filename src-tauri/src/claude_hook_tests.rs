@@ -227,8 +227,9 @@ fn missing_cli_keeps_user_definitions_readable_but_unwritable() {
 #[test]
 fn first_create_makes_only_required_hooks_and_preview_never_writes() {
     let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("missing/nested");
     let state = HooksState::default();
-    let scan = state.scan_with(dir.path().into(), &runner).unwrap();
+    let scan = state.scan_with(home.clone(), &runner).unwrap();
     let preview = state
         .prepare_with(
             DefinitionRequest {
@@ -241,23 +242,22 @@ fn first_create_makes_only_required_hooks_and_preview_never_writes() {
                     handler: json!({"type":"prompt","prompt":"check"}),
                 }),
             },
-            dir.path().into(),
+            home.clone(),
         )
         .unwrap();
-    assert!(!dir.path().join("settings.json").exists());
-    state
+    assert!(!home.exists());
+    let result = state
         .commit_with(
             CommitRequest {
                 preview_id: preview.preview_id,
             },
-            dir.path().into(),
+            home.clone(),
             &runner,
         )
         .unwrap();
+    assert_eq!(result.status, "Succeeded");
     assert_eq!(
-        Document::read(&dir.path().join("settings.json"))
-            .unwrap()
-            .value,
+        Document::read(&home.join("settings.json")).unwrap().value,
         json!({"hooks":{"Stop":[{"hooks":[{"type":"prompt","prompt":"check"}]}]}})
     );
 }
@@ -275,29 +275,6 @@ fn malformed_and_unknown_definitions_are_not_silently_editable() {
     assert_eq!(rows.len(), 1);
     assert!(rows[0].read_only_reason.is_some());
     assert!(!messages.is_empty());
-}
-
-#[cfg(unix)]
-#[test]
-fn symlink_replacement_invalidates_document_and_preserves_permissions() {
-    use std::os::unix::fs::{symlink, PermissionsExt};
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("settings.json");
-    std::fs::write(&path, "{}").unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    let doc = Document::read(&path).unwrap();
-    doc.write(&json!({"hooks":{}})).unwrap();
-    assert_eq!(
-        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
-    let doc = Document::read(&path).unwrap();
-    let other = dir.path().join("other.json");
-    std::fs::write(&other, "{}").unwrap();
-    std::fs::remove_file(&path).unwrap();
-    symlink(&other, &path).unwrap();
-    assert!(doc.write(&json!({"hooks":{"Stop":[]}})).is_err());
-    assert_eq!(std::fs::read_to_string(other).unwrap(), "{}");
 }
 
 #[test]

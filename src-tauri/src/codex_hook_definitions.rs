@@ -616,7 +616,7 @@ impl Plan {
     }
 
     fn save(&self) -> DefinitionResult {
-        self.save_with(&|source, text| source.file.write(text))
+        self.save_with(&|source, text| source.write(text))
     }
 
     fn partial(&self, message: String) -> DefinitionResult {

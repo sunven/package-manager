@@ -624,7 +624,7 @@ impl HooksState {
                 .as_ref()
                 .map(|d| json!({"event":d.event,"matcher":d.matcher,"handler":d.handler}))
         };
-        let source = observation.document.path.display().to_string();
+        let source = observation.document.file.path.display().to_string();
         let observation = state.observation.as_ref().unwrap().clone();
         state.sequence += 1;
         let preview_id = format!("claude-hook-preview-{}", state.sequence);
