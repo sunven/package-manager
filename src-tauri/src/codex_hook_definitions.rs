@@ -1,61 +1,23 @@
-use super::*;
-use std::{collections::BTreeMap, time::Duration};
-
-#[path = "codex_hook_documents.rs"]
-mod documents;
-pub(crate) use documents::Fields;
-use documents::{Definition, Format, Source};
-
-const VERIFIED_CLI: &str = "codex-cli 0.162.1";
+pub(crate) use super::documents::Fields;
+use super::documents::{self, Definition, Format, Source};
+use super::observation::{
+    matches_native, native, parse_inventory, same_path, ConfigView, DefinitionObservation,
+    DefinitionScan,
+};
+use super::HooksState;
+use crate::codex_cli::{self, AppServer};
+use crate::codex_plugins::resolve_home;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::{
+    collections::{BTreeMap, HashSet},
+    path::{Path, PathBuf},
+};
 
 #[derive(Default)]
 pub(super) struct DefinitionStore {
     observation: Option<DefinitionObservation>,
     plan: Option<Plan>,
-}
-
-#[derive(Clone)]
-pub(super) struct DefinitionObservation {
-    id: String,
-    home: PathBuf,
-    sources: Vec<Source>,
-    native: Vec<HookMetadata>,
-    config: ConfigView,
-    feature_enabled: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct DefinitionEntry {
-    id: String,
-    source: Format,
-    source_path: String,
-    event: String,
-    matcher: Option<String>,
-    handler: Value,
-    native_key: Option<String>,
-    enabled: Option<bool>,
-    trust_status: String,
-    read_only_reason: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct DefinitionSource {
-    format: Format,
-    path: String,
-    has_definitions: bool,
-    error: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct DefinitionScan {
-    snapshot_id: Option<String>,
-    entries: Vec<DefinitionEntry>,
-    sources: Vec<DefinitionSource>,
-    default_source: Option<Format>,
-    read_only_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -146,211 +108,6 @@ impl DefinitionStore {
             observation
         });
         view
-    }
-}
-
-fn native(home: &Path) -> Result<(Vec<HookMetadata>, ConfigView, bool), String> {
-    let inventory = load(home).map_err(|e| e.message)?;
-    let config = inventory.config?;
-    let enabled = inventory
-        .feature_enabled
-        .ok_or("无法确认 Hooks 总开关，定义当前只读。")?;
-    if !inventory.errors.is_empty() {
-        return Err(inventory.errors.join("\n"));
-    }
-    let hooks = if enabled {
-        inventory.hooks
-    } else {
-        let mut server = AppServer::inspect_hooks(home).map_err(|e| e.message)?;
-        let (hooks, _, errors) = parse_inventory(
-            server
-                .request("hooks/list", json!({"cwds":["/"]}))
-                .map_err(|e| e.message)?,
-        )
-        .map_err(|e| e.message)?;
-        if !errors.is_empty() {
-            return Err(errors.join("\n"));
-        }
-        hooks
-    };
-    Ok((hooks, config, enabled))
-}
-
-fn verified_version(home: &Path) -> Result<(), String> {
-    let version = codex_cli::run(home, &["--version"], Duration::from_secs(5))?;
-    if !version.success || version.stdout.trim() != VERIFIED_CLI {
-        return Err("当前 CLI 的定义编辑能力尚未验证，暂时只读。已验证版本为 Codex CLI 0.162.1；已有启停能力独立判断。".into());
-    }
-    Ok(())
-}
-
-fn matches_native(definition: &Definition, hook: &HookMetadata) -> bool {
-    let event = &definition.location.event;
-    let event = event[..1].to_lowercase() + &event[1..];
-    let handler_type = match definition.handler["type"].as_str() {
-        Some("command") => "command",
-        Some("mcp_tool") => "mcpTool",
-        _ => return false,
-    };
-    !hook.is_managed
-        && matches!(
-            hook.trust_status.as_str(),
-            "trusted" | "modified" | "untrusted"
-        )
-        && hook.event_name == event
-        && hook.handler_type == handler_type
-        && (matches!(
-            definition.location.event.as_str(),
-            "Stop" | "Interrupt" | "UserPromptSubmit"
-        ) || hook.matcher == definition.matcher)
-        && if handler_type == "command" {
-            hook.command.as_deref() == definition.handler["command"].as_str()
-        } else {
-            hook.server.as_deref() == definition.handler["server"].as_str()
-                && hook.tool.as_deref() == definition.handler["tool"].as_str()
-        }
-}
-
-fn bind(sources: &[Source], hooks: &[HookMetadata]) -> Result<(), String> {
-    let mut keys = HashSet::new();
-    for source in sources {
-        for definition in source.definitions()? {
-            let key = definition.location.key(&source.file.path)?;
-            let hook = hooks
-                .iter()
-                .find(|h| {
-                    h.key == key
-                        && h.source == "user"
-                        && same_path(&h.source_path, &source.file.path)
-                })
-                .ok_or("无法将用户定义与 Codex 身份可靠关联，定义当前只读。")?;
-            if !matches_native(&definition, hook) {
-                return Err("原生定义与文件内容不一致，定义当前只读。".into());
-            }
-            keys.insert(key);
-        }
-    }
-    if hooks
-        .iter()
-        .any(|h| h.source == "user" && !keys.contains(&h.key))
-    {
-        return Err("原生清单包含未识别的用户来源，无法确认变更范围。".into());
-    }
-    Ok(())
-}
-
-pub(super) fn observe(home: &Path) -> (DefinitionScan, Option<DefinitionObservation>) {
-    let mut sources = vec![];
-    let mut choices = vec![];
-    let mut reason = None;
-    for format in [Format::Json, Format::Toml] {
-        let source = Source::read(home, format).and_then(|source| {
-            source.definitions()?;
-            Ok(source)
-        });
-        let error = source.as_ref().err().cloned();
-        if reason.is_none() {
-            reason = error.clone();
-        }
-        choices.push(DefinitionSource {
-            format,
-            path: home.join(format.filename()).display().to_string(),
-            has_definitions: source
-                .as_ref()
-                .is_ok_and(|s| s.definitions().is_ok_and(|d| !d.is_empty())),
-            error,
-        });
-        if let Ok(source) = source {
-            sources.push(source);
-        }
-    }
-    let native = native(home);
-    if reason.is_none() {
-        reason = native.as_ref().err().cloned();
-    }
-    if reason.is_none() {
-        reason = verified_version(home).err();
-    }
-    if let Ok((hooks, _, _)) = &native {
-        if reason.is_none() {
-            reason = bind(&sources, hooks).err();
-        }
-    }
-    let mut entries = vec![];
-    for source in &sources {
-        for definition in source.definitions().unwrap_or_default() {
-            let key = definition.location.key(&source.file.path).ok();
-            let hook = native.as_ref().ok().and_then(|(hooks, _, _)| {
-                hooks
-                    .iter()
-                    .find(|h| Some(&h.key) == key.as_ref() && h.source == "user")
-            });
-            entries.push(DefinitionEntry {
-                id: definition.location.id(source.format),
-                source: source.format,
-                source_path: source.file.path.display().to_string(),
-                event: definition.location.event,
-                matcher: definition.matcher,
-                handler: definition.handler,
-                native_key: hook.map(|h| h.key.clone()),
-                enabled: hook.map(|h| h.enabled),
-                trust_status: hook.map_or("unknown".into(), |h| h.trust_status.clone()),
-                read_only_reason: reason.clone(),
-            });
-        }
-    }
-    let configured: Vec<_> = choices
-        .iter()
-        .filter(|s| s.has_definitions)
-        .map(|s| s.format)
-        .collect();
-    let default_source = match configured.as_slice() {
-        [] => Some(Format::Json),
-        [one] => Some(*one),
-        _ => None,
-    };
-    let observation = if reason.is_none() {
-        native
-            .ok()
-            .map(|(native, config, feature_enabled)| DefinitionObservation {
-                id: String::new(),
-                home: home.into(),
-                sources,
-                native,
-                config,
-                feature_enabled,
-            })
-    } else {
-        None
-    };
-    (
-        DefinitionScan {
-            snapshot_id: None,
-            entries,
-            sources: choices,
-            default_source,
-            read_only_reason: reason,
-        },
-        observation,
-    )
-}
-
-impl DefinitionObservation {
-    fn fresh(&self) -> Result<(), String> {
-        if !self.sources.iter().all(|s| s.file.unchanged()) {
-            return Err("定义文件或用户配置已变化，请刷新并重新确认。".into());
-        }
-        verified_version(&self.home)?;
-        let (hooks, config, enabled) = native(&self.home)?;
-        if hooks != self.native
-            || config.version != self.config.version
-            || config.target != self.config.target
-            || config.origins != self.config.origins
-            || enabled != self.feature_enabled
-        {
-            return Err("Codex 定义、信任或配置状态已变化，请刷新并重新确认。".into());
-        }
-        Ok(())
     }
 }
 

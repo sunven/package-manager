@@ -1,6 +1,12 @@
 use super::*;
 use std::{cell::Cell, fs};
 
+fn observe(home: &Path) -> (DefinitionScan, Option<DefinitionObservation>) {
+    let observed =
+        super::super::observation::observe_with(home, &super::super::observation::NativeCodex);
+    (observed.definitions, observed.definition_observation)
+}
+
 fn fixture(format: Format) -> (tempfile::TempDir, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let home = fs::canonicalize(temp.path()).unwrap();

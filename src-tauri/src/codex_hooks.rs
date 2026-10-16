@@ -1,14 +1,21 @@
 use crate::codex_cli::{self, AppServer, RpcError, RpcErrorKind};
-use crate::codex_plugins::{read_config, resolve_home};
+use crate::codex_plugins::resolve_home;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 #[path = "codex_hook_definitions.rs"]
 mod definitions;
-pub(crate) use definitions::{DefinitionRequest, DefinitionPreview, DefinitionCommitRequest, DefinitionResult};
+#[path = "codex_hook_documents.rs"]
+mod documents;
+#[path = "codex_hook_observation.rs"]
+mod observation;
+pub(crate) use definitions::{
+    DefinitionCommitRequest, DefinitionPreview, DefinitionRequest, DefinitionResult,
+};
+use observation::{load, same_path, ConfigView, HookMetadata, Inventory, Native, NativeCodex};
 
 #[derive(Clone, Default)]
 pub(crate) struct HooksState(Arc<Mutex<State>>);
@@ -25,31 +32,6 @@ struct Observation {
     home: PathBuf,
     config: ConfigView,
     hooks: HashMap<String, HookMetadata>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct HookMetadata {
-    key: String,
-    current_hash: String,
-    event_name: String,
-    handler_type: String,
-    source: String,
-    source_path: String,
-    plugin_id: Option<String>,
-    enabled: bool,
-    is_managed: bool,
-    trust_status: String,
-    display_order: i64,
-    matcher: Option<String>,
-    timeout_sec: u64,
-    status_message: Option<String>,
-    additional_context_limit: Option<u64>,
-    command: Option<String>,
-    server: Option<String>,
-    tool: Option<String>,
-    #[serde(rename = "async", default)]
-    is_async: bool,
 }
 
 #[derive(Serialize)]
@@ -80,7 +62,7 @@ pub(crate) struct HookScan {
     warnings: Vec<String>,
     config_error: Option<String>,
     message: Option<String>,
-    definitions: Option<definitions::DefinitionScan>,
+    definitions: Option<observation::DefinitionScan>,
 }
 
 #[derive(Deserialize)]
@@ -119,157 +101,6 @@ impl HookChangeResult {
             "Hook 定义、状态或用户配置已变化，请刷新并重新确认。",
         )
     }
-}
-
-#[derive(Clone)]
-struct ConfigView {
-    target: PathBuf,
-    version: String,
-    states: Value,
-    origins: Value,
-}
-
-struct Inventory {
-    hooks: Vec<HookMetadata>,
-    warnings: Vec<String>,
-    errors: Vec<String>,
-    feature_enabled: Option<bool>,
-    config: Result<ConfigView, String>,
-}
-
-fn same_path(path: &str, target: &Path) -> bool {
-    std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path)) == target
-}
-
-fn config_view(home: &Path, response: Value) -> Result<ConfigView, String> {
-    let file = read_config(&home.join("config.toml"))?;
-    let layers = response["layers"]
-        .as_array()
-        .ok_or("CLI 未提供用户配置版本，当前仅供查看。")?;
-    let layer = layers
-        .iter()
-        .find(|layer| {
-            layer["name"]["type"] == "user"
-                && layer["name"]["profile"].is_null()
-                && layer["name"]["file"]
-                    .as_str()
-                    .is_some_and(|p| same_path(p, &file.target))
-                && layer["disabledReason"].is_null()
-        })
-        .ok_or("无法确认当前 Codex home 的用户配置层，当前仅供查看。")?;
-    let version = layer["version"]
-        .as_str()
-        .filter(|v| !v.is_empty())
-        .ok_or("CLI 未提供用户配置版本，当前仅供查看。")?;
-    if !response["origins"].is_object() {
-        return Err("CLI 未提供配置来源，当前仅供查看。".into());
-    }
-    Ok(ConfigView {
-        target: file.target,
-        version: version.into(),
-        states: response["config"]["hooks"]["state"].clone(),
-        origins: response["origins"].clone(),
-    })
-}
-
-fn parse_inventory(
-    response: Value,
-) -> Result<(Vec<HookMetadata>, Vec<String>, Vec<String>), RpcError> {
-    #[derive(Deserialize)]
-    struct Entry {
-        cwd: String,
-        hooks: Vec<HookMetadata>,
-        warnings: Vec<String>,
-        errors: Vec<HookError>,
-    }
-    #[derive(Deserialize)]
-    struct HookError {
-        message: String,
-        path: String,
-    }
-    #[derive(Deserialize)]
-    struct Response {
-        data: Vec<Entry>,
-    }
-    let mut response: Response =
-        serde_json::from_value(response).map_err(|_| RpcError::incompatible())?;
-    if response.data.len() != 1 || response.data[0].cwd != "/" {
-        return Err(RpcError::incompatible());
-    }
-    let entry = response.data.remove(0);
-    let mut keys = HashSet::new();
-    for hook in &entry.hooks {
-        if hook.key.is_empty()
-            || hook.current_hash.is_empty()
-            || !Path::new(&hook.source_path).is_absolute()
-            || !keys.insert(hook.key.clone())
-        {
-            return Err(RpcError::incompatible());
-        }
-    }
-    let mut hooks: Vec<_> = entry
-        .hooks
-        .into_iter()
-        .filter(|hook| matches!(hook.source.as_str(), "user" | "plugin"))
-        .collect();
-    hooks.sort_by_key(|hook| hook.display_order);
-    Ok((
-        hooks,
-        entry.warnings,
-        entry
-            .errors
-            .into_iter()
-            .map(|error| format!("{}：{}", error.path, error.message))
-            .collect(),
-    ))
-}
-
-fn feature_enabled(server: &mut AppServer) -> Result<bool, RpcError> {
-    let mut cursor: Option<String> = None;
-    let mut cursors = HashSet::new();
-    loop {
-        let response = server.request(
-            "experimentalFeature/list",
-            json!({"limit":100,"cursor":cursor}),
-        )?;
-        let features = response["data"]
-            .as_array()
-            .ok_or_else(RpcError::incompatible)?;
-        if let Some(feature) = features.iter().find(|feature| feature["name"] == "hooks") {
-            return feature["enabled"]
-                .as_bool()
-                .ok_or_else(RpcError::incompatible);
-        }
-        match response["nextCursor"].as_str() {
-            Some(next) if cursors.insert(next.to_owned()) => cursor = Some(next.into()),
-            _ => return Err(RpcError::incompatible()),
-        }
-    }
-}
-
-fn load(home: &Path) -> Result<Inventory, RpcError> {
-    let mut server = AppServer::start(home)?;
-    let (hooks, warnings, mut errors) =
-        parse_inventory(server.request("hooks/list", json!({"cwds":["/"]}))?)?;
-    let config = server
-        .request("config/read", json!({"includeLayers":true,"cwd":"/"}))
-        .map_err(|error| error.message)
-        .and_then(|response| config_view(home, response));
-    let enabled = match feature_enabled(&mut server) {
-        Ok(enabled) => Some(enabled),
-        Err(_) => {
-            errors
-                .push("无法核实 hooks 总开关状态，请检查 CLI 兼容性后刷新，当前仅供查看。".into());
-            None
-        }
-    };
-    Ok(Inventory {
-        hooks,
-        warnings,
-        errors,
-        feature_enabled: enabled,
-        config,
-    })
 }
 
 fn read_only(hook: &HookMetadata, config: &ConfigView) -> Option<String> {
@@ -337,21 +168,13 @@ impl HooksState {
         let _operation = codex_cli::OPERATIONS
             .lock()
             .map_err(|_| "Codex 操作状态不可用")?;
-        let home = resolve_home();
-        let mut scan = self.scan_with(home.clone(), &load)?;
-        if let Ok(home) = home {
-            let (view, observation) = definitions::observe(&home);
-            let mut state = self.0.lock().map_err(|_| "Hooks 状态不可用")?;
-            let id = format!("hook-definitions-{}", state.sequence);
-            scan.definitions = Some(state.definitions.register(id, view, observation));
-        }
-        Ok(scan)
+        self.scan_with(resolve_home(), &NativeCodex)
     }
 
     fn scan_with(
         &self,
         home: Result<PathBuf, String>,
-        read: &impl Fn(&Path) -> Result<Inventory, RpcError>,
+        reader: &impl Native,
     ) -> Result<HookScan, String> {
         let mut state = self
             .0
@@ -381,7 +204,14 @@ impl HooksState {
         };
         scan.directory = home.display().to_string();
         scan.config_path = home.join("config.toml").display().to_string();
-        let inventory = match read(&home) {
+        let observation = observation::observe_with(&home, reader);
+        let id = format!("hook-definitions-{}", state.sequence);
+        scan.definitions = Some(state.definitions.register(
+            id,
+            observation.definitions,
+            observation.definition_observation,
+        ));
+        let inventory = match observation.inventory {
             Ok(inventory) => inventory,
             Err(error) => {
                 scan.status = match error.kind {
@@ -527,7 +357,9 @@ impl HooksState {
 
 #[cfg(test)]
 mod tests {
+    use super::observation::tests::MockNative;
     use super::*;
+    use crate::codex_plugins::read_config;
     use std::cell::Cell;
     use std::fs;
 
@@ -559,45 +391,15 @@ mod tests {
 
     fn approve(state: &HooksState) -> HookChangeRequest {
         let scan = state
-            .scan_with(Ok("/codex".into()), &|_| Ok(inventory()))
+            .scan_with(
+                Ok("/codex".into()),
+                &MockNative::from_inventory(Path::new("/codex"), Ok(inventory())),
+            )
             .unwrap();
         HookChangeRequest {
             snapshot_id: scan.snapshot_id.unwrap(),
             key: hook().key,
             enabled: false,
-        }
-    }
-
-    #[test]
-    fn native_inventory_keeps_distinct_definitions_and_filters_project_sources() {
-        let first = hook();
-        let mut second = hook();
-        second.key += ":another";
-        second.source = "plugin".into();
-        second.plugin_id = Some("fixture@market".into());
-        second.enabled = false;
-        let mut project = hook();
-        project.key += ":project";
-        project.source = "project".into();
-        let (hooks, warnings, errors) = parse_inventory(json!({"data":[{
-            "cwd":"/", "hooks":[first, second, project], "warnings":["two formats"],
-            "errors":[{"path":"/bad/hooks.json","message":"invalid"}]
-        }]}))
-        .unwrap();
-        assert_eq!(hooks.len(), 2);
-        assert!(!hooks[1].enabled);
-        assert_eq!(warnings, vec!["two formats"]);
-        assert_eq!(errors, vec!["/bad/hooks.json：invalid"]);
-        for value in [
-            json!({}),
-            json!({"data":[]}),
-            json!({"data":[{"cwd":"/project","hooks":[],"warnings":[],"errors":[]}]}),
-            json!({"data":[{"cwd":"/","hooks":[hook(),hook()],"warnings":[],"errors":[]}]}),
-        ] {
-            assert_eq!(
-                parse_inventory(value).unwrap_err().kind,
-                RpcErrorKind::Incompatible
-            );
         }
     }
 
@@ -645,11 +447,11 @@ mod tests {
                 _ => data.config = Err("invalid config".into()),
             }
             let state = HooksState::default();
-            let data = std::cell::RefCell::new(Some(data));
             let scan = state
-                .scan_with(Ok("/codex".into()), &|_| {
-                    Ok(data.borrow_mut().take().unwrap())
-                })
+                .scan_with(
+                    Ok("/codex".into()),
+                    &MockNative::from_inventory(Path::new("/codex"), Ok(data)),
+                )
                 .unwrap();
             assert_eq!(scan.status, ScanStatus::Ready);
             assert!(scan.snapshot_id.is_none());
@@ -755,14 +557,15 @@ mod tests {
         ] {
             let state = HooksState::default();
             let request = approve(&state);
-            let error = std::cell::RefCell::new(Some(RpcError {
+            let error = RpcError {
                 kind,
                 message: "failure".into(),
-            }));
+            };
             let scan = state
-                .scan_with(Ok("/codex".into()), &|_| {
-                    Err(error.borrow_mut().take().unwrap())
-                })
+                .scan_with(
+                    Ok("/codex".into()),
+                    &MockNative::from_inventory(Path::new("/codex"), Err(error)),
+                )
                 .unwrap();
             assert_eq!(scan.status, expected);
             assert!(scan.snapshot_id.is_none());
@@ -828,7 +631,7 @@ mod tests {
         let state = HooksState::default();
         for hook in &before.hooks {
             for enabled in [false, true] {
-                let scan = state.scan_with(Ok(home.clone()), &load).unwrap();
+                let scan = state.scan_with(Ok(home.clone()), &NativeCodex).unwrap();
                 let entry = scan
                     .hooks
                     .iter()
