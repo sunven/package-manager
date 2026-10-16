@@ -7,28 +7,16 @@ import {
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import {
-  pluginDefaultLabel, type CodexPlugin, type CodexPluginChangeRequest,
-  type CodexPluginChangeResult, type CodexPluginScan, type CodexPluginLifecycleRequest,
-} from "../codexPlugins";
+import { pluginDefaultLabel, type CodexPlugin } from "../codexPlugins";
+import type { CodexExtensions } from "../hooks/useCodexExtensions";
 import { EmptyState, SkeletonRows } from "./ui";
 
-type Confirmation = { plugin: CodexPlugin; request: CodexPluginChangeRequest | CodexPluginLifecycleRequest; configPath: string };
 const operationLabel = { Install: "安装", Reinstall: "重新安装", Uninstall: "卸载" };
 
-export type CodexPluginState = {
-  scan: CodexPluginScan | null;
-  scanning: boolean;
-  saving: boolean;
-  error: string | null;
-  result: CodexPluginChangeResult | null;
-  onSetEnabled: (request: CodexPluginChangeRequest) => Promise<void>;
-  onLifecycle?: (request: CodexPluginLifecycleRequest) => Promise<void>;
-  onShowHooks?: () => void;
-};
+export type CodexPluginState = CodexExtensions["plugins"];
 
-export function CodexPluginFeedback({ scan, error, result }: Pick<CodexPluginState, "scan" | "error" | "result">) {
-  const scanFailure = error ?? (scan?.status !== "Ready" ? scan?.message : null);
+export function CodexPluginFeedback({ scan, scanning, current, error, result }: CodexPluginState) {
+  const scanFailure = error ?? (scan?.status !== "Ready" ? scan?.message : scan && !current && !scanning ? "插件清单已过期，请重新读取。" : null);
   return <>
     {result ? <Alert variant={result.status === "Failed" ? "destructive" : "default"} role="status">
       <AlertTitle>{result.status === "Succeeded" ? "插件操作已完成" : result.status === "Saved" ? "配置已保存" : result.status === "Conflict" ? "设置已变化，请重新确认" : "插件操作遇到问题"}</AlertTitle>
@@ -45,13 +33,18 @@ export function CodexPluginFeedback({ scan, error, result }: Pick<CodexPluginSta
   </>;
 }
 
-export function CodexPluginList({ scan, scanning, saving, error, onSetEnabled, onLifecycle, onShowHooks, marketplaceName, blocked, onRestoreFocus }: Omit<CodexPluginState, "result"> & {
+export function CodexPluginList({ workflow, onShowHooks, marketplaceName, onRestoreFocus }: {
+  workflow: CodexExtensions;
+  onShowHooks?: () => void;
   marketplaceName: string;
-  blocked: boolean;
   onRestoreFocus: () => void;
 }) {
+  const { scan, scanning, current, error } = workflow.plugins;
+  const confirmation = workflow.operation?.kind === "plugin" && workflow.operation.target.marketplaceName === marketplaceName ? workflow.operation : null;
+  const saving = Boolean(confirmation && confirmation.phase !== "confirming");
+  const blocked = Boolean(workflow.operation);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const trigger = useRef<HTMLButtonElement | null>(null);
@@ -60,27 +53,26 @@ export function CodexPluginList({ scan, scanning, saving, error, onSetEnabled, o
   const plugins = marketPlugins.filter((plugin) => (filter === "all" || plugin.installed === (filter === "installed"))
     && [plugin.name, plugin.details.displayName, plugin.details.description].some((value) => value?.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())));
   const busy = scanning || saving;
-  const disabled = busy || blocked || Boolean(error || scan?.configError) || scan?.status !== "Ready" || !scan?.snapshotId;
+  const disabled = busy || blocked || Boolean(error || scan?.configError) || !current;
   const scanFailure = error ?? (scan?.status !== "Ready" ? scan?.message : null);
-  const lifecycle = confirmation && "operation" in confirmation.request ? confirmation.request.operation : null;
-  const action = lifecycle ? operationLabel[lifecycle] : confirmation && "enabled" in confirmation.request && confirmation.request.enabled ? "启用" : "禁用";
+  const lifecycle = confirmation && "operation" in confirmation.intent ? confirmation.intent.operation : null;
+  const action = lifecycle ? operationLabel[lifecycle] : confirmation && "enabled" in confirmation.intent && confirmation.intent.enabled ? "启用" : "禁用";
 
-  function requestChange(plugin: CodexPlugin, enabled: boolean, button: HTMLButtonElement) {
-    if (disabled || plugin.readOnlyReason || !scan?.snapshotId) return;
+  async function requestChange(plugin: CodexPlugin, enabled: boolean, button: HTMLButtonElement) {
+    if (disabled || plugin.readOnlyReason) return;
     trigger.current = button;
-    setConfirmation({ plugin: { ...plugin }, configPath: scan.configPath,
-      request: { snapshotId: scan.snapshotId, pluginId: plugin.pluginId, enabled } });
+    setRequestError(await workflow.request({ kind: "plugin", pluginId: plugin.pluginId, enabled }));
   }
 
-  function requestLifecycle(plugin: CodexPlugin, operation: CodexPluginLifecycleRequest["operation"], button: HTMLButtonElement) {
-    if (disabled || plugin.readOnlyReason || !scan?.snapshotId || !onLifecycle) return;
+  async function requestLifecycle(plugin: CodexPlugin, operation: "Install" | "Reinstall" | "Uninstall", button: HTMLButtonElement) {
+    if (disabled || plugin.readOnlyReason) return;
     if (operation !== "Uninstall" && plugin.installBlockedReason) return;
     trigger.current = button;
-    setConfirmation({ plugin: { ...plugin }, configPath: scan.configPath,
-      request: { snapshotId: scan.snapshotId, pluginId: plugin.pluginId, operation } });
+    setRequestError(await workflow.request({ kind: "plugin", pluginId: plugin.pluginId, operation }));
   }
 
   return <section className="min-w-0" aria-label={`${marketplaceName} 的插件`} aria-busy={busy}>
+    {requestError ? <p className="mb-3 text-sm text-destructive" role="alert">{requestError}</p> : null}
     <div className="mb-4 flex flex-wrap items-end gap-3">
       <h3 className="mr-auto text-sm font-medium">插件目录</h3>
       <div className="grid min-w-0 flex-1 basis-52 gap-1 sm:max-w-xs">
@@ -120,10 +112,10 @@ export function CodexPluginList({ scan, scanning, saving, error, onSetEnabled, o
             <TableCell className="align-top"><div className="flex flex-wrap justify-end gap-1">
               {plugin.installed && plugin.defaultEnabled !== true ? <Button aria-label={`启用 ${plugin.name}（${plugin.marketplaceName}）`} disabled={readOnly} onClick={(event) => requestChange(plugin, true, event.currentTarget)} size="sm" type="button" variant="outline">{plugin.defaultEnabled === null ? "设为启用" : "启用"}</Button> : null}
               {plugin.installed && plugin.defaultEnabled !== false ? <Button aria-label={`禁用 ${plugin.name}（${plugin.marketplaceName}）`} disabled={readOnly} onClick={(event) => requestChange(plugin, false, event.currentTarget)} size="sm" type="button" variant="outline">{plugin.defaultEnabled === null ? "设为禁用" : "禁用"}</Button> : null}
-              {onLifecycle ? <>
+              <>
                 <Button aria-label={`${plugin.installed ? "重新安装" : "安装"} ${plugin.name}（${plugin.marketplaceName}）`} disabled={readOnly || Boolean(plugin.installBlockedReason)} onClick={(event) => requestLifecycle(plugin, plugin.installed ? "Reinstall" : "Install", event.currentTarget)} size="sm" type="button" variant={plugin.installed ? "outline" : "default"}>{plugin.installed ? "重新安装" : "安装"}</Button>
                 {plugin.installed ? <Button aria-label={`卸载 ${plugin.name}（${plugin.marketplaceName}）`} disabled={readOnly} onClick={(event) => requestLifecycle(plugin, "Uninstall", event.currentTarget)} size="sm" type="button" variant="outline">卸载</Button> : null}
-              </> : null}
+              </>
             </div></TableCell>
           </TableRow>
           {open ? <TableRow id={detailId}><TableCell className="whitespace-normal bg-muted/30" colSpan={4}>
@@ -152,7 +144,7 @@ export function CodexPluginList({ scan, scanning, saving, error, onSetEnabled, o
       })}</TableBody>
     </Table> : <EmptyState message={scanning ? "正在读取插件目录…" : scan?.status === "Ready" && !error ? marketPlugins.length ? "没有符合搜索或筛选条件的插件。" : "该市场暂无插件目录项或已安装插件。" : scanFailure ? "插件清单暂不可用。解决上方问题后，请重新读取。" : "等待读取插件目录。"} />}
 
-    <AlertDialog open={confirmation !== null} onOpenChange={(open) => { if (!open && !saving) setConfirmation(null); }}>
+    <AlertDialog open={confirmation !== null} onOpenChange={(open) => { if (!open && confirmation) workflow.cancel(confirmation.id); }}>
       <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onCloseAutoFocus={(event) => {
         event.preventDefault();
         if (trigger.current?.isConnected && !trigger.current.disabled) trigger.current.focus(); else onRestoreFocus();
@@ -165,17 +157,15 @@ export function CodexPluginList({ scan, scanning, saving, error, onSetEnabled, o
               : "只修改这个插件的用户默认设置。项目设置可能覆盖默认值；保存后请在新会话中验证。"}</AlertDialogDescription>
         </AlertDialogHeader>
         {confirmation ? <dl className="grid gap-3 text-sm">
-          <PluginDetail label="插件" value={`${confirmation.plugin.name}（${confirmation.plugin.marketplaceName}）`} />
-          {"enabled" in confirmation.request ? <PluginDetail label="变更" value={`${pluginDefaultLabel(confirmation.plugin.defaultEnabled)} → ${confirmation.request.enabled ? "启用" : "禁用"}`} /> : <PluginDetail label="来源" value={confirmation.plugin.sourceLocation} mono />}
+          <PluginDetail label="插件" value={`${confirmation.target.name}（${confirmation.target.marketplaceName}）`} />
+          {"enabled" in confirmation.intent ? <PluginDetail label="变更" value={`${pluginDefaultLabel(confirmation.target.defaultEnabled)} → ${confirmation.intent.enabled ? "启用" : "禁用"}`} /> : <PluginDetail label="来源" value={confirmation.target.sourceLocation} mono />}
           <PluginDetail label="用户配置路径" value={confirmation.configPath} mono />
         </dl> : null}
         <AlertDialogFooter>
           <AlertDialogCancel asChild><Button disabled={saving} type="button" variant="outline">取消</Button></AlertDialogCancel>
-          <AlertDialogAction asChild><Button disabled={disabled} variant={lifecycle === "Uninstall" ? "destructive" : "default"} onClick={async (event) => {
+          <AlertDialogAction asChild><Button disabled={saving} variant={lifecycle === "Uninstall" ? "destructive" : "default"} onClick={async (event) => {
             event.preventDefault(); if (!confirmation) return;
-            if ("enabled" in confirmation.request) await onSetEnabled(confirmation.request);
-            else await onLifecycle?.(confirmation.request);
-            setConfirmation(null);
+            await workflow.confirm(confirmation.id);
           }} type="button">{saving ? "正在执行…" : lifecycle ? `确认${action}` : "保存设置"}</Button></AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

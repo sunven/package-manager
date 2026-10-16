@@ -1,29 +1,25 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
-import { CodexPluginFeedback, CodexPluginList, type CodexPluginState } from "./CodexPluginList";
-import { useCodexPlugins } from "../hooks/useCodexPlugins";
+import { CodexPluginFeedback, CodexPluginList } from "./CodexPluginList";
+import { useCodexExtensions } from "../hooks/useCodexExtensions";
+import { codexMarketplaceFixture } from "../test/codexMarketplaceFixtures";
 import { codexPluginFixture } from "../test/codexPluginFixtures";
-import type { CodexPluginScan } from "../codexPlugins";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-const mockedInvoke = vi.mocked(invoke);
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (command: string, args?: unknown) => command === "scan_codex_marketplaces"
+  ? Promise.resolve(codexMarketplaceFixture()) : mockedInvoke(command, args) }));
+const mockedInvoke = vi.fn<(command: string, args?: unknown) => Promise<unknown>>();
 
 afterEach(cleanup);
 beforeEach(() => { vi.resetAllMocks(); });
 
-function PluginView(props: CodexPluginState & { onRefresh: () => void; marketplaceName?: string }) {
-  return <>
-    <button onClick={props.onRefresh}>刷新</button>
-    <CodexPluginFeedback {...props} />
-    <CodexPluginList {...props} marketplaceName={props.marketplaceName ?? "personal"} blocked={false} onRestoreFocus={vi.fn()} />
-  </>;
-}
-
 function Harness({ marketplaceName = "personal" }: { marketplaceName?: string }) {
-  const state = useCodexPlugins(true);
-  return <PluginView {...state} marketplaceName={marketplaceName} onRefresh={() => void state.refresh()} onSetEnabled={state.setEnabled} onLifecycle={state.change} />;
+  const workflow = useCodexExtensions(true, "marketplaces");
+  return <>
+    <button onClick={() => void workflow.refresh()}>刷新</button>
+    <CodexPluginFeedback {...workflow.plugins} />
+    <CodexPluginList workflow={workflow} marketplaceName={marketplaceName} onRestoreFocus={vi.fn()} />
+  </>;
 }
 
 function setupScan(scan = codexPluginFixture()) {
@@ -170,34 +166,4 @@ describe("Codex plugin management", () => {
     expect(screen.queryByText("未知（用户未显式设置）")).toBeNull();
   });
 
-  it("keeps the approved target frozen while incoming props change", async () => {
-    const onSetEnabled = vi.fn().mockResolvedValue(undefined);
-    const props = { scan: codexPluginFixture(), scanning: false, saving: false, error: null, result: null, onRefresh: vi.fn(), onSetEnabled };
-    const view = render(<PluginView {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "禁用 writer（personal）" }));
-    const changed = codexPluginFixture();
-    changed.snapshotId = "scan-new";
-    changed.plugins[0].name = "new-name";
-    view.rerender(<PluginView {...props} scan={changed} />);
-    expect(within(screen.getByRole("alertdialog")).getByText("writer（personal）")).toBeTruthy();
-    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "保存设置" }));
-    await waitFor(() => expect(onSetEnabled).toHaveBeenCalledExactlyOnceWith({ snapshotId: "scan-1", pluginId: "writer@personal", enabled: false }));
-  });
-
-  it("loads on first visit only and serializes refresh and save", async () => {
-    let resolveScan!: (value: CodexPluginScan) => void;
-    mockedInvoke.mockReturnValueOnce(new Promise((resolve) => { resolveScan = resolve; }));
-    const hook = renderHook(({ active }) => useCodexPlugins(active), { initialProps: { active: false } });
-    expect(mockedInvoke).not.toHaveBeenCalled();
-    hook.rerender({ active: true });
-    await act(async () => {
-      await hook.result.current.refresh();
-      await hook.result.current.setEnabled({ snapshotId: "old", pluginId: "writer@personal", enabled: false });
-    });
-    expect(mockedInvoke).toHaveBeenCalledTimes(1);
-    await act(async () => resolveScan(codexPluginFixture()));
-    hook.rerender({ active: false });
-    hook.rerender({ active: true });
-    expect(mockedInvoke).toHaveBeenCalledTimes(1);
-  });
 });

@@ -3,12 +3,10 @@ import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
 import { useSessionRecords } from "./hooks/useSessionRecords";
-import { useCodexPlugins } from "./hooks/useCodexPlugins";
+import { useCodexExtensions } from "./hooks/useCodexExtensions";
 import { useClaudeCode } from "./hooks/useClaudeCode";
 import { ClaudeCodePage } from "./components/ClaudeCodePage";
 import { CodexMarketplacesPage } from "./components/CodexMarketplacesPage";
-import { useCodexMarketplaces } from "./hooks/useCodexMarketplaces";
-import { useCodexHooks } from "./hooks/useCodexHooks";
 import { CodexHooksPage } from "./components/CodexHooksPage";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { useVscodeStorage } from "./hooks/useVscodeStorage";
@@ -54,10 +52,7 @@ export function App() {
   const [claudeTab, setClaudeTab] = useState("marketplaces");
   const claude = useClaudeCode(activeView === "claude", claudeTab);
   const [codexTab, setCodexTab] = useState("marketplaces");
-  const codexMarketplaces = useCodexMarketplaces(activeView === "plugins" && codexTab === "marketplaces");
-  const codexPlugins = useCodexPlugins(activeView === "plugins" && codexTab === "marketplaces", codexMarketplaces.pluginRevision);
-  const codexHooks = useCodexHooks(activeView === "plugins" && codexTab === "hooks", codexPlugins.hookRevision + codexMarketplaces.pluginRevision);
-  const codexBusy = codexPlugins.scanning || codexPlugins.saving || codexMarketplaces.scanning || codexMarketplaces.pending || codexHooks.scanning || codexHooks.saving;
+  const codex = useCodexExtensions(activeView === "plugins", codexTab);
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -162,18 +157,14 @@ export function App() {
         {activeView === "plugins" ? (
           <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
             <TabsList aria-label="Codex 管理视图">
-              <TabsTrigger value="marketplaces" disabled={codexBusy}>插件市场</TabsTrigger>
-              <TabsTrigger value="hooks" disabled={codexBusy}>Hooks</TabsTrigger>
+              <TabsTrigger value="marketplaces" disabled={Boolean(codex.operation)}>插件市场</TabsTrigger>
+              <TabsTrigger value="hooks" disabled={Boolean(codex.operation)}>Hooks</TabsTrigger>
             </TabsList>
             <TabsContent value="marketplaces">
-              <CodexMarketplacesPage {...codexMarketplaces}
-                plugins={{ ...codexPlugins, onSetEnabled: codexPlugins.setEnabled, onLifecycle: codexPlugins.change, onShowHooks: () => setCodexTab("hooks") }}
-                onRefresh={() => void Promise.all([codexMarketplaces.refresh(), codexPlugins.refresh()])}
-                onChange={codexMarketplaces.change} />
+              <CodexMarketplacesPage workflow={codex} onShowHooks={() => setCodexTab("hooks")} />
             </TabsContent>
             <TabsContent value="hooks">
-              <CodexHooksPage {...codexHooks} onRefresh={() => void codexHooks.refresh()} onSetEnabled={codexHooks.setEnabled} onShowPlugins={() => setCodexTab("marketplaces")}
-                onPrepareDefinition={codexHooks.prepareDefinition} onCommitDefinition={codexHooks.commitDefinition} />
+              <CodexHooksPage workflow={codex} onShowPlugins={() => setCodexTab("marketplaces")} />
             </TabsContent>
           </Tabs>
         ) : activeView === "claude" ? (

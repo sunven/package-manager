@@ -10,26 +10,21 @@ import { Button } from "../../components/ui/button";
 import { CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import {
-  marketplaceSourceLabel, type CodexMarketplace, type CodexMarketplaceRequest,
-  type CodexMarketplaceResult, type CodexMarketplaceScan,
-} from "../codexMarketplaces";
+import { marketplaceSourceLabel, type CodexMarketplace } from "../codexMarketplaces";
+import type { CodexExtensions } from "../hooks/useCodexExtensions";
 import { errorToString } from "../utils/format";
-import { CodexPluginFeedback, CodexPluginList, type CodexPluginState } from "./CodexPluginList";
+import { CodexPluginFeedback, CodexPluginList } from "./CodexPluginList";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
-type Confirmation = { market: CodexMarketplace; request: CodexMarketplaceRequest; directory: string };
-
-export function CodexMarketplacesPage({ scan, scanning, pending, error, result, plugins, onRefresh, onChange }: {
-  scan: CodexMarketplaceScan | null;
-  scanning: boolean;
-  pending: boolean;
-  error: string | null;
-  result: CodexMarketplaceResult | null;
-  plugins: CodexPluginState;
-  onRefresh: () => void;
-  onChange: (request: CodexMarketplaceRequest) => Promise<CodexMarketplaceResult | null>;
+export function CodexMarketplacesPage({ workflow, onShowHooks }: {
+  workflow: CodexExtensions;
+  onShowHooks?: () => void;
 }) {
+  const { scan, scanning, current, error, result } = workflow.marketplaces;
+  const { plugins } = workflow;
+  const confirmation = workflow.operation?.kind === "marketplace" && workflow.operation.intent.operation !== "Add" ? workflow.operation : null;
+  const pending = workflow.processing && workflow.operation?.kind === "marketplace";
+  const pluginSaving = workflow.processing && workflow.operation?.kind === "plugin";
   const [expanded, setExpanded] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [sourceKind, setSourceKind] = useState<"git" | "local">("git");
@@ -38,7 +33,7 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
   const [sparsePaths, setSparsePaths] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
-  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const readButton = useRef<HTMLButtonElement | null>(null);
   const addButton = useRef<HTMLButtonElement | null>(null);
@@ -48,9 +43,10 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
     formWasOpen.current = adding;
   }, [adding]);
   const reading = scanning || plugins.scanning;
-  const busy = reading || pending || choosing || plugins.saving;
-  const disabled = busy || Boolean(error || scan?.configError) || scan?.status !== "Ready" || !scan?.snapshotId;
-  const readError = error ?? (scan?.status !== "Ready" ? scan?.message : null);
+  const busy = reading || workflow.processing || choosing;
+  const blocked = busy || Boolean(workflow.operation);
+  const disabled = blocked || Boolean(error || scan?.configError) || !current;
+  const readError = error ?? (scan?.status !== "Ready" ? scan?.message : scan && !current && !scanning ? "市场清单已过期，请重新读取。" : null);
   const groups = new Map<string, CodexMarketplace | null>(scan?.marketplaces.map((market) => [market.name, market]));
   for (const plugin of plugins.scan?.plugins ?? []) {
     if (!groups.has(plugin.marketplaceName)) groups.set(plugin.marketplaceName, null);
@@ -67,18 +63,17 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
     setFormError(null);
   }
 
-  function requestChange(market: CodexMarketplace, operation: "Refresh" | "Remove", button: HTMLButtonElement) {
-    if (disabled || market.readOnlyReason || !scan?.snapshotId) return;
+  async function requestChange(market: CodexMarketplace, operation: "Refresh" | "Remove", button: HTMLButtonElement) {
+    if (disabled || market.readOnlyReason) return;
     trigger.current = button;
-    setConfirmation({ market: { ...market }, directory: scan.directory,
-      request: { snapshotId: scan.snapshotId, marketplaceId: market.id, operation } });
+    setRequestError(await workflow.request({ kind: "marketplace", marketplaceId: market.id, operation }));
   }
 
   return (
     <section className="view-grid" aria-label="Codex 插件市场管理" aria-busy={busy}>
       <Panel>
         <PanelHead title="Codex 插件市场" action={
-          <Button ref={readButton} disabled={busy || Boolean(confirmation)} onClick={onRefresh} size="sm" type="button" variant="outline">
+          <Button ref={readButton} disabled={blocked} onClick={() => void workflow.refresh()} size="sm" type="button" variant="outline">
             <ArrowClockwise aria-hidden="true" className={reading ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
             {reading ? "读取中" : "重新读取"}
           </Button>
@@ -92,7 +87,7 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
             <code className="min-w-0 break-all">{scan?.directory || plugins.scan?.directory || "尚未读取"}</code>
           </div>
           <p className="text-xs text-muted-foreground" role="status">
-            {pending ? "正在执行并重新核对市场，请稍候…" : plugins.saving ? "正在执行并重新核对插件…" : reading ? "正在读取市场与插件目录，已有内容为上次结果。" : "重新读取查看本机市场与插件清单；同步市场会从 Git 来源同步内容。"}
+            {pending ? "正在执行并重新核对市场，请稍候…" : pluginSaving ? "正在执行并重新核对插件…" : reading ? "正在读取市场与插件目录，已有内容为上次结果。" : "重新读取查看本机市场与插件清单；同步市场会从 Git 来源同步内容。"}
           </p>
         </CardContent>
       </Panel>
@@ -109,6 +104,7 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
         <AlertTitle>市场来源暂时只读</AlertTitle><AlertDescription>{scan.configError} 解决后请重新读取。</AlertDescription>
       </Alert> : null}
       <CodexPluginFeedback {...plugins} />
+      {requestError ? <p className="text-sm text-destructive" role="alert">{requestError}</p> : null}
 
       <Panel className="overflow-hidden">
         <PanelHead title="市场" action={
@@ -118,15 +114,18 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
         } />
         {adding ? <form aria-label="添加市场源" className="grid gap-4 border-b p-4" onSubmit={async (event) => {
           event.preventDefault();
-          if (disabled || !scan?.snapshotId || !source.trim()) return;
+          if (disabled || !source.trim()) return;
           setFormError(null);
-          const outcome = await onChange({ snapshotId: scan.snapshotId, operation: "Add", sourceKind, source: source.trim(),
+          const error = await workflow.request({ kind: "marketplace", operation: "Add", sourceKind, source: source.trim(),
             ...(sourceKind === "git" && refName.trim() ? { refName: refName.trim() } : {}),
             ...(sourceKind === "git" && sparsePaths.trim() ? { sparsePaths: sparsePaths.split("\n").map((path) => path.trim()).filter(Boolean) } : {}),
           });
+          if (error) { setFormError(error); return; }
+          // The form's explicit submit confirms the frozen source and options.
+          const outcome = await workflow.confirm();
           if (outcome?.status === "Succeeded" || outcome?.status === "AlreadyExists") { setSource(""); closeForm(); }
         }}>
-          <fieldset disabled={busy} className="grid gap-2">
+          <fieldset disabled={blocked} className="grid gap-2">
             <legend className="mb-2 text-sm font-medium">来源类型</legend>
             <div className="flex flex-wrap gap-4 text-sm">
               {(["git", "local"] as const).map((kind) => <label key={kind} className="flex cursor-pointer items-center gap-2">
@@ -138,8 +137,8 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
           <div className="grid gap-2">
             <label htmlFor="marketplace-source" className="text-sm font-medium">{sourceKind === "git" ? "Git 仓库地址" : "市场根目录"}</label>
             <div className="flex flex-wrap gap-2">
-              <Input id="marketplace-source" autoFocus className="min-w-0 flex-1 basis-64 font-mono" disabled={busy} readOnly={sourceKind === "local"} value={source} onChange={(event) => setSource(event.target.value)} placeholder={sourceKind === "git" ? "owner/repo 或 Git URL" : "选择本地市场目录"} aria-describedby="marketplace-source-help" required />
-              {sourceKind === "local" ? <Button disabled={busy} type="button" variant="outline" onClick={async () => {
+              <Input id="marketplace-source" autoFocus className="min-w-0 flex-1 basis-64 font-mono" disabled={blocked} readOnly={sourceKind === "local"} value={source} onChange={(event) => setSource(event.target.value)} placeholder={sourceKind === "git" ? "owner/repo 或 Git URL" : "选择本地市场目录"} aria-describedby="marketplace-source-help" required />
+              {sourceKind === "local" ? <Button disabled={blocked} type="button" variant="outline" onClick={async () => {
                 setChoosing(true); setFormError(null);
                 try { const path = await invoke<string | null>("choose_codex_marketplace_directory"); if (path) setSource(path); }
                 catch (caught) { setFormError(errorToString(caught)); }
@@ -152,12 +151,12 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
           {sourceKind === "git" ? <details className="text-sm">
             <summary className="cursor-pointer font-medium">Git 高级选项</summary>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div className="grid gap-1"><label htmlFor="marketplace-ref">分支或标签（可选）</label><Input id="marketplace-ref" disabled={busy} value={refName} onChange={(event) => setRefName(event.target.value)} placeholder="例如 main 或 v1.0" /></div>
-              <div className="grid gap-1"><label htmlFor="marketplace-sparse">稀疏检出目录（每行一个，可选）</label><textarea id="marketplace-sparse" disabled={busy} value={sparsePaths} onChange={(event) => setSparsePaths(event.target.value)} className="min-h-20 w-full rounded-md border bg-background px-3 py-2 font-mono text-xs" placeholder=".agents/plugins" /><p className="text-xs text-muted-foreground">使用仓库内相对路径，包含市场目录及所需插件目录。</p></div>
+              <div className="grid gap-1"><label htmlFor="marketplace-ref">分支或标签（可选）</label><Input id="marketplace-ref" disabled={blocked} value={refName} onChange={(event) => setRefName(event.target.value)} placeholder="例如 main 或 v1.0" /></div>
+              <div className="grid gap-1"><label htmlFor="marketplace-sparse">稀疏检出目录（每行一个，可选）</label><textarea id="marketplace-sparse" disabled={blocked} value={sparsePaths} onChange={(event) => setSparsePaths(event.target.value)} className="min-h-20 w-full rounded-md border bg-background px-3 py-2 font-mono text-xs" placeholder=".agents/plugins" /><p className="text-xs text-muted-foreground">使用仓库内相对路径，包含市场目录及所需插件目录。</p></div>
             </div>
           </details> : null}
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button disabled={busy} onClick={closeForm} type="button" variant="outline">取消添加</Button>
+            <Button disabled={blocked} onClick={closeForm} type="button" variant="outline">取消添加</Button>
             <Button disabled={disabled || !source.trim()} type="submit">{pending ? "正在添加…" : "确认添加"}</Button>
           </div>
         </form> : null}
@@ -173,7 +172,7 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
               return <Fragment key={name}>
                 <TableRow>
                   <TableCell className="whitespace-normal align-top">
-                    <button type="button" disabled={busy} aria-label={`${open ? "收起" : "查看"} ${name} 的插件与详情`} aria-expanded={open} aria-controls={open ? detailId : undefined} className="w-full cursor-pointer break-all text-left font-medium text-primary underline-offset-4 hover:underline disabled:cursor-default disabled:opacity-50" onClick={() => setExpanded(open ? null : name)}>
+                    <button type="button" disabled={blocked} aria-label={`${open ? "收起" : "查看"} ${name} 的插件与详情`} aria-expanded={open} aria-controls={open ? detailId : undefined} className="w-full cursor-pointer break-all text-left font-medium text-primary underline-offset-4 hover:underline disabled:cursor-default disabled:opacity-50" onClick={() => setExpanded(open ? null : name)}>
                       {name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{open ? "收起插件与详情" : "查看插件与详情"}</span>
                     </button>
                   </TableCell>
@@ -188,7 +187,7 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
                 </TableRow>
                 {open ? <TableRow id={detailId}><TableCell className="whitespace-normal bg-muted/30" colSpan={4}>
                   <div className="grid gap-6 py-3">
-                  <CodexPluginList {...plugins} marketplaceName={name} blocked={busy} onRestoreFocus={() => readButton.current?.focus()} />
+                  <CodexPluginList workflow={workflow} onShowHooks={onShowHooks} marketplaceName={name} onRestoreFocus={() => readButton.current?.focus()} />
                   {market ? <div className="border-t pt-4"><dl className="grid gap-3 sm:grid-cols-2">
                     <MarketDetail label={market.sourceKind === "git" ? "市场本地副本" : "实际本地目录"} value={market.root} />
                     <MarketDetail label="用户配置路径" value={scan?.configPath ?? null} />
@@ -204,30 +203,30 @@ export function CodexMarketplacesPage({ scan, scanning, pending, error, result, 
         ) : <EmptyState message={scan?.status === "Ready" && !error ? "当前没有可见的市场来源。添加 Git 仓库或本地市场目录以开始管理。" : readError ? "市场清单暂不可用，解决上方问题后请重新读取。" : "进入页面后读取市场来源。"} />}
       </Panel>
 
-      <AlertDialog open={confirmation !== null} onOpenChange={(open) => { if (!open && !pending) setConfirmation(null); }}>
+      <AlertDialog open={confirmation !== null} onOpenChange={(open) => { if (!open && confirmation) workflow.cancel(confirmation.id); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onCloseAutoFocus={(event) => {
           event.preventDefault();
           if (trigger.current?.isConnected && !trigger.current.disabled) trigger.current.focus(); else readButton.current?.focus();
         }}>
           <AlertDialogHeader>
-            <AlertDialogTitle>{confirmation?.request.operation === "Refresh" ? "确认同步市场" : "确认移除市场源"}</AlertDialogTitle>
-            <AlertDialogDescription>{confirmation?.request.operation === "Refresh"
+            <AlertDialogTitle>{confirmation?.intent.operation === "Refresh" ? "确认同步市场" : "确认移除市场源"}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmation?.intent.operation === "Refresh"
               ? "从 Git 来源同步市场。已配置插件可能一并安装或更新，即使已禁用；启用设置不会因此变为启用，请在新会话中验证。"
-              : confirmation?.market.sourceKind === "git"
+              : confirmation?.target?.sourceKind === "git"
                 ? "移除市场来源及其本地副本。应用不会追加卸载插件、清理插件启用设置或删除原始 Git 仓库。"
                 : "移除市场来源。应用不会追加卸载插件、清理插件启用设置或删除原始本地目录。"}</AlertDialogDescription>
           </AlertDialogHeader>
           {confirmation ? <dl className="grid gap-3 text-sm">
-            <MarketDetail label="市场" value={confirmation.market.name} />
-            <MarketDetail label="来源" value={confirmation.market.source} />
+            <MarketDetail label="市场" value={confirmation.target?.name ?? null} />
+            <MarketDetail label="来源" value={confirmation.target?.source ?? null} />
             <MarketDetail label="Codex 目录" value={confirmation.directory} />
           </dl> : null}
           <AlertDialogFooter>
             <AlertDialogCancel asChild><Button disabled={pending} type="button" variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction asChild><Button disabled={pending || scanning} onClick={async (event) => {
+            <AlertDialogAction asChild><Button disabled={pending} onClick={async (event) => {
               event.preventDefault(); if (!confirmation) return;
-              await onChange(confirmation.request); setConfirmation(null);
-            }} type="button">{pending ? "正在执行…" : confirmation?.request.operation === "Refresh" ? "确认同步" : "确认移除"}</Button></AlertDialogAction>
+              await workflow.confirm(confirmation.id);
+            }} type="button">{pending ? "正在执行…" : confirmation?.intent.operation === "Refresh" ? "确认同步" : "确认移除"}</Button></AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

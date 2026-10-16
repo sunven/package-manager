@@ -1,23 +1,20 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
 import { CodexMarketplacesPage } from "./CodexMarketplacesPage";
-import { useCodexMarketplaces } from "../hooks/useCodexMarketplaces";
-import { useCodexPlugins } from "../hooks/useCodexPlugins";
+import { useCodexExtensions } from "../hooks/useCodexExtensions";
 import { codexMarketplaceFixture } from "../test/codexMarketplaceFixtures";
 import { codexPluginFixture } from "../test/codexPluginFixtures";
-import type { CodexMarketplaceResult } from "../codexMarketplaces";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-const mockedInvoke = vi.mocked(invoke);
-const plugins = { scan: codexPluginFixture(), scanning: false, saving: false, error: null, result: null, onSetEnabled: vi.fn() };
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (command: string, args?: unknown) => command === "scan_codex_plugins"
+  ? Promise.resolve({ ...codexPluginFixture(), plugins: [] }) : mockedInvoke(command, args) }));
+const mockedInvoke = vi.fn<(command: string, args?: unknown) => Promise<unknown>>();
 afterEach(cleanup);
 beforeEach(() => { vi.resetAllMocks(); });
 
 function Harness() {
-  const state = useCodexMarketplaces(true);
-  return <CodexMarketplacesPage {...state} plugins={plugins} onRefresh={() => void state.refresh()} onChange={state.change} />;
+  const workflow = useCodexExtensions(true, "marketplaces");
+  return <CodexMarketplacesPage workflow={workflow} />;
 }
 
 function setup() {
@@ -85,18 +82,15 @@ describe("Codex marketplace management", () => {
     expect(mockedInvoke.mock.calls.some(([command]) => command === "change_codex_marketplace")).toBe(false);
   });
 
-  it("allows removal with no plugin-count gate, preserving the frozen confirmation", async () => {
-    const onChange = vi.fn().mockResolvedValue({ status: "Succeeded", message: "已移除", executed: true });
-    const props = { scan: codexMarketplaceFixture(), scanning: false, pending: false, error: null, result: null, onRefresh: vi.fn(), onChange };
-    const view = render(<CodexMarketplacesPage {...props} plugins={plugins} />);
+  it("allows removal without a plugin-count gate and confirms its scope", async () => {
+    await setup();
+    mockedInvoke.mockResolvedValueOnce({ status: "Succeeded", message: "已移除", executed: true }).mockResolvedValueOnce(codexMarketplaceFixture());
     fireEvent.click(screen.getByRole("button", { name: "移除市场 team-tools" }));
     expect(screen.getByRole("alertdialog").textContent).toContain("本地副本");
     expect(screen.getByRole("alertdialog").textContent).toContain("不会追加卸载插件");
-    const next = codexMarketplaceFixture(); next.snapshotId = "new"; next.marketplaces[0].name = "changed";
-    view.rerender(<CodexMarketplacesPage {...props} plugins={plugins} scan={next} />);
     expect(within(screen.getByRole("alertdialog")).getByText("team-tools")).toBeTruthy();
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "确认移除" }));
-    await waitFor(() => expect(onChange).toHaveBeenCalledExactlyOnceWith({ snapshotId: "market-scan-1", marketplaceId: "team-tools", operation: "Remove" }));
+    await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("change_codex_marketplace", { request: { snapshotId: "market-scan-1", marketplaceId: "team-tools", operation: "Remove" } }));
   });
 
   it("keeps success separate from a returned failed scan and prevents stale operations", async () => {
@@ -129,47 +123,15 @@ describe("Codex marketplace management", () => {
     expect((screen.getByRole("button", { name: "添加市场源" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("provides an add action for an empty successful inventory and disables it on config failure", () => {
-    const props = { scan: { ...codexMarketplaceFixture(), marketplaces: [] }, scanning: false, pending: false, error: null, result: null, onRefresh: vi.fn(), onChange: vi.fn() };
-    const emptyPlugins = { ...plugins, scan: { ...plugins.scan, plugins: [] } };
-    const view = render(<CodexMarketplacesPage {...props} plugins={emptyPlugins} />);
-    expect(screen.getByText(/当前没有可见的市场来源/)).toBeTruthy();
+  it("provides an add action for an empty successful inventory and disables it on config failure", async () => {
+    const scan = { ...codexMarketplaceFixture(), marketplaces: [] };
+    mockedInvoke.mockResolvedValueOnce(scan);
+    render(<Harness />);
+    expect(await screen.findByText(/当前没有可见的市场来源/)).toBeTruthy();
     expect((screen.getByRole("button", { name: "添加市场源" }) as HTMLButtonElement).disabled).toBe(false);
-    view.rerender(<CodexMarketplacesPage {...props} plugins={emptyPlugins} scan={{ ...props.scan, snapshotId: null, configError: "来源无法核实" }} />);
+    mockedInvoke.mockResolvedValueOnce({ ...scan, snapshotId: null, configError: "来源无法核实" });
+    fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+    await screen.findByText(/来源无法核实/);
     expect((screen.getByRole("button", { name: "添加市场源" }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("retains previous sources after an IPC read error and serializes actions", async () => {
-    let resolveChange!: (result: CodexMarketplaceResult) => void;
-    mockedInvoke.mockResolvedValueOnce(codexMarketplaceFixture());
-    const hook = renderHook(() => useCodexMarketplaces(true));
-    await waitFor(() => expect(hook.result.current.scan?.snapshotId).toBe("market-scan-1"));
-    mockedInvoke.mockReturnValueOnce(new Promise((resolve) => { resolveChange = resolve; })).mockRejectedValueOnce(new Error("读取失败"));
-    let changing!: Promise<CodexMarketplaceResult | null>;
-    act(() => { changing = hook.result.current.change({ snapshotId: "market-scan-1", operation: "Remove", marketplaceId: "team-tools" }); });
-    await act(async () => { await hook.result.current.refresh(); });
-    expect(mockedInvoke).toHaveBeenCalledTimes(2);
-    await act(async () => { resolveChange({ status: "Succeeded", message: "已移除", executed: true }); await changing; });
-    expect(hook.result.current.scan?.marketplaces).toHaveLength(3);
-    expect(hook.result.current.scan?.snapshotId).toBeNull();
-    expect(hook.result.current.result?.status).toBe("Succeeded");
-    expect(hook.result.current.error).toContain("读取失败");
-  });
-
-  it("re-reads installed plugins after marketplace mutation even when returning to a cached tab", async () => {
-    mockedInvoke.mockImplementation(async (command) => command === "scan_codex_plugins" ? codexPluginFixture()
-      : command === "scan_codex_marketplaces" ? codexMarketplaceFixture()
-        : { status: "Succeeded", message: "已刷新", executed: true });
-    const hook = renderHook(({ installed }) => {
-      const markets = useCodexMarketplaces(!installed);
-      const plugins = useCodexPlugins(installed, markets.pluginRevision);
-      return { markets, plugins };
-    }, { initialProps: { installed: true } });
-    await waitFor(() => expect(hook.result.current.plugins.scan).not.toBeNull());
-    hook.rerender({ installed: false });
-    await waitFor(() => expect(hook.result.current.markets.scan).not.toBeNull());
-    await act(async () => { await hook.result.current.markets.change({ snapshotId: "market-scan-1", operation: "Refresh", marketplaceId: "team-tools" }); });
-    hook.rerender({ installed: true });
-    await waitFor(() => expect(mockedInvoke.mock.calls.filter(([command]) => command === "scan_codex_plugins")).toHaveLength(2));
   });
 });

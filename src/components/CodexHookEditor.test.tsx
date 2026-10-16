@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { CodexHooksPage } from "./CodexHooksPage";
-import { useCodexHooks } from "../hooks/useCodexHooks";
+import { useCodexExtensions } from "../hooks/useCodexExtensions";
 import { codexHookDefinitionScanFixture } from "../test/codexHookFixtures";
 import type { CodexHookScan, HookDefinitionPreview, HookDefinitionRequest } from "../codexHooks";
 
@@ -13,9 +13,8 @@ afterEach(cleanup);
 beforeEach(() => vi.resetAllMocks());
 
 function Harness() {
-  const hooks = useCodexHooks(true);
-  return <CodexHooksPage {...hooks} onRefresh={() => void hooks.refresh()} onSetEnabled={hooks.setEnabled}
-    onPrepareDefinition={hooks.prepareDefinition} onCommitDefinition={hooks.commitDefinition} onShowPlugins={vi.fn()} />;
+  const workflow = useCodexExtensions(true, "hooks");
+  return <CodexHooksPage workflow={workflow} onShowPlugins={vi.fn()} />;
 }
 
 function preview(request: HookDefinitionRequest): HookDefinitionPreview {

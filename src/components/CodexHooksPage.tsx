@@ -10,38 +10,32 @@ import { CardContent } from "../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import {
   hookEventLabel, hookOperation, hookSource, hookTrustLabel,
-  definitionHook, type CodexHook, type CodexHookChangeRequest, type CodexHookChangeResult, type CodexHookScan,
-  type HookDefinitionRequest, type HookDefinitionPreview,
+  definitionHook, type CodexHook,
 } from "../codexHooks";
+import type { CodexExtensions } from "../hooks/useCodexExtensions";
 import { CodexHookEditor, type HookEditorSelection } from "./CodexHookEditor";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
-type Confirmation = { hook: CodexHook; request: CodexHookChangeRequest; configPath: string };
-
-export function CodexHooksPage({ scan, scanning, saving, preparing = false, error, result, onRefresh, onSetEnabled, onShowPlugins, onPrepareDefinition, onCommitDefinition }: {
-  scan: CodexHookScan | null;
-  scanning: boolean;
-  saving: boolean;
-  preparing?: boolean;
-  error: string | null;
-  result: CodexHookChangeResult | null;
-  onRefresh: () => void;
-  onSetEnabled: (request: CodexHookChangeRequest) => Promise<void>;
+export function CodexHooksPage({ workflow, onShowPlugins }: {
+  workflow: CodexExtensions;
   onShowPlugins: () => void;
-  onPrepareDefinition?: (request: HookDefinitionRequest) => Promise<HookDefinitionPreview>;
-  onCommitDefinition?: (planId: string) => Promise<CodexHookChangeResult>;
 }) {
+  const { scan, scanning, current, error, result } = workflow.hooks;
+  const confirmation = workflow.operation?.kind === "hook" ? workflow.operation : null;
+  const preparing = workflow.operation?.phase === "preparing";
+  const saving = workflow.processing && !preparing;
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const [editor, setEditor] = useState<HookEditorSelection | null>(null);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const refreshButton = useRef<HTMLButtonElement | null>(null);
   const busy = scanning || saving || preparing;
-  const stale = Boolean(error) || Boolean(scan && scan.status !== "Ready");
-  const disabled = busy || stale || Boolean(scan?.configError || scan?.message) || !scan?.snapshotId || scan.featureEnabled !== true;
-  const failure = error ?? (scan?.status !== "Ready" ? scan?.message : null);
+  const blocked = busy || Boolean(workflow.operation);
+  const stale = Boolean(error) || Boolean(scan && !current);
+  const disabled = blocked || stale || Boolean(scan?.configError || scan?.message) || !current || scan?.featureEnabled !== true;
+  const failure = error ?? (scan?.status !== "Ready" ? scan?.message : scan && !current && !scanning ? "Hooks 清单已过期，请刷新。" : null);
   const definitions = scan?.definitions;
-  const definitionDisabled = busy || stale || !definitions?.snapshotId || Boolean(definitions.readOnlyReason) || !onPrepareDefinition || !onCommitDefinition;
+  const definitionDisabled = blocked || !definitions?.current || Boolean(definitions.readOnlyReason);
   const rows = [
     ...(scan?.hooks ?? []).map((hook) => ({ hook, definition: definitions?.entries.find((entry) => entry.nativeKey === hook.key) })),
     ...(definitions?.entries ?? []).filter((entry) => !scan?.hooks.some((hook) => hook.key === entry.nativeKey))
@@ -53,20 +47,17 @@ export function CodexHooksPage({ scan, scanning, saving, preparing = false, erro
     setEditor(selection);
   }
 
-  function requestChange(hook: CodexHook, button: HTMLButtonElement) {
-    if (disabled || hook.readOnlyReason || !scan?.snapshotId) return;
+  async function requestChange(hook: CodexHook, button: HTMLButtonElement) {
+    if (disabled || hook.readOnlyReason) return;
     trigger.current = button;
-    setConfirmation({
-      hook: { ...hook }, configPath: scan.configPath,
-      request: { snapshotId: scan.snapshotId, key: hook.key, enabled: !hook.enabled },
-    });
+    setRequestError(await workflow.request({ kind: "hook", key: hook.key, enabled: !hook.enabled }));
   }
 
   return (
     <section className="view-grid" aria-label="Codex Hooks 管理" aria-busy={busy}>
       <Panel>
         <PanelHead title="Codex Hooks" action={
-          <div className="flex flex-wrap gap-2"><Button ref={refreshButton} disabled={busy || Boolean(confirmation) || Boolean(editor)} onClick={onRefresh} size="sm" type="button" variant="outline">
+          <div className="flex flex-wrap gap-2"><Button ref={refreshButton} disabled={blocked || Boolean(editor)} onClick={() => void workflow.refresh()} size="sm" type="button" variant="outline">
             <RefreshCw aria-hidden="true" className={scanning ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
             {scanning ? "读取中" : "刷新"}
           </Button>
@@ -80,7 +71,7 @@ export function CodexHooksPage({ scan, scanning, saving, preparing = false, erro
           </div>
           <p className="text-xs text-muted-foreground">
             用户定义可新增、编辑和删除；插件定义只读，可单项启停。项目配置与已禁用插件未展开。{" "}
-            <button className="cursor-pointer text-primary underline underline-offset-4 disabled:cursor-default disabled:opacity-50" disabled={busy || Boolean(confirmation) || Boolean(editor)} onClick={onShowPlugins} type="button">前往插件市场</button>
+            <button className="cursor-pointer text-primary underline underline-offset-4 disabled:cursor-default disabled:opacity-50" disabled={blocked || Boolean(editor)} onClick={onShowPlugins} type="button">前往插件市场</button>
           </p>
           <p className="text-xs text-muted-foreground" role="status">
             {preparing ? "正在核对定义变更，尚未保存…" : saving ? "正在保存并重新核对设置…" : scanning ? scan ? "正在读取，暂时显示上次结果。" : "正在读取 Hooks…" : "在其他地方修改设置后，请手动刷新；保存后请在新会话中验证。"}
@@ -88,6 +79,7 @@ export function CodexHooksPage({ scan, scanning, saving, preparing = false, erro
         </CardContent>
       </Panel>
 
+      {requestError ? <p className="text-sm text-destructive" role="alert">{requestError}</p> : null}
       {result ? <Alert variant={result.status === "Failed" || result.status === "Partial" ? "destructive" : "default"} role="status">
         <AlertTitle>{result.status === "Saved" ? "配置已保存" : result.status === "Partial" ? "保存未完整确认，请核对实际变更" : result.status === "Conflict" ? "设置已变化，请重新确认" : "保存设置时遇到问题"}</AlertTitle>
         <AlertDescription>{result.message}</AlertDescription>
@@ -168,37 +160,36 @@ export function CodexHooksPage({ scan, scanning, saving, preparing = false, erro
               </Fragment>;
             })}</TableBody>
           </Table>
-        ) : <EmptyState message={stale ? "清单暂不可用。解决上方问题后，请刷新重试。" : definitions?.snapshotId ? "当前没有用户定义。点击“新增 Hook”配置第一个事件处理程序。" : scan?.featureEnabled === false ? "开启总开关后，可重新读取可见的 Hooks。" : scan?.status === "Ready" && scan.featureEnabled === true && !scan.message ? "当前范围未返回 Hooks；已禁用插件和项目配置不在此清单中。" : "等待核实 Hooks 清单，请查看上方状态。"} />}
+        ) : <EmptyState message={stale ? "清单暂不可用。解决上方问题后，请刷新重试。" : definitions?.current ? "当前没有用户定义。点击“新增 Hook”配置第一个事件处理程序。" : scan?.featureEnabled === false ? "开启总开关后，可重新读取可见的 Hooks。" : scan?.status === "Ready" && scan.featureEnabled === true && !scan.message ? "当前范围未返回 Hooks；已禁用插件和项目配置不在此清单中。" : "等待核实 Hooks 清单，请查看上方状态。"} />}
       </Panel>
 
-      {editor && definitions && onPrepareDefinition && onCommitDefinition ? <CodexHookEditor selection={editor} definitions={definitions} busy={busy}
-        onClose={() => setEditor(null)} onRefresh={onRefresh} onPrepare={onPrepareDefinition} onCommit={onCommitDefinition}
+      {editor && definitions ? <CodexHookEditor selection={editor} definitions={definitions} workflow={workflow}
+        onClose={() => setEditor(null)}
         onRestoreFocus={() => { if (trigger.current?.isConnected && !trigger.current.disabled) trigger.current.focus(); else refreshButton.current?.focus(); }} /> : null}
 
-      <AlertDialog open={confirmation !== null} onOpenChange={(open) => { if (!open && !saving) setConfirmation(null); }}>
+      <AlertDialog open={confirmation !== null} onOpenChange={(open) => { if (!open && confirmation) workflow.cancel(confirmation.id); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto" onCloseAutoFocus={(event) => {
           event.preventDefault();
           if (trigger.current?.isConnected && !trigger.current.disabled) trigger.current.focus();
           else refreshButton.current?.focus();
         }}>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认{confirmation?.request.enabled ? "启用" : "禁用"} Hook</AlertDialogTitle>
+            <AlertDialogTitle>确认{confirmation?.intent.enabled ? "启用" : "禁用"} Hook</AlertDialogTitle>
             <AlertDialogDescription>只保存这条 Hook 的启用设置，信任记录保持不变。影响使用同一 Codex 目录的客户端；请在新会话中验证。</AlertDialogDescription>
           </AlertDialogHeader>
           {confirmation ? <dl className="grid gap-3 text-sm">
-            <HookDetail label="事件与来源" value={hookEventLabel(confirmation.hook.eventName) + " · " + hookSource(confirmation.hook)} />
-            <HookDetail label="操作内容" value={hookOperation(confirmation.hook)} mono />
-            <HookDetail label="定义来源" value={confirmation.hook.sourcePath} mono />
-            <HookDetail label="变更" value={(confirmation.hook.enabled ? "启用" : "禁用") + " → " + (confirmation.request.enabled ? "启用" : "禁用")} />
+            <HookDetail label="事件与来源" value={hookEventLabel(confirmation.target.eventName) + " · " + hookSource(confirmation.target)} />
+            <HookDetail label="操作内容" value={hookOperation(confirmation.target)} mono />
+            <HookDetail label="定义来源" value={confirmation.target.sourcePath} mono />
+            <HookDetail label="变更" value={(confirmation.target.enabled ? "启用" : "禁用") + " → " + (confirmation.intent.enabled ? "启用" : "禁用")} />
             <HookDetail label="用户配置路径" value={confirmation.configPath} mono />
           </dl> : null}
           <AlertDialogFooter>
             <AlertDialogCancel asChild><Button disabled={saving} type="button" variant="outline">取消</Button></AlertDialogCancel>
-            <AlertDialogAction asChild><Button disabled={saving || scanning} onClick={async (event) => {
+            <AlertDialogAction asChild><Button disabled={saving} onClick={async (event) => {
               event.preventDefault();
               if (!confirmation) return;
-              await onSetEnabled(confirmation.request);
-              setConfirmation(null);
+              await workflow.confirm(confirmation.id);
             }} type="button">{saving ? "正在保存…" : "保存设置"}</Button></AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

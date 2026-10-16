@@ -4,9 +4,9 @@ import { Button } from "../../components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import {
-  hookEvents, type CodexHookDefinition, type CodexHookDefinitions, type CodexHookChangeResult,
-  type HookDefinitionFields, type HookDefinitionPreview, type HookDefinitionRequest, type HookSourceFormat,
+  hookEvents, type CodexHookDefinition, type HookDefinitionFields, type HookSourceFormat,
 } from "../codexHooks";
+import type { CodexDefinitionView, CodexExtensions } from "../hooks/useCodexExtensions";
 import { errorToString } from "../utils/format";
 
 const control = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50";
@@ -17,21 +17,18 @@ export type HookEditorSelection = { action: "create" | "update" | "delete"; defi
 function text(value: unknown) { return typeof value === "string" ? value : ""; }
 function optional(value: string, original?: unknown) { return value || original === "" ? value : null; }
 
-export function CodexHookEditor({ selection, definitions, busy, onClose, onRefresh, onPrepare, onCommit, onRestoreFocus }: {
+export function CodexHookEditor({ selection, definitions, workflow, onClose, onRestoreFocus }: {
   selection: HookEditorSelection;
-  definitions: CodexHookDefinitions;
-  busy: boolean;
+  definitions: CodexDefinitionView;
+  workflow: CodexExtensions;
   onClose: () => void;
-  onRefresh: () => void;
-  onPrepare: (request: HookDefinitionRequest) => Promise<HookDefinitionPreview>;
-  onCommit: (planId: string) => Promise<CodexHookChangeResult>;
   onRestoreFocus: () => void;
 }) {
   const definition = selection.definition;
   const [basis, setBasis] = useState(definition);
   const original = basis?.handler ?? {};
   const deleting = selection.action === "delete";
-  const [snapshotId, setSnapshotId] = useState(definitions.snapshotId);
+  const [basisRevision, setBasisRevision] = useState(definitions.revision);
   const [source, setSource] = useState<HookSourceFormat | "">(() => definition?.source ?? definitions.defaultSource ?? "");
   const [event, setEvent] = useState(definition?.event ?? "SessionStart");
   const [matcher, setMatcher] = useState(definition?.matcher ?? "");
@@ -46,16 +43,21 @@ export function CodexHookEditor({ selection, definitions, busy, onClose, onRefre
   const [asyncValue, setAsyncValue] = useState(original.async === undefined ? "" : String(original.async));
   const [contextLimit, setContextLimit] = useState(original.additionalContextLimit === undefined ? "" : String(original.additionalContextLimit));
   const [enabled, setEnabled] = useState(definition?.enabled ?? true);
-  const [preview, setPreview] = useState<HookDefinitionPreview | null>(null);
+  const operation = workflow.operation?.kind === "definition" ? workflow.operation : null;
+  const preview = operation?.preview;
   const [error, setError] = useState<string | null>(null);
-  const [working, setWorking] = useState(false);
-  const processing = busy || working;
-  const changedSnapshot = snapshotId !== definitions.snapshotId;
+  const processing = workflow.processing || workflow.hooks.scanning || Boolean(workflow.operation && !operation);
+  const changedSnapshot = basisRevision !== definitions.revision;
   const current = definition ? definitions.entries.find((entry) => entry.id === definition.id) : null;
-  const unavailable = !definitions.snapshotId || Boolean(definitions.readOnlyReason) || Boolean(definition && !current);
+  const unavailable = !definitions.current || Boolean(definitions.readOnlyReason) || Boolean(definition && !current);
   const title = preview ? deleting ? "确认删除 Hook" : "确认保存 Hook" : deleting ? "删除 Hook" : definition ? "编辑 Hook" : "新增 Hook";
   const supportsMatcher = !["Stop", "Interrupt", "UserPromptSubmit"].includes(event);
   const sourcePath = definitions.sources.find((item) => item.format === source)?.path;
+
+  function close() {
+    if (operation) workflow.cancel(operation.id);
+    onClose();
+  }
 
   function number(value: string, label: string) {
     if (value === "") return null;
@@ -67,7 +69,7 @@ export function CodexHookEditor({ selection, definitions, busy, onClose, onRefre
   async function prepare() {
     setError(null);
     try {
-      if (!source || !snapshotId) throw new Error("请选择保存位置，并刷新可维护的定义清单。");
+      if (!source || unavailable || changedSnapshot) throw new Error("请选择保存位置，并刷新可维护的定义清单。");
       let fields: HookDefinitionFields | undefined;
       if (!deleting) {
         let parsed: Record<string, unknown> | null = null;
@@ -83,16 +85,15 @@ export function CodexHookEditor({ selection, definitions, busy, onClose, onRefre
           } : { server, tool, input: parsed }),
         };
       }
-      setWorking(true);
-      setPreview(await onPrepare({ snapshotId, source, action: selection.action, id: definition?.id,
+      setError(await workflow.request({ kind: "definition", basisRevision, source, action: selection.action, id: definition?.id,
         ...(!deleting ? { event, matcher: supportsMatcher ? optional(matcher, basis?.matcher) : null, fields,
           ...(selection.action === "create" ? { enabled } : {}) } : {}) }));
     } catch (caught) {
       setError(errorToString(caught));
-    } finally { setWorking(false); }
+    }
   }
 
-  return <Dialog open onOpenChange={(open) => { if (!open && !processing) onClose(); }}>
+  return <Dialog open onOpenChange={(open) => { if (!open && !processing) close(); }}>
     <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-3xl overflow-y-auto" showCloseButton={!processing} onInteractOutside={(event) => event.preventDefault()}
       onCloseAutoFocus={(event) => { event.preventDefault(); onRestoreFocus(); }}>
       <DialogHeader>
@@ -106,8 +107,8 @@ export function CodexHookEditor({ selection, definitions, busy, onClose, onRefre
           <p>{definitions.readOnlyReason ?? (definition && !current ? "所选定义已不存在。表单内容保留在下方，请核对来源后重新选择。" : "表单内容已保留。配置快照已变化，重新检查前请核对当前定义及启用选择。")}</p>
           {current ? <><p>当前启用选择：{current.enabled === null ? "未知" : current.enabled ? "启用" : "禁用"}</p><pre className={rawText}>{JSON.stringify({ event: current.event, matcher: current.matcher, handler: current.handler }, null, 2)}</pre></> : null}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={processing} onClick={onRefresh} size="sm" type="button" variant="outline">刷新定义清单</Button>
-            {!unavailable && changedSnapshot ? <Button disabled={processing} onClick={() => { setSnapshotId(definitions.snapshotId); setBasis(current ?? definition); setPreview(null); setError(null); }} size="sm" type="button" variant="outline">已核对，使用当前定义重新检查</Button> : null}
+            <Button disabled={processing} onClick={() => void workflow.refresh()} size="sm" type="button" variant="outline">刷新定义清单</Button>
+            {!unavailable && changedSnapshot ? <Button disabled={processing} onClick={() => { setBasisRevision(definitions.revision); setBasis(current ?? definition); if (operation) workflow.cancel(operation.id); setError(null); }} size="sm" type="button" variant="outline">已核对，使用当前定义重新检查</Button> : null}
           </div>
         </AlertDescription>
       </Alert> : null}
@@ -127,15 +128,13 @@ export function CodexHookEditor({ selection, definitions, busy, onClose, onRefre
         </ul></div> : null}
         <p className="text-xs text-muted-foreground">其他条目的定义和启用选择保持不变。身份变化的条目会撤销旧信任，不会自动获得信任。</p>
         <DialogFooter>
-          <Button disabled={processing} onClick={() => setPreview(null)} type="button" variant="outline">{deleting ? "返回" : "返回编辑"}</Button>
-          <Button disabled={processing || unavailable || changedSnapshot} variant={deleting ? "destructive" : "default"} type="button" onClick={async () => {
-            setWorking(true); setError(null);
-            try {
-              const result = await onCommit(preview.planId);
-              if (result.status === "Saved") onClose();
-              else { setError(result.message); setPreview(null); }
-            } catch (caught) { setError(errorToString(caught)); setPreview(null); }
-            finally { setWorking(false); }
+          <Button disabled={processing} onClick={() => { if (operation) workflow.cancel(operation.id); }} type="button" variant="outline">{deleting ? "返回" : "返回编辑"}</Button>
+          <Button disabled={processing} variant={deleting ? "destructive" : "default"} type="button" onClick={async () => {
+            if (!operation) return;
+            setError(null);
+            const result = await workflow.confirm(operation.id);
+            if (result?.status === "Saved") onClose();
+            else if (result) setError(result.message);
           }}>{processing ? "正在保存…" : deleting ? "确认删除" : "确认保存"}</Button>
         </DialogFooter>
       </div> : <form className="grid min-w-0 gap-4" onSubmit={(event) => { event.preventDefault(); void prepare(); }}>
@@ -170,8 +169,8 @@ export function CodexHookEditor({ selection, definitions, busy, onClose, onRefre
           {basis ? <details className="min-w-0"><summary className="cursor-pointer text-xs text-muted-foreground">原始定义（只读）</summary><pre className={rawText + " mt-2"}>{JSON.stringify({ event: basis.event, matcher: basis.matcher, handler: original }, null, 2)}</pre></details> : null}
         </fieldset>}
         <DialogFooter>
-          {(error && !changedSnapshot) ? <Button disabled={processing} onClick={onRefresh} type="button" variant="outline">刷新定义清单</Button> : null}
-          <Button disabled={processing} onClick={onClose} type="button" variant="outline">取消</Button>
+          {(error && !changedSnapshot) ? <Button disabled={processing} onClick={() => void workflow.refresh()} type="button" variant="outline">刷新定义清单</Button> : null}
+          <Button disabled={processing} onClick={close} type="button" variant="outline">取消</Button>
           <Button disabled={processing || unavailable || changedSnapshot || (!deleting && kind === "mcp_tool" && event === "SessionEnd")} type="submit">{processing ? "正在核实…" : deleting ? "检查删除影响" : "检查变更"}</Button>
         </DialogFooter>
       </form>}
