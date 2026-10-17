@@ -42,6 +42,8 @@ pub(crate) enum FailureKind {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PackageRow {
+    pub(crate) observation_id: String,
+    pub(crate) observed_versions: Option<Vec<String>>,
     pub(crate) name: String,
     pub(crate) version: String,
     pub(crate) path: Option<String>,
@@ -148,6 +150,7 @@ pub(crate) enum DiskUsageStatus {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ManagerSnapshot {
+    pub(crate) scope_key: Option<String>,
     pub(crate) id: ManagerId,
     pub(crate) label: String,
     pub(crate) status: ManagerStatus,

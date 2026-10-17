@@ -12,6 +12,8 @@ mod codex_plugins;
 mod codex_skills;
 mod command;
 mod disk_usage;
+mod environment_inspection;
+mod manager_history;
 mod managers;
 mod observed_file;
 mod project_cleanup;
@@ -540,6 +542,29 @@ fn open_project_data_path(
 }
 
 #[tauri::command]
+async fn inspect_environment(managers: Vec<ManagerId>) -> Result<environment_inspection::Inspection, String> {
+    tauri::async_runtime::spawn_blocking(move || environment_inspection::inspect(&managers)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn save_manager_snapshot(draft: manager_history::SnapshotDraft, state: tauri::State<'_, manager_history::HistoryState>) -> Result<manager_history::ArchivedSnapshot, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.save(draft)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn list_manager_history(manager: ManagerId, state: tauri::State<'_, manager_history::HistoryState>) -> Result<manager_history::History, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.list(manager)).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_maintenance_verification(id: String, status: String, message: Option<String>, after_snapshot_id: Option<String>, state: tauri::State<'_, manager_history::HistoryState>) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.verify(&id, &status, message, after_snapshot_id)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn scan_manager(manager: ManagerId) -> Result<ManagerScanSnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || scan_manager_snapshot(manager))
         .await
@@ -572,37 +597,39 @@ async fn hydrate_pip_outdated(python_executable: String) -> Result<PipOutdatedPr
 #[tauri::command]
 async fn run_npm_maintenance(
     operation: NpmMaintenanceOperation,
-) -> Result<MaintenanceRunPreview, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        run_npm_maintenance_with_runner(operation, &run_command_owned)
-    })
-    .await
-    .map_err(|err| format!("npm maintenance failed: {err}"))
+    before_snapshot_id: Option<String>,
+    state: tauri::State<'_, manager_history::HistoryState>,
+) -> Result<manager_history::Receipt<MaintenanceRunPreview>, String> {
+    let state = state.inner().clone();
+    let NpmMaintenanceOperation::UninstallGlobalPackage { ref package_name } = operation;
+    let target = package_name.clone();
+    tauri::async_runtime::spawn_blocking(move || state.run(ManagerId::Npm, "uninstallGlobalPackage", Some(target), before_snapshot_id,
+        || run_npm_maintenance_with_runner(operation, &run_command_owned), manager_history::uninstall_summary))
+        .await.map_err(|err| format!("npm maintenance failed: {err}"))
 }
 
 #[tauri::command]
 async fn run_pnpm_maintenance(
     operation: PnpmMaintenanceOperation,
-) -> Result<MaintenanceRunPreview, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        run_pnpm_maintenance_with_runner(operation, &run_command_owned)
-    })
-    .await
-    .map_err(|err| format!("pnpm maintenance failed: {err}"))
+    before_snapshot_id: Option<String>,
+    state: tauri::State<'_, manager_history::HistoryState>,
+) -> Result<manager_history::Receipt<MaintenanceRunPreview>, String> {
+    let state = state.inner().clone();
+    let PnpmMaintenanceOperation::UninstallGlobalPackage { ref package_name } = operation;
+    let target = package_name.clone();
+    tauri::async_runtime::spawn_blocking(move || state.run(ManagerId::Pnpm, "uninstallGlobalPackage", Some(target), before_snapshot_id,
+        || run_pnpm_maintenance_with_runner(operation, &run_command_owned), manager_history::uninstall_summary))
+        .await.map_err(|err| format!("pnpm maintenance failed: {err}"))
 }
 
-/// Runs the cleanup plan for `manager`.
-///
-/// `manager` is the entire parameter surface on purpose: the frontend cannot
-/// express which command runs, so the allowlist is the static plan table in
-/// `managers::cleanup` rather than a convention. See ADR-0001.
+/// Execution remains manager-only and allowlisted. The optional archive ID is
+/// observation metadata and grants no authority over commands or paths.
 #[tauri::command]
-async fn run_cache_cleanup(manager: ManagerId) -> Result<CacheCleanupRun, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        run_cache_cleanup_with_runner(manager, &run_command_owned)
-    })
-    .await
-    .map_err(|err| format!("Cache cleanup failed: {err}"))
+async fn run_cache_cleanup(manager: ManagerId, before_snapshot_id: Option<String>, state: tauri::State<'_, manager_history::HistoryState>) -> Result<manager_history::Receipt<CacheCleanupRun>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.run(manager, "cleanupCache", None, before_snapshot_id,
+        || run_cache_cleanup_with_runner(manager, &run_command_owned), manager_history::cleanup_summary))
+        .await.map_err(|err| format!("Cache cleanup failed: {err}"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -626,6 +653,7 @@ pub fn run() {
                 .map_err(|err| format!("Could not resolve app config directory: {err}"))?
                 .join("build-artifacts.json");
             app.manage(ProjectCleanupState::load(settings_path));
+            app.manage(manager_history::HistoryState::new(app.path().app_data_dir()?.join("manager-history")));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -671,6 +699,10 @@ pub fn run() {
             clean_project_data_candidate,
             open_project_cleanup_root,
             open_project_data_path,
+            inspect_environment,
+            save_manager_snapshot,
+            list_manager_history,
+            update_maintenance_verification,
             scan_manager,
             measure_path_size,
             hydrate_homebrew_cleanup,

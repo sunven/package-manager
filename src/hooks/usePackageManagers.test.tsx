@@ -37,7 +37,7 @@ describe("manager scan lifecycle", () => {
     vi.mocked(invoke).mockResolvedValueOnce({ status: "Ready", command, outdated: [], message: null, failure: null });
     await act(async () => { await result.current.actions.retrySupplement("pip"); });
     expect(result.current.managerSnapshots.Pip?.pip?.outdatedFailure).toBeNull();
-    expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual(["scan_manager", "hydrate_pip_outdated", "hydrate_pip_outdated"]);
+    expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual(["scan_manager", "hydrate_pip_outdated", "save_manager_snapshot", "hydrate_pip_outdated"]);
   });
   it("blocks refresh and retries during maintenance confirmation, then allows scanning after cancellation", async () => {
     vi.mocked(invoke).mockResolvedValue({ manager: managerFixture(), scanDurationMs: 1 });
@@ -49,12 +49,12 @@ describe("manager scan lifecycle", () => {
       await result.current.actions.refreshEnabled();
       await result.current.actions.retrySupplement("paths");
     });
-    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")).toHaveLength(1);
     await act(async () => {
       result.current.actions.cancelMaintenance();
       await result.current.actions.refresh();
     });
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")).toHaveLength(2);
   });
   it("keeps previous data on both command failure and transport failure", async () => {
     const previous = managerFixture("Npm", { version: "old" });
@@ -83,10 +83,10 @@ describe("manager scan lifecycle", () => {
     const { result } = renderHook(usePackageManagers);
     let all!: Promise<void>;
     await act(async () => { all = result.current.actions.refreshEnabled(); await Promise.resolve(); });
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")).toHaveLength(2);
     act(() => result.current.actions.setManagerEnabled("Pip", false));
     await act(async () => { finish(); await all; });
-    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")).toHaveLength(2);
     expect(result.current.scanningAll).toBe(false);
   });
 
@@ -101,7 +101,7 @@ describe("manager scan lifecycle", () => {
     await act(async () => { await result.current.actions.retrySupplement("paths"); });
     expect(result.current.currentManager?.paths[0].size.bytes).toBe(42);
     expect(result.current.scanStates.Npm?.error).toBeNull();
-    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual(["scan_manager", "measure_path_size", "measure_path_size"]);
+    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual(["scan_manager", "measure_path_size", "save_manager_snapshot", "measure_path_size"]);
   });
 });
 
@@ -118,7 +118,7 @@ it("initializes once through StrictMode remount and keeps subscriptions and stal
     for (const callback of frames.values()) callback(0);
     frames.clear();
   });
-  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")).toHaveLength(1);
   expect(result.current.currentManager?.id).toBe("Npm");
   act(() => result.current.actions.requestCacheCleanup());
   const oldActions = result.current.actions;
@@ -131,7 +131,7 @@ it("initializes once through StrictMode remount and keeps subscriptions and stal
   });
   expect(result.current.maintenance?.id).toBe(newId);
   expect(result.current.maintenance?.phase).toBe("confirming");
-  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")).toHaveLength(1);
   unmount();
 });
 
@@ -143,8 +143,8 @@ it("keeps the confirmed manager when selection changes and sends the existing na
   act(() => result.current.actions.selectManager("Pip"));
   vi.mocked(invoke).mockResolvedValueOnce({ status: "Ready", command: { preview: "npm uninstall -g @scope/tool" }, stdout: "", stderr: "", message: null, failure: null });
   await act(async () => { await result.current.actions.confirmMaintenance(); });
-  expect(invoke).toHaveBeenNthCalledWith(2, "run_npm_maintenance", { operation: { kind: "uninstallGlobalPackage", packageName: "@scope/tool" } });
-  expect(invoke).toHaveBeenNthCalledWith(3, "scan_manager", { manager: "Npm" });
+  expect(invoke).toHaveBeenCalledWith("run_npm_maintenance", { beforeSnapshotId: null, operation: { kind: "uninstallGlobalPackage", packageName: "@scope/tool" } });
+  expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")[2]).toEqual(["scan_manager", { manager: "Npm" }]);
   expect(result.current.selectedManager).toBe("Pip");
   expect(result.current.maintenance?.execution?.status).toBe("succeeded");
 });

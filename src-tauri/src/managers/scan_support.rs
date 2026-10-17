@@ -21,6 +21,8 @@ pub(super) fn package_row(
     kind: PackageKind,
 ) -> PackageRow {
     PackageRow {
+        observation_id: serde_json::to_string(&(kind, &name)).unwrap(),
+        observed_versions: None,
         name,
         version,
         path,
@@ -92,6 +94,7 @@ pub(super) fn finish(mut snapshot: ManagerSnapshot) -> ManagerSnapshot {
 
 pub(super) fn empty_snapshot(id: ManagerId, label: &str) -> ManagerSnapshot {
     ManagerSnapshot {
+        scope_key: None,
         id,
         label: label.to_string(),
         status: ManagerStatus::Failed,

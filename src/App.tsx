@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { GlobalSearch } from "./components/GlobalSearch";
+import { EnvironmentPanel, HistoryPanel } from "./components/ObservationTools";
+import { useObservationTools } from "./hooks/useObservationTools";
+import { locateSearchTarget, type SearchTarget } from "./globalSearch";
+import { toast } from "sonner";
+import { Alert, AlertTitle, AlertDescription } from "../components/ui/alert";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
@@ -49,6 +55,11 @@ export function App() {
   const state = usePackageManagers();
   const projectCleanup = useProjectCleanup();
   const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
+  const [overviewTab, setOverviewTab] = useState("overview");
+  const observations = useObservationTools(activeView === "health" && (overviewTab === "environment" || overviewTab === "history") ? overviewTab : null, state.enabledManagers, state.historyRevision);
+  const [searchFocus, setSearchFocus] = useState<(SearchTarget & { sequence: number }) | null>(null);
+  const focusSequence = useRef(0);
+  const locatedSequence = useRef(0);
   const [claudeTab, setClaudeTab] = useState("marketplaces");
   const claude = useClaudeWorkflow(activeView === "claude", claudeTab);
   const [codexTab, setCodexTab] = useState("marketplaces");
@@ -98,8 +109,40 @@ export function App() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [actions]);
 
+  function locate(target: SearchTarget) {
+    if (!state.enabledManagers.includes(target.managerId) || locateSearchTarget(target, state.managerSnapshots[target.managerId]) < 0) {
+      toast.warning("条目已变化，请重新搜索或刷新对应管理器。");
+      return;
+    }
+    actions.closePackageActions();
+    actions.setHomebrewFilter("All"); actions.setMavenFilter("All"); actions.setPipFilter("All");
+    actions.selectManager(target.managerId);
+    setSearchFocus({ ...target, sequence: ++focusSequence.current });
+    setActiveView("managers");
+  }
+
+  useEffect(() => {
+    if (!searchFocus || searchFocus.sequence === locatedSequence.current || activeView !== "managers" || selectedManager !== searchFocus.managerId) return;
+    let element: HTMLElement | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const frame = requestAnimationFrame(() => {
+      const index = locateSearchTarget(searchFocus, currentManager ?? undefined);
+      const attribute = searchFocus.kind === "package" ? "data-package-observation" : "data-path-observation";
+      element = Array.from(document.querySelectorAll<HTMLElement>(`[${attribute}]`)).find((node) => node.getAttribute(attribute) === searchFocus.observationId);
+      locatedSequence.current = searchFocus.sequence;
+      if (index < 0 || !element) { toast.warning("条目已变化，请重新搜索。"); return; }
+      if (searchFocus.kind === "package") actions.selectPackage(index);
+      element.scrollIntoView?.({ block: "center", inline: "nearest" });
+      (searchFocus.kind === "package" ? element.querySelector<HTMLElement>("button") : element)?.focus({ preventScroll: true });
+      element.classList.add("observation-located");
+      timer = setTimeout(() => element?.classList.remove("observation-located"), 1800);
+    });
+    return () => { cancelAnimationFrame(frame); if (timer) clearTimeout(timer); element?.classList.remove("observation-located"); };
+  }, [searchFocus, activeView, selectedManager, currentManager]);
+
   return (
     <Shell
+      search={<GlobalSearch managers={state.enabledManagers} snapshots={state.managerSnapshots} scanStates={state.scanStates} homeDirectory={state.homeDirectory} busy={state.maintenanceBusy || state.scanningAll} onRefresh={() => void actions.refreshEnabled()} onLocate={locate} />}
       activeView={activeView}
       managerCount={state.enabledManagers.length}
       managerSnapshots={state.managerSnapshots}
@@ -136,6 +179,7 @@ export function App() {
       scanning={scanningManagers.size > 0}
       theme={theme}
     >
+      {state.historyWarning ? <Alert className="mb-3"><AlertTitle>历史保存提示</AlertTitle><AlertDescription className="break-words">{state.historyWarning}</AlertDescription></Alert> : null}
       <MessageBanner homeDirectory={state.homeDirectory} message={state.uiMessage} />
       <MaintenanceConfirmationBanner
         operation={state.maintenance}
@@ -197,6 +241,11 @@ export function App() {
             scanningManagers={state.scanningManagers}
           />
         ) : activeView === "health" ? (
+          <Tabs value={overviewTab} onValueChange={setOverviewTab}>
+            <TabsList aria-label="总览视图"><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="environment">环境诊断</TabsTrigger><TabsTrigger value="history">历史</TabsTrigger></TabsList>
+            <TabsContent value="environment"><EnvironmentPanel state={observations} onCopy={(value) => void actions.copyPath(value)} onOpenManager={(manager) => { actions.selectManager(manager); setActiveView("managers"); }} /></TabsContent>
+            <TabsContent value="history"><HistoryPanel state={observations} homeDirectory={state.homeDirectory} /></TabsContent>
+            <TabsContent value="overview">
           <OverviewDashboard
             health={developmentHealth}
             homeDirectory={state.homeDirectory}
@@ -212,6 +261,8 @@ export function App() {
             }}
             onOpenView={setActiveView}
           />
+            </TabsContent>
+          </Tabs>
         ) : (
           <ManagerTabs
             managerIds={state.enabledManagers}
@@ -227,7 +278,7 @@ export function App() {
             <main className="view-grid min-[1100px]:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.7fr)] min-[1100px]:items-start">
               <Panel className="overflow-hidden">
                 <PackageTable
-                  key={selectedManager}
+                  key={`${selectedManager}:${searchFocus?.sequence ?? 0}`}
                   homeDirectory={state.homeDirectory}
                   manager={currentManager}
                   menuOpenIndex={state.openPackageActionMenuIndex}
@@ -262,6 +313,7 @@ export function App() {
                   onCopy={(value) => void actions.copyCommand(value)}
                 />
                 <PathPanel
+                  focusedPath={searchFocus?.managerId === selectedManager && searchFocus.kind === "path" ? searchFocus.observationId : undefined}
                   homeDirectory={state.homeDirectory}
                   manager={currentManager}
                   onCopyCleanupCommand={() => void actions.copyCleanupCommand()}

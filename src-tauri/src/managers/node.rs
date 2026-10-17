@@ -382,6 +382,7 @@ fn scan_nvm_node_versions(
                 "nvm versions directory",
                 PackageKind::Generic,
             );
+            row.observation_id = serde_json::to_string(&("node", &version)).unwrap();
             if current_version == Some(version.as_str()) {
                 push_signal(&mut row, PackageSignal::Current);
             }

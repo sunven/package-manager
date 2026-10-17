@@ -44,6 +44,80 @@ function setup(enabled: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Homebrew", "Pip",
 
 afterEach(() => vi.useRealTimers());
 
+describe("persistent observations and maintenance receipts", () => {
+  it("archives once after supplements settle and records failed scans without relabeling old data", async () => {
+    const { effects, workflow } = setup(["Homebrew"]);
+    const measurement = deferred<DiskUsage>();
+    effects.scan.mockResolvedValue(supplementedResult("Homebrew"));
+    effects.measure.mockReturnValue(measurement.promise);
+    const saveSnapshot = vi.fn(async (draft: import("./managerHistory").SnapshotDraft) => ({ ...draft, id: `saved-${saveSnapshot.mock.calls.length}`, capturedAt: 1 }));
+    Object.assign(effects, { saveSnapshot });
+    const reading = workflow.refresh("Homebrew");
+    await vi.waitFor(() => expect(effects.measure).toHaveBeenCalled());
+    expect(saveSnapshot).not.toHaveBeenCalled();
+    measurement.resolve(size); await reading;
+    expect(saveSnapshot).toHaveBeenCalledTimes(1);
+    expect(saveSnapshot.mock.calls[0][0].paths[0].bytes).toBe(42);
+    const previous = workflow.read().managerSnapshots.Homebrew;
+    effects.scan.mockRejectedValue(new Error("offline"));
+    await workflow.refresh("Homebrew");
+    expect(workflow.read().managerSnapshots.Homebrew).toBe(previous);
+    expect(saveSnapshot.mock.calls[1][0]).toMatchObject({ status: "Failed", packages: [], complete: false });
+  });
+
+  it("keeps execution and journal warnings when verification fails; retry only updates verification", async () => {
+    const { effects, workflow } = setup(["Npm"]);
+    let sequence = 0;
+    const recordVerification = vi.fn(async () => {});
+    Object.assign(effects, {
+      saveSnapshot: vi.fn(async (draft: import("./managerHistory").SnapshotDraft) => ({ ...draft, id: `snapshot-${++sequence}`, capturedAt: sequence })),
+      recordVerification,
+    });
+    await workflow.refresh("Npm");
+    effects.clean.mockResolvedValue({ ...success, historyId: "operation-1", historyWarning: "disk full" });
+    effects.scan.mockRejectedValue(new Error("read failed"));
+    workflow.requestCacheCleanup("Npm");
+    const id = workflow.read().maintenance!.id;
+    await workflow.confirmMaintenance(id);
+    expect(workflow.read().maintenance?.execution?.status).toBe("succeeded");
+    expect(workflow.read().historyWarning).toContain("disk full");
+    expect(recordVerification).toHaveBeenCalledWith("operation-1", "failed", "read failed", "snapshot-2");
+    effects.scan.mockResolvedValue(scanResult("Npm"));
+    await workflow.retryVerification(id);
+    expect(recordVerification).toHaveBeenLastCalledWith("operation-1", "succeeded", null, "snapshot-3");
+    expect(effects.clean).toHaveBeenCalledTimes(1);
+    expect(effects.clean).toHaveBeenCalledWith("Npm", "snapshot-1");
+  });
+
+  it("does not turn successful scanning into failure when archive writes fail", async () => {
+    const { effects, workflow } = setup(["Npm"]);
+    Object.assign(effects, { saveSnapshot: vi.fn().mockRejectedValue(new Error("read only")) });
+    await workflow.refresh("Npm");
+    expect(workflow.read().scanStates.Npm?.error).toBeNull();
+    expect(workflow.read().managerSnapshots.Npm?.status).toBe("Ready");
+    expect(workflow.read().historyWarning).toContain("read only");
+  });
+
+  it("retains each manager's archive warning until that manager saves successfully", async () => {
+    const { effects, workflow } = setup(["Npm", "Pnpm"]);
+    const failing = new Set<ManagerId>(["Npm", "Pnpm"]);
+    Object.assign(effects, { saveSnapshot: vi.fn(async (draft: import("./managerHistory").SnapshotDraft) => {
+      if (failing.has(draft.managerId)) throw new Error(`${draft.managerId} archive unavailable`);
+      return { ...draft, id: draft.managerId, capturedAt: 1 };
+    }) });
+    await workflow.refreshEnabled();
+    expect(workflow.read().historyWarning).toContain("Npm archive unavailable");
+    expect(workflow.read().historyWarning).toContain("Pnpm archive unavailable");
+    failing.delete("Pnpm");
+    await workflow.refresh("Pnpm");
+    expect(workflow.read().historyWarning).toContain("Npm archive unavailable");
+    expect(workflow.read().historyWarning).not.toContain("Pnpm archive unavailable");
+    failing.delete("Npm");
+    await workflow.refresh("Npm");
+    expect(workflow.read().historyWarning).toBeNull();
+  });
+});
+
 describe("manager maintenance workflow", () => {
   it("excludes new reads and maintenance during confirmation while admitted scans keep their two slots", async () => {
     const { effects, workflow } = setup();

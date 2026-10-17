@@ -231,6 +231,7 @@ fn parse_docker_images(stdout: &str) -> Result<Vec<PackageRow>, String> {
             "docker image ls --all",
             PackageKind::DockerImage,
         );
+        row.observation_id = serde_json::to_string(&("image", &id, &row.name)).unwrap();
         row.path = digest.filter(|value| value != "<none>");
         if repository == "<none>" || tag == "<none>" {
             push_signal(&mut row, PackageSignal::Dangling);
@@ -259,6 +260,7 @@ fn parse_docker_containers(stdout: &str) -> Result<Vec<PackageRow>, String> {
             format!("docker container ls --all · {image}").as_str(),
             PackageKind::DockerContainer,
         );
+        row.observation_id = serde_json::to_string(&("container", &id)).unwrap();
         row.source = format!("{} · container {id}", row.source);
         if status.to_ascii_lowercase().starts_with("up ") {
             push_signal(&mut row, PackageSignal::Running);

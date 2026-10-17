@@ -27,6 +27,7 @@ const views: { id: ViewId; label: string; icon: typeof House }[] = [
 
 export function Shell({
   children,
+  search,
   activeView,
   onShowHealth,
   onShowProjectCleanup,
@@ -43,6 +44,7 @@ export function Shell({
   managerSnapshots,
 }: {
   children: React.ReactNode;
+  search?: React.ReactNode;
   activeView: ViewId;
   onShowHealth: () => void;
   onShowProjectCleanup: () => void;
@@ -83,6 +85,7 @@ export function Shell({
           </div>
         </div>
         <div className="studio-top-actions">
+          {search}
           <div aria-label="主题" className="studio-theme" role="group">
             <button
               aria-pressed={theme === "light"}

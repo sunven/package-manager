@@ -1,3 +1,4 @@
+import { snapshotDraft, failedSnapshotDraft, type SnapshotDraft, type ArchivedSnapshot } from "./managerHistory";
 import { managerOrder } from "./constants";
 import { cleanupCopyFor, cleanupPreviewDetails, cleanupReady, cleanupReclaimable, type CleanupSpaceInfo } from "./cleanupCopy";
 import { createManagerScanQueue } from "./managerScanQueue";
@@ -13,8 +14,10 @@ export interface ManagerMaintenanceEffects {
   measure(path: string): Promise<DiskUsage>;
   readHomebrewCleanup(): Promise<HomebrewCleanupPreview>;
   readPipOutdated(pythonExecutable: string): Promise<PipOutdatedPreview>;
-  clean(manager: ManagerId): Promise<CacheCleanupRun>;
-  uninstall(manager: "Npm" | "Pnpm", packageName: string): Promise<MaintenanceRunPreview>;
+  clean(manager: ManagerId, beforeSnapshotId?: string): Promise<CacheCleanupRun>;
+  uninstall(manager: "Npm" | "Pnpm", packageName: string, beforeSnapshotId?: string): Promise<MaintenanceRunPreview>;
+  saveSnapshot?: (draft: SnapshotDraft) => Promise<ArchivedSnapshot>;
+  recordVerification?: (id: string, status: string, message: string | null, afterSnapshotId: string | null) => Promise<void>;
 }
 
 export interface MaintenanceExecution {
@@ -24,6 +27,7 @@ export interface MaintenanceExecution {
 }
 
 export interface MaintenanceOperation {
+  historyId?: string | null;
   id: number;
   request: MaintenanceRequest;
   phase: "confirming" | "executing" | "verifying" | "finished" | "invalidated";
@@ -35,6 +39,8 @@ export interface MaintenanceOperation {
 }
 
 export interface ManagerMaintenanceView {
+  historyWarning: string | null;
+  historyRevision: number;
   enabledManagers: ManagerId[];
   managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
   scanStates: Partial<Record<ManagerId, ManagerScanState>>;
@@ -57,7 +63,11 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
   const revisions: Partial<Record<ManagerId, number>> = {};
   let confirmationRevision = 0;
   let sequence = 0;
+  const completeArchives: Partial<Record<ManagerId, string>> = {};
+  const attemptArchives: Partial<Record<ManagerId, string>> = {};
+  const historyWarnings: Partial<Record<ManagerId | "maintenance" | "verification", string>> = {};
   let view: ManagerMaintenanceView = {
+    historyWarning: null, historyRevision: 0,
     enabledManagers: [...effects.readEnabled()], managerSnapshots: {}, scanStates: {},
     scanDurationMsByManager: {}, pendingSizeScansByManager: {},
     pendingHomebrewCleanup: false, pendingPipOutdated: false,
@@ -75,6 +85,12 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
 
   function setOperation(patch: Partial<MaintenanceOperation>) {
     if (view.maintenance) publish({ maintenance: { ...view.maintenance, ...patch } });
+  }
+
+  function updateHistoryWarning(source: keyof typeof historyWarnings, message: string | null) {
+    if (message) historyWarnings[source] = message;
+    else delete historyWarnings[source];
+    return Object.values(historyWarnings).join("\n") || null;
   }
 
   function setScanState(manager: ManagerId, patch: Partial<ManagerScanState>) {
@@ -154,26 +170,47 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
     });
   }
 
+  async function archive(draft: SnapshotDraft) {
+    if (!effects.saveSnapshot) return;
+    try {
+      const saved = await effects.saveSnapshot(draft);
+      attemptArchives[draft.managerId] = saved.id;
+      if (draft.complete) completeArchives[draft.managerId] = saved.id;
+      publish({ historyRevision: view.historyRevision + 1, historyWarning: updateHistoryWarning(draft.managerId, null) });
+    } catch (error) { publish({ historyWarning: updateHistoryWarning(draft.managerId, `${managerLabel(draft.managerId)} 历史未保存：${errorToString(error)}。本次观察与操作结果仍保留。`) }); }
+  }
+
   function readFull(manager: ManagerId) {
     return schedule(manager, async () => {
+      delete attemptArchives[manager];
       setScanState(manager, { phase: "reading", error: null });
+      let draft: SnapshotDraft;
       try {
         const result = await effects.scan(manager);
         publish({ scanDurationMsByManager: { ...view.scanDurationMsByManager, [manager]: result.scanDurationMs } });
         setScanState(manager, { diagnostics: result.diagnostics, failures: result.manager.failures });
         if (result.manager.status === "Failed" && view.managerSnapshots[manager]) {
-          setScanState(manager, { error: scanProblems(result.manager) });
-          return;
+          const error = scanProblems(result.manager);
+          setScanState(manager, { error });
+          draft = snapshotDraft(result.manager, error);
+        } else {
+          installSnapshot(manager, result.manager);
+          setScanState(manager, { phase: "enriching", scannedAt: Date.now() });
+          const supplements = [hydratePaths(manager)];
+          if (manager === "Homebrew" && result.manager.homebrew?.cleanup.status === "Pending") supplements.push(hydrateHomebrew());
+          if (manager === "Pip" && result.manager.pip?.outdatedStatus === "Pending") supplements.push(hydratePip());
+          await Promise.all(supplements);
+          const current = view.managerSnapshots[manager]!;
+          const error = scanProblems(current);
+          setScanState(manager, { error, failures: current.failures });
+          draft = snapshotDraft(current, error);
         }
-        installSnapshot(manager, result.manager);
-        setScanState(manager, { phase: "enriching", scannedAt: Date.now() });
-        const supplements = [hydratePaths(manager)];
-        if (manager === "Homebrew" && result.manager.homebrew?.cleanup.status === "Pending") supplements.push(hydrateHomebrew());
-        if (manager === "Pip" && result.manager.pip?.outdatedStatus === "Pending") supplements.push(hydratePip());
-        await Promise.all(supplements);
-        const current = view.managerSnapshots[manager]!;
-        setScanState(manager, { error: scanProblems(current), failures: current.failures });
-      } catch (error) { setScanState(manager, { error: errorToString(error) }); }
+      } catch (error) {
+        const message = errorToString(error);
+        setScanState(manager, { error: message });
+        draft = failedSnapshotDraft(manager, message);
+      }
+      await archive(draft);
     });
   }
 
@@ -236,16 +273,23 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
     return requestMaintenance({ kind: "uninstallGlobalPackage", managerId: manager, packageName, packageIndex });
   }
 
+  function receiveHistory(run: { historyId?: string | null; historyWarning?: string | null }) {
+    setOperation({ historyId: run.historyId });
+    publish({ historyRevision: view.historyRevision + 1, ...(run.historyWarning ? { historyWarning: updateHistoryWarning("maintenance", `维护历史未完整保存：${run.historyWarning}`) } : {}) });
+  }
+
   async function execute(request: MaintenanceRequest): Promise<MaintenanceExecution> {
     const label = managerLabel(request.managerId);
     try {
       if (request.kind === "cleanupCache") {
-        const run = await awaitMaintenanceReply(effects.clean(request.managerId), 11 * 60_000);
+        const run = await awaitMaintenanceReply((completeArchives[request.managerId] ? effects.clean(request.managerId, completeArchives[request.managerId]) : effects.clean(request.managerId)), 11 * 60_000);
+        receiveHistory(run);
         if (run.outcome === "Succeeded") return { status: "succeeded", title: cleanupCopyFor(request.managerId)!.succeeded, message: cacheCleanupStepSummary(run) };
         if (run.outcome === "PartiallyCompleted") return { status: "partial", title: `${label} 清理部分完成`, message: cacheCleanupPartialMessage(run) };
         return { status: run.outcome === "NoPlan" ? "notExecuted" : "failed", title: run.outcome === "NoPlan" ? "没有可执行的清理方案" : `${label} 清理未完成`, message: cacheCleanupFailureMessage(run) };
       }
-      const run = await awaitMaintenanceReply(effects.uninstall(request.managerId, request.packageName), 60_000);
+      const run = await awaitMaintenanceReply((completeArchives[request.managerId] ? effects.uninstall(request.managerId, request.packageName, completeArchives[request.managerId]) : effects.uninstall(request.managerId, request.packageName)), 60_000);
+      receiveHistory(run);
       return run.status === "Ready"
         ? { status: "succeeded", title: `${label} 全局包已卸载`, message: run.command.preview }
         : { status: "failed", title: `${label} 全局包卸载未完成`, message: trimTail(run.stderr || run.stdout || run.message || "全局包卸载未完成") };
@@ -269,7 +313,15 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
     setOperation({ phase: "verifying", verification: { status: "reading", message: null } });
     await readFull(operation.request.managerId);
     const error = view.scanStates[operation.request.managerId]?.error;
-    setOperation({ phase: "finished", verification: { status: error ? "failed" : "succeeded", message: error ?? null } });
+    const status = error ? "failed" : "succeeded";
+    setOperation({ phase: "finished", verification: { status, message: error ?? null } });
+    const historyId = view.maintenance?.historyId;
+    if (historyId && effects.recordVerification) {
+      try {
+        await effects.recordVerification(historyId, status, error ?? null, attemptArchives[operation.request.managerId] ?? null);
+        publish({ historyRevision: view.historyRevision + 1, historyWarning: updateHistoryWarning("verification", null) });
+      } catch (failure) { publish({ historyWarning: updateHistoryWarning("verification", `核对历史未保存：${errorToString(failure)}`) }); }
+    }
   }
 
   async function confirmMaintenance(id: number) {

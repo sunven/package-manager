@@ -1,6 +1,6 @@
 use crate::types::ManagerSnapshot;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,32 +50,7 @@ pub(crate) fn collect(snapshot: &ManagerSnapshot) -> ScanDiagnostics {
 }
 
 fn resolve(program: &str, paths: &[PathBuf]) -> Option<PathBuf> {
-    let program_path = Path::new(program);
-    let candidates = if program_path.components().count() > 1 {
-        vec![program_path.to_path_buf()]
-    } else {
-        paths.iter().map(|path| path.join(program)).collect()
-    };
-    candidates
-        .into_iter()
-        .find(|path| {
-            let Ok(metadata) = path.metadata() else {
-                return false;
-            };
-            if !metadata.is_file() {
-                return false;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                metadata.permissions().mode() & 0o111 != 0
-            }
-            #[cfg(not(unix))]
-            {
-                true
-            }
-        })
-        .and_then(|path| path.canonicalize().ok())
+    crate::environment_inspection::resolved_target(program, paths).map(PathBuf::from)
 }
 
 #[cfg(test)]

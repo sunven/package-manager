@@ -292,6 +292,7 @@ fn scan_maven_repository(root: &Path, limits: MavenScanLimits) -> MavenRepositor
             "maven local repository scan",
             PackageKind::MavenArtifact,
         );
+        row.observed_versions = Some(versions.clone());
         if versions.len() > 1 {
             duplicate_artifact_count += 1;
             push_signal(&mut row, PackageSignal::DuplicateVersions);

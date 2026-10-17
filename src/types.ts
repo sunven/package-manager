@@ -88,6 +88,8 @@ export interface DiskUsage {
 }
 
 export interface PackageRow {
+  observationId?: string;
+  observedVersions?: string[] | null;
   name: string;
   version: string;
   path: string | null;
@@ -105,6 +107,7 @@ export interface PathInfo {
 }
 
 export interface ManagerSnapshot {
+  scopeKey?: string | null;
   id: ManagerId;
   label: string;
   status: ManagerStatus;
@@ -221,6 +224,8 @@ export interface CleanupStepResult {
 }
 
 export interface CacheCleanupRun {
+  historyId?: string | null;
+  historyWarning?: string | null;
   manager: ManagerId;
   outcome: CleanupOutcome;
   steps: CleanupStepResult[];
@@ -228,6 +233,8 @@ export interface CacheCleanupRun {
 }
 
 export interface MaintenanceRunPreview {
+  historyId?: string | null;
+  historyWarning?: string | null;
   status: AsyncStatus;
   command: CommandEnvelope;
   stdout: string;

@@ -1,3 +1,4 @@
+import { pathObservationId } from "../globalSearch";
 import { ArrowSquareOut as ExternalLink, Copy, Info, Trash as Trash2 } from "@phosphor-icons/react";
 import { pathKindLabels } from "../constants";
 import type { HomebrewMaintenance, ManagerSnapshot, PathInfo } from "../types";
@@ -23,6 +24,7 @@ const npmPathNotes: Partial<Record<PathInfo["kind"], string>> = {
 };
 
 export function PathPanel({
+  focusedPath,
   homeDirectory,
   manager,
   onCopyCleanupCommand,
@@ -33,6 +35,7 @@ export function PathPanel({
   pendingHomebrewCleanup,
   scanning,
 }: {
+  focusedPath?: string;
   homeDirectory: string | null;
   manager: ManagerSnapshot | null;
   onCopyCleanupCommand: () => void;
@@ -55,6 +58,10 @@ export function PathPanel({
 
   return (
     <div className="@container flex flex-col gap-2">
+      {manager.paths.filter((path) => pathObservationId(path.kind, path.path) === focusedPath).map((path) => <div key={path.path} data-path-observation={focusedPath} tabIndex={-1} className="rounded-xl border bg-card p-4">
+        <h3 className="text-sm font-semibold">已定位：{path.label}</h3><code className="mt-2 block break-all text-xs">{formatHomePath(path.path, homeDirectory)}</code>
+        <div className="mt-3 flex gap-2"><Button variant="outline" size="sm" onClick={() => onCopyPath(path.path)}>复制路径</Button><Button variant="outline" size="sm" onClick={() => onOpenPath(path.path)}>打开目录</Button></div>
+      </div>)}
       {manager.id === "Homebrew" ? (
         <HomebrewCleanupCard
           cleanupReady={cleanupReady(manager) && !scanning}

@@ -363,6 +363,8 @@ export function usePackageManagers() {
   };
 
   return {
+    historyRevision: view.historyRevision,
+    historyWarning: view.historyWarning,
     actions,
     currentManager,
     enabledManagers,

@@ -22,7 +22,8 @@ pub(crate) use pip::hydrate_pip_outdated_with_runner;
 
 pub(crate) fn scan_manager_snapshot(manager: ManagerId) -> ManagerScanSnapshot {
     let started = Instant::now();
-    let manager = scan_single_manager(manager);
+    let mut manager = scan_single_manager(manager);
+    manager.scope_key = crate::manager_history::scope_key(&manager);
 
     ManagerScanSnapshot {
         scan_duration_ms: started.elapsed().as_millis(),

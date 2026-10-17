@@ -182,6 +182,7 @@ fn parse_fvm_version_list(
             "fvm api list",
             PackageKind::FlutterVersion,
         );
+        row.observation_id = serde_json::to_string(&("flutter", name, &row.path)).unwrap();
         if global_version.is_some_and(|global| {
             global == name
                 || global == sdk

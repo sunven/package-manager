@@ -1,3 +1,4 @@
+import { packageObservationId } from "../managerHistory";
 import { useState } from "react";
 import { Input } from "../../components/ui/input";
 import { ArrowSquareOut as ExternalLink, Copy, Trash as Trash2 } from "@phosphor-icons/react";
@@ -175,6 +176,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
         {props.rows.map(({ pkg, index }) => (
           <TableRow
             className="cursor-pointer"
+            data-package-observation={packageObservationId(manager!.id, pkg)}
             data-state={index === props.selectedPackageIndex ? "selected" : undefined}
             key={`${pkg.name}-${pkg.version}-${index}`}
             onClick={() => props.onSelectPackage(index)}
@@ -266,6 +268,7 @@ function SpecializedTable({
       {packages.map(({ pkg, index }) => (
         <TableRow
           className="cursor-pointer"
+          data-package-observation={packageObservationId(manager!.id, pkg)}
           data-state={index === selectedPackageIndex ? "selected" : undefined}
           key={`${pkg.name}-${pkg.version}-${index}`}
           onClick={() => onSelectPackage(index)}
