@@ -12,9 +12,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[path = "codex_skill_files.rs"]
-pub(crate) mod files;
-use files::{Identity, Installation, Ledger, Source, Staged};
+use crate::skill_installation_copy as files;
+use files::{CopyResult, CopySuccess, CopyWorkspace, PreparedCopyChange, Source, StagedView};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -116,8 +115,7 @@ struct Snapshot {
     home: PathBuf,
     skills: BTreeMap<String, Skill>,
     config: ObservedFile,
-    ledger: Option<Ledger>,
-    root: Option<Identity>,
+    copies: CopyWorkspace,
     writable: bool,
 }
 
@@ -156,9 +154,7 @@ struct Plan {
     view: Preview,
     snapshot_id: String,
     skill: Option<Skill>,
-    installation: Option<Installation>,
-    staged: Option<Staged>,
-    content_hash: Option<String>,
+    change: Option<PreparedCopyChange>,
 }
 
 #[derive(Serialize)]
@@ -187,29 +183,9 @@ pub(crate) struct SkillsState(Arc<Mutex<State>>);
 fn independent(skill: &Skill) -> bool {
     skill.scope == "user" && skill.plugin_id.is_none()
 }
-fn owned_skill(home: &Path, path: &str, entry: &Installation) -> Result<(), String> {
-    if entry.directory.join("SKILL.md") != Path::new(path) {
-        return Err("技能路径与安装记录不一致，不能维护。".into());
-    }
-    files::owned(home, entry)
-}
 fn conflict() -> String {
     "技能、安装记录或配置已变化，请刷新并重新确认。".into()
 }
-fn root_identity(home: &Path) -> Result<Option<Identity>, String> {
-    let root = home.join("skills");
-    match fs::symlink_metadata(&root) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        _ => {
-            let identity = files::directory_identity(&root)?;
-            if root.canonicalize().map_err(|e| e.to_string())? != root {
-                return Err("技能安装根目录不能是外部链接。".into());
-            }
-            Ok(Some(identity))
-        }
-    }
-}
-
 impl SkillsState {
     pub fn scan(&self) -> Result<Scan, String> {
         let _operation = codex_cli::OPERATIONS
@@ -248,8 +224,7 @@ impl SkillsState {
         scan.status = "Ready".into();
         scan.warnings = inventory.errors.clone();
         let config = ObservedFile::read(&home.join("config.toml"));
-        let ledger = Ledger::read(&home);
-        let root = root_identity(&home);
+        let copies = CopyWorkspace::observe(&home, &home.join(".package-manager-skills.json"));
         let global = if !inventory.errors.is_empty() {
             Some("原生清单不完整，请先处理读取错误。".to_string())
         } else {
@@ -260,8 +235,8 @@ impl SkillsState {
         };
         let file_blocked = global
             .clone()
-            .or_else(|| ledger.as_ref().err().cloned())
-            .or_else(|| root.as_ref().err().cloned());
+            .or_else(|| copies.ledger_error().map(str::to_string))
+            .or_else(|| copies.root_error().map(str::to_string));
         scan.install_blocked = file_blocked.clone();
         if let Some(reason) = &file_blocked {
             scan.warnings.push(reason.clone());
@@ -275,10 +250,8 @@ impl SkillsState {
             if skills.contains_key(&skill.path) {
                 continue;
             }
-            let record = ledger
-                .as_ref()
-                .ok()
-                .and_then(|l| l.records.installations.get(&skill.path));
+            let observation = copies.inspect(&skill.path);
+            let record = observation.installation.as_ref();
             let toggle_blocked = global
                 .clone()
                 .or_else(|| (!independent(&skill)).then(|| "插件、内置及非用户来源只读。".into()));
@@ -286,17 +259,12 @@ impl SkillsState {
             let own_reason = file_blocked
                 .clone()
                 .or_else(|| toggle_blocked.clone())
-                .or_else(|| match record {
-                    Some(record) => owned_skill(&home, &skill.path, record).err(),
-                    None => Some("非本应用安装，仅可查看和启停；文件维护请回原来源。".into()),
+                .or_else(|| observation.uninstall_blocked.clone())
+                .or_else(|| {
+                    (!observation.installation.is_some())
+                        .then(|| "非本应用安装，仅可查看和启停；文件维护请回原来源。".into())
                 });
-            let update_blocked = own_reason.clone().or_else(|| {
-                record.and_then(|r| match files::fingerprint(&r.directory) {
-                    Ok(hash) if hash == r.hash => None,
-                    Ok(_) => Some("安装副本有本地修改，更新已暂停。".into()),
-                    Err(e) => Some(e),
-                })
-            });
+            let update_blocked = own_reason.clone().or(observation.update_blocked);
             scan.skills.push(Entry {
                 skill: skill.clone(),
                 managed,
@@ -308,15 +276,10 @@ impl SkillsState {
             });
             skills.insert(skill.path.clone(), skill);
         }
-        if let Ok(ledger) = &ledger {
-            for path in ledger
-                .records
-                .installations
-                .keys()
-                .filter(|p| !skills.contains_key(*p))
-            {
-                scan.warnings.push(format!("本应用记录的副本未被 Codex 识别，未作为原生技能列出：{path}。请核对该目录后刷新。"));
-            }
+        for path in copies.recorded_paths().filter(|p| !skills.contains_key(*p)) {
+            scan.warnings.push(format!(
+                "本应用记录的副本未被 Codex 识别，未作为原生技能列出：{path}。请核对该目录后刷新。"
+            ));
         }
         if let Ok(config) = config {
             let id = format!("skills-{}", state.sequence);
@@ -326,8 +289,7 @@ impl SkillsState {
                 home,
                 skills,
                 config,
-                ledger: ledger.ok(),
-                root: root.ok().flatten(),
+                copies,
                 writable: global.is_none(),
             });
         }
@@ -364,22 +326,22 @@ impl SkillsState {
             return Err("原生技能清单不完整，暂时不能维护。".into());
         }
         let mut skill = None;
-        let mut installation = None;
-        let mut content_hash = None;
-        let mut staged = None;
+        let mut change = None;
         let (name, path, enabled, message) = if request.operation == Operation::Install {
             Self::check_files(snapshot)?;
             let source = request.source.as_ref().ok_or("请选择安装来源。")?;
-            let candidate = files::stage(home, source, None)?;
-            let target = home.join("skills").join(&candidate.name);
-            if fs::symlink_metadata(&target).is_ok() {
+            let candidate = snapshot.copies.prepare_install(source)?;
+            let target = candidate.target_path().unwrap();
+            if fs::symlink_metadata(target.parent().unwrap()).is_ok() {
                 return Err("目标目录已存在，不会覆盖。请选择其他技能或维护已有副本。".into());
             }
-            let next = validate_stage(&candidate, native)?;
-            staged = Some(candidate);
+            let next = validate_stage(candidate.staged().unwrap(), native)?;
+            let name = next.name;
+            let path = target.display().to_string();
+            change = Some(candidate);
             (
-                next.name,
-                target.join("SKILL.md").display().to_string(),
+                name,
+                path,
                 true,
                 "安装独立副本并启用，保留原始来源；不会运行技能脚本。".into(),
             )
@@ -397,27 +359,15 @@ impl SkillsState {
             skill = Some(current.clone());
             if matches!(request.operation, Operation::Update | Operation::Uninstall) {
                 Self::check_files(snapshot)?;
-                let entry = snapshot
-                    .ledger
-                    .as_ref()
-                    .unwrap()
-                    .records
-                    .installations
-                    .get(path)
-                    .ok_or("非本应用安装的技能不能更新或卸载。")?;
-                owned_skill(home, path, entry)?;
-                let hash = files::fingerprint(&entry.directory)?;
+                let candidate = if request.operation == Operation::Update {
+                    snapshot.copies.prepare_update(path)?
+                } else {
+                    snapshot.copies.prepare_uninstall(path)?
+                };
                 if request.operation == Operation::Update {
-                    if hash != entry.hash {
-                        return Err("安装副本有本地修改，更新已停止；请保留并处理修改。".into());
-                    }
-                    let pinned = matches!(&entry.source, Source::Github { reference_kind, .. } if reference_kind == "tag").then_some(entry.revision.as_str());
-                    let candidate = files::stage(home, &entry.source, pinned)?;
-                    validate_stage(&candidate, native)?;
-                    staged = Some(candidate);
+                    validate_stage(candidate.staged().unwrap(), native)?;
                 }
-                content_hash = Some(hash);
-                installation = Some(entry.clone());
+                change = Some(candidate);
             }
             let enabled = match request.operation {
                 Operation::Enable => true,
@@ -433,14 +383,11 @@ impl SkillsState {
             };
             (current.name.clone(), path.clone(), enabled, message.into())
         };
-        let source_label = staged
+        let source_label = change.as_ref().and_then(PreparedCopyChange::source_label);
+        let revision = change
             .as_ref()
-            .map(|s| s.source.label())
-            .or_else(|| installation.as_ref().map(|i| i.source.label()));
-        let revision = staged
-            .as_ref()
-            .map(|s| s.revision.clone())
-            .or_else(|| installation.as_ref().map(|i| i.revision.clone()));
+            .and_then(PreparedCopyChange::revision)
+            .map(str::to_string);
         let view = Preview {
             plan_id,
             operation: request.operation,
@@ -455,20 +402,14 @@ impl SkillsState {
             view: view.clone(),
             snapshot_id: snapshot.id.clone(),
             skill,
-            installation,
-            staged,
-            content_hash,
+            change,
         };
         state.plan = Some(plan);
         Ok(view)
     }
 
     fn check_files(snapshot: &Snapshot) -> Result<(), String> {
-        let ledger = snapshot.ledger.as_ref().ok_or("本应用的安装记录不可用。")?;
-        if !ledger.file.unchanged() || root_identity(&snapshot.home)? != snapshot.root {
-            return Err(conflict());
-        }
-        Ok(())
+        snapshot.copies.check_current().map_err(|_| conflict())
     }
 
     pub fn cancel(&self, plan_id: &str) -> Result<(), String> {
@@ -548,18 +489,10 @@ impl SkillsState {
                 plan.view.operation,
                 Operation::Install | Operation::Update | Operation::Uninstall
             ) {
-                Self::check_files(&snapshot)?;
-                if let Some(entry) = &plan.installation {
-                    owned_skill(home, &plan.view.path, entry)?;
-                    if Some(files::fingerprint(&entry.directory)?) != plan.content_hash {
-                        return Err(conflict());
-                    }
-                }
-            }
-            if let Some(candidate) = &plan.staged {
-                if files::fingerprint(&candidate.directory)? != candidate.hash {
-                    return Err("准备的副本已变化，请重新检查。".into());
-                }
+                plan.change
+                    .as_ref()
+                    .ok_or("文件维护计划未准备。")?
+                    .check_before_commit()?;
             }
             if !snapshot.config.unchanged() {
                 return Err(conflict());
@@ -580,162 +513,51 @@ impl SkillsState {
                 },
             );
         }
-        let mut ledger = snapshot.ledger.unwrap();
-        let target = Path::new(&plan.view.path)
-            .parent()
-            .ok_or("安装路径无效。")?;
-        if plan.view.operation == Operation::Uninstall {
-            let holding = tempfile::Builder::new()
-                .prefix(".package-manager-uninstall-")
-                .tempdir_in(home)
-                .map_err(|e| e.to_string())?;
-            let isolated = holding
-                .path()
-                .join(target.file_name().ok_or("安装路径无效。")?);
-            if let Err(e) = files::rename_new(target, &isolated) {
-                return Ok(Outcome::new("Conflict", e));
-            }
-            let entry = plan.installation.as_ref().unwrap();
-            let checked = files::directory_identity(&isolated) == Ok(entry.identity.clone())
-                && files::fingerprint(&isolated).ok() == plan.content_hash;
-            let result = if checked {
-                trash(&isolated)
-            } else {
-                Err(conflict())
-            };
-            if let Err(e) = result {
-                if files::rename_new(&isolated, target).is_ok() {
-                    return Ok(Outcome::new(if checked { "Failed" } else { "Conflict" }, e));
-                }
-                let recovery = holding.keep();
-                return Ok(Outcome::new(
-                    "Partial",
-                    format!(
-                        "{e}；移除未完整确认，请核对原目录、废纸篓及 {}。",
-                        recovery.display()
-                    ),
-                ));
-            }
-            ledger.records.installations.remove(&plan.view.path);
-            return Ok(match ledger.save() {
-                Ok(()) => Outcome::new("Succeeded", "安装副本已移入废纸篓，原始来源保持不变；Codex 路径启停配置保留，再安装时会启用。"),
-                Err(e) => Outcome::new("Partial", format!("副本已移入废纸篓，但{e}。请核对安装记录。")),
-            });
-        }
-        let candidate = plan.staged.take().ok_or("安装副本未准备。")?;
-        if plan.view.operation == Operation::Update
-            && plan
-                .installation
-                .as_ref()
-                .is_some_and(|i| i.hash == candidate.hash && i.revision == candidate.revision)
-        {
-            return Ok(Outcome::new(
+        let result = plan
+            .change
+            .take()
+            .ok_or("文件维护计划未准备。")?
+            .commit(&snapshot.config, trash);
+        Ok(match result {
+            CopyResult::Conflict(error) => Outcome::new("Conflict", error),
+            CopyResult::Failed(error) => Outcome::new("Failed", error),
+            CopyResult::Partial(error) => Outcome::new("Partial", error),
+            CopyResult::Succeeded(CopySuccess::Unchanged) => Outcome::new(
                 "Unchanged",
                 "已记录来源没有新内容，副本和启停设置保持不变。",
-            ));
-        }
-        if snapshot.root.is_none() {
-            if let Err(e) = fs::create_dir(home.join("skills")) {
-                return Ok(Outcome::new("Conflict", format!("无法创建安装目录：{e}")));
-            }
-        }
-        let backup = candidate.temp.path().join("previous-installation");
-        if plan.view.operation == Operation::Update {
-            if let Err(e) = files::rename_new(target, &backup) {
-                return Ok(Outcome::new("Failed", e));
-            }
-            let entry = plan.installation.as_ref().unwrap();
-            if files::directory_identity(&backup) != Ok(entry.identity.clone())
-                || files::fingerprint(&backup).ok() != plan.content_hash
-            {
-                if files::rename_new(&backup, target).is_ok() {
-                    return Ok(Outcome::new("Conflict", conflict()));
+            ),
+            CopyResult::Succeeded(CopySuccess::Uninstalled) => Outcome::new(
+                "Succeeded",
+                "安装副本已移入废纸篓，原始来源保持不变；Codex 路径启停配置保留，再安装时会启用。",
+            ),
+            CopyResult::Succeeded(CopySuccess::Installed) => {
+                if let Err(error) = native.enabled(home, &plan.view.path, true) {
+                    Outcome::new(
+                        "Partial",
+                        format!("副本和来源记录已安装，但启用未完整确认：{error}。请刷新后核对。"),
+                    )
+                } else {
+                    Outcome::new(
+                        "Succeeded",
+                        "技能已安装并启用，原始来源保持不变。请在新会话中验证。",
+                    )
                 }
-                let recovery = candidate.temp.keep();
-                return Ok(Outcome::new(
-                    "Partial",
-                    format!(
-                        "目录在操作期间变化，原对象保留在 {}，请核对恢复。",
-                        recovery.display()
-                    ),
-                ));
             }
-        }
-        if let Err(e) = files::rename_new(&candidate.directory, target) {
-            if backup.exists() && files::rename_new(&backup, target).is_err() {
-                let recovery = candidate.temp.keep();
-                return Ok(Outcome::new(
-                    "Partial",
-                    format!("{e}；旧副本保留在 {}，请核对恢复。", recovery.display()),
-                ));
-            }
-            return Ok(Outcome::new("Failed", e));
-        }
-        let identity = match files::directory_identity(target) {
-            Ok(value) => value,
-            Err(error) => {
-                let recovery = candidate.temp.keep();
-                return Ok(Outcome::new(
-                    "Partial",
-                    format!("副本已变更，但{error}；恢复资料在 {}。", recovery.display()),
-                ));
-            }
-        };
-        let record = Installation {
-            directory: target.to_path_buf(),
-            identity,
-            source: candidate.source,
-            revision: candidate.revision,
-            hash: candidate.hash,
-        };
-        ledger
-            .records
-            .installations
-            .insert(plan.view.path.clone(), record.clone());
-        if let Err(e) = ledger.save() {
-            // Roll back only the exact, still-unmodified copy just published by this operation.
-            let rollback = files::directory_identity(target) == Ok(record.identity.clone())
-                && files::fingerprint(target) == Ok(record.hash.clone())
-                && files::rename_new(target, &candidate.directory).is_ok()
-                && (!backup.exists() || files::rename_new(&backup, target).is_ok());
-            if rollback {
-                return Ok(Outcome::new("Failed", format!("{e}；文件变更已撤回。")));
-            }
-            let recovery = candidate.temp.keep();
-            return Ok(Outcome::new(
-                "Partial",
-                format!(
-                    "副本已变更，但{e}；恢复资料保留在 {}，请核对。",
-                    recovery.display()
-                ),
-            ));
-        }
-        if plan.view.operation == Operation::Install {
-            if let Err(e) = native.enabled(home, &plan.view.path, true) {
-                return Ok(Outcome::new(
-                    "Partial",
-                    format!("副本和来源记录已安装，但启用未完整确认：{e}。请刷新后核对。"),
-                ));
-            }
-        }
-        Ok(Outcome::new(
-            "Succeeded",
-            if plan.view.operation == Operation::Install {
-                "技能已安装并启用，原始来源保持不变。请在新会话中验证。"
-            } else {
-                "安装副本已更新，原启停选择保持不变。请在新会话中验证。"
-            },
-        ))
+            CopyResult::Succeeded(CopySuccess::Updated) => Outcome::new(
+                "Succeeded",
+                "安装副本已更新，原启停选择保持不变。请在新会话中验证。",
+            ),
+        })
     }
 }
 
-fn validate_stage(staged: &Staged, native: &impl Native) -> Result<Skill, String> {
+fn validate_stage(staged: StagedView<'_>, native: &impl Native) -> Result<Skill, String> {
     let expected = staged
         .directory
         .join("SKILL.md")
         .canonicalize()
         .map_err(|_| "所选目录没有可读的 SKILL.md。")?;
-    let inventory = native.list(staged.temp.path()).map_err(|e| e.message)?;
+    let inventory = native.list(staged.temp_home).map_err(|e| e.message)?;
     inventory
         .skills
         .into_iter()

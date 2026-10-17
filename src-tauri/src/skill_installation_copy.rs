@@ -73,19 +73,457 @@ pub(crate) struct Installation {
     pub hash: String,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Records {
     version: u32,
     pub installations: BTreeMap<String, Installation>,
 }
 
+#[derive(Clone)]
 pub(crate) struct Ledger {
     pub file: ObservedFile,
     pub records: Records,
 }
 
+#[derive(Clone)]
+pub(crate) struct CopyWorkspace {
+    home: PathBuf,
+    ledger: Result<Ledger, String>,
+    root: Result<Option<Identity>, String>,
+}
+
+pub(crate) struct CopyObservation {
+    pub installation: Option<Installation>,
+    pub update_blocked: Option<String>,
+    pub uninstall_blocked: Option<String>,
+}
+
+impl CopyWorkspace {
+    pub fn observe(home: &Path, record_path: &Path) -> Self {
+        Self {
+            home: home.to_path_buf(),
+            ledger: Ledger::read_at(record_path),
+            root: root_identity(home),
+        }
+    }
+
+    pub fn ledger_error(&self) -> Option<&str> {
+        self.ledger.as_ref().err().map(String::as_str)
+    }
+
+    pub fn root_error(&self) -> Option<&str> {
+        self.root.as_ref().err().map(String::as_str)
+    }
+
+    pub fn installation(&self, path: &str) -> Option<&Installation> {
+        self.ledger.as_ref().ok()?.records.installations.get(path)
+    }
+
+    pub fn recorded_paths(&self) -> impl Iterator<Item = &str> {
+        self.ledger
+            .as_ref()
+            .ok()
+            .into_iter()
+            .flat_map(|ledger| ledger.records.installations.keys().map(String::as_str))
+    }
+
+    pub fn inspect(&self, path: &str) -> CopyObservation {
+        let installation = self.installation(path).cloned();
+        let blocked = self
+            .ledger_error()
+            .map(str::to_string)
+            .or_else(|| self.root_error().map(str::to_string))
+            .or_else(|| {
+                installation.as_ref().and_then(|entry| {
+                    if entry.directory.join("SKILL.md") != Path::new(path) {
+                        Some("技能路径与安装记录不一致，不能维护。".into())
+                    } else {
+                        owned(&self.home, entry).err()
+                    }
+                })
+            });
+        let update_blocked = blocked.clone().or_else(|| {
+            installation
+                .as_ref()
+                .and_then(|entry| match fingerprint(&entry.directory) {
+                    Ok(hash) if hash == entry.hash => None,
+                    Ok(_) => Some("安装副本有本地修改，更新已暂停。".into()),
+                    Err(error) => Some(error),
+                })
+        });
+        CopyObservation {
+            installation,
+            update_blocked,
+            uninstall_blocked: blocked,
+        }
+    }
+
+    pub fn check_current(&self) -> Result<(), String> {
+        let ledger = self.ledger.as_ref().map_err(Clone::clone)?;
+        let root = self.root.as_ref().map_err(Clone::clone)?;
+        if !ledger.file.unchanged() || root_identity(&self.home)? != *root {
+            return Err("技能、安装记录或配置已变化，请刷新并重新确认。".into());
+        }
+        Ok(())
+    }
+
+    pub fn prepare_install(&self, source: &Source) -> Result<PreparedCopyChange, String> {
+        self.check_ready()?;
+        let staged = stage(&self.home, source, None)?;
+        Ok(PreparedCopyChange::new(
+            self.clone(),
+            ChangeKind::Install,
+            Some(staged),
+            None,
+            None,
+        ))
+    }
+
+    pub fn prepare_update(&self, path: &str) -> Result<PreparedCopyChange, String> {
+        self.check_ready()?;
+        let entry = self
+            .installation(path)
+            .ok_or("非本应用安装的技能不能更新。")?
+            .clone();
+        if entry.directory.join("SKILL.md") != Path::new(path) {
+            return Err("技能路径与安装记录不一致，不能维护。".into());
+        }
+        owned(&self.home, &entry)?;
+        let content_hash = fingerprint(&entry.directory)?;
+        if content_hash != entry.hash {
+            return Err("安装副本有本地修改，更新已停止；请保留并处理修改。".into());
+        }
+        let pinned = matches!(&entry.source, Source::Github { reference_kind, .. } if reference_kind == "tag")
+            .then_some(entry.revision.as_str());
+        let staged = stage(&self.home, &entry.source, pinned)?;
+        Ok(PreparedCopyChange::new(
+            self.clone(),
+            ChangeKind::Update,
+            Some(staged),
+            Some(entry),
+            Some(content_hash),
+        ))
+    }
+
+    pub fn prepare_uninstall(&self, path: &str) -> Result<PreparedCopyChange, String> {
+        self.check_ready()?;
+        let entry = self
+            .installation(path)
+            .ok_or("非本应用安装的技能不能卸载。")?
+            .clone();
+        if entry.directory.join("SKILL.md") != Path::new(path) {
+            return Err("技能路径与安装记录不一致，不能维护。".into());
+        }
+        owned(&self.home, &entry)?;
+        let content_hash = fingerprint(&entry.directory)?;
+        Ok(PreparedCopyChange::new(
+            self.clone(),
+            ChangeKind::Uninstall,
+            None,
+            Some(entry),
+            Some(content_hash),
+        ))
+    }
+
+    fn check_ready(&self) -> Result<(), String> {
+        self.ledger.as_ref().map_err(Clone::clone)?;
+        self.root.as_ref().map_err(Clone::clone)?;
+        self.check_current()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum ChangeKind {
+    Install,
+    Update,
+    Uninstall,
+}
+
+pub(crate) struct PreparedCopyChange {
+    workspace: CopyWorkspace,
+    kind: ChangeKind,
+    staged: Option<Staged>,
+    installation: Option<Installation>,
+    content_hash: Option<String>,
+}
+
+pub(crate) struct StagedView<'a> {
+    pub temp_home: &'a Path,
+    pub directory: &'a Path,
+    pub name: &'a str,
+}
+
+impl PreparedCopyChange {
+    fn new(
+        workspace: CopyWorkspace,
+        kind: ChangeKind,
+        staged: Option<Staged>,
+        installation: Option<Installation>,
+        content_hash: Option<String>,
+    ) -> Self {
+        Self {
+            workspace,
+            kind,
+            staged,
+            installation,
+            content_hash,
+        }
+    }
+
+    pub fn staged(&self) -> Option<StagedView<'_>> {
+        self.staged.as_ref().map(|staged| StagedView {
+            temp_home: staged.temp.path(),
+            directory: &staged.directory,
+            name: &staged.name,
+        })
+    }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.staged
+            .as_ref()
+            .map(|staged| staged.revision.as_str())
+            .or_else(|| {
+                self.installation
+                    .as_ref()
+                    .map(|entry| entry.revision.as_str())
+            })
+    }
+
+    pub fn source_label(&self) -> Option<String> {
+        self.staged
+            .as_ref()
+            .map(|staged| staged.source.label())
+            .or_else(|| self.installation.as_ref().map(|entry| entry.source.label()))
+    }
+
+    pub fn target_path(&self) -> Option<PathBuf> {
+        self.staged
+            .as_ref()
+            .map(|staged| {
+                self.workspace
+                    .home
+                    .join("skills")
+                    .join(&staged.name)
+                    .join("SKILL.md")
+            })
+            .or_else(|| {
+                self.installation
+                    .as_ref()
+                    .map(|entry| entry.directory.join("SKILL.md"))
+            })
+    }
+
+    pub fn check_before_commit(&self) -> Result<(), String> {
+        self.workspace.check_current()?;
+        if let Some(entry) = &self.installation {
+            owned(&self.workspace.home, entry)?;
+            if Some(fingerprint(&entry.directory)?) != self.content_hash {
+                return Err("技能安装副本已变化，请刷新并重新确认。".into());
+            }
+        }
+        if let Some(staged) = &self.staged {
+            if fingerprint(&staged.directory)? != staged.hash {
+                return Err("准备的副本已变化，请重新检查。".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn commit(
+        mut self,
+        config: &ObservedFile,
+        trash: &dyn Fn(&Path) -> Result<(), String>,
+    ) -> CopyResult {
+        if let Err(error) = self.check_before_commit() {
+            return CopyResult::Conflict(error);
+        }
+        if !config.unchanged() {
+            return CopyResult::Conflict("技能、安装记录或配置已变化，请刷新并重新确认。".into());
+        }
+
+        let mut ledger = match &self.workspace.ledger {
+            Ok(ledger) => ledger.clone(),
+            Err(error) => return CopyResult::Conflict(error.clone()),
+        };
+        let target = self
+            .target_path()
+            .expect("prepared file change has a target");
+        let target = target.parent().expect("skill definition has a parent");
+        let record_path = target.join("SKILL.md").display().to_string();
+
+        if self.kind == ChangeKind::Uninstall {
+            let holding = match tempfile::Builder::new()
+                .prefix(".package-manager-uninstall-")
+                .tempdir_in(&self.workspace.home)
+            {
+                Ok(holding) => holding,
+                Err(error) => return CopyResult::Failed(error.to_string()),
+            };
+            let isolated = holding.path().join(target.file_name().unwrap());
+            if let Err(error) = rename_new(target, &isolated) {
+                return CopyResult::Conflict(error);
+            }
+            let entry = self.installation.as_ref().unwrap();
+            let checked = directory_identity(&isolated) == Ok(entry.identity.clone())
+                && fingerprint(&isolated).ok() == self.content_hash;
+            let result = if checked {
+                trash(&isolated)
+            } else {
+                Err("安装副本在操作期间发生变化。".into())
+            };
+            if let Err(error) = result {
+                if rename_new(&isolated, target).is_ok() {
+                    return CopyResult::failure(
+                        if checked {
+                            CopyFailure::Failed
+                        } else {
+                            CopyFailure::Conflict
+                        },
+                        error,
+                    );
+                }
+                let recovery = holding.keep();
+                return CopyResult::Partial(format!(
+                    "{error}；移除未完整确认，请核对原目录、废纸篓及 {}。",
+                    recovery.display()
+                ));
+            }
+            ledger.records.installations.remove(&record_path);
+            return match ledger.save() {
+                Ok(()) => CopyResult::Succeeded(CopySuccess::Uninstalled),
+                Err(error) => {
+                    CopyResult::Partial(format!("副本已移入废纸篓，但{error}。请核对安装记录。"))
+                }
+            };
+        }
+
+        let candidate = self
+            .staged
+            .take()
+            .expect("install and update changes have staging");
+        if self.kind == ChangeKind::Update
+            && self.installation.as_ref().is_some_and(|entry| {
+                entry.hash == candidate.hash && entry.revision == candidate.revision
+            })
+        {
+            return CopyResult::Succeeded(CopySuccess::Unchanged);
+        }
+        if self
+            .workspace
+            .root
+            .as_ref()
+            .ok()
+            .is_some_and(Option::is_none)
+        {
+            if let Err(error) = fs::create_dir(self.workspace.home.join("skills")) {
+                return CopyResult::Conflict(format!("无法创建安装目录：{error}"));
+            }
+        }
+        let backup = candidate.temp.path().join("previous-installation");
+        if self.kind == ChangeKind::Update {
+            if let Err(error) = rename_new(target, &backup) {
+                return CopyResult::Failed(error);
+            }
+            let entry = self.installation.as_ref().unwrap();
+            if directory_identity(&backup) != Ok(entry.identity.clone())
+                || fingerprint(&backup).ok() != self.content_hash
+            {
+                if rename_new(&backup, target).is_ok() {
+                    return CopyResult::Conflict("原安装副本在操作期间发生变化。".into());
+                }
+                let recovery = candidate.temp.keep();
+                return CopyResult::Partial(format!(
+                    "目录在操作期间变化，原对象保留在 {}，请核对恢复。",
+                    recovery.display()
+                ));
+            }
+        }
+        if let Err(error) = rename_new(&candidate.directory, target) {
+            if backup.exists() && rename_new(&backup, target).is_err() {
+                let recovery = candidate.temp.keep();
+                return CopyResult::Partial(format!(
+                    "{error}；旧副本保留在 {}，请核对恢复。",
+                    recovery.display()
+                ));
+            }
+            return CopyResult::Failed(error);
+        }
+        let identity = match directory_identity(target) {
+            Ok(identity) => identity,
+            Err(error) => {
+                let recovery = candidate.temp.keep();
+                return CopyResult::Partial(format!(
+                    "副本已变更，但{error}；恢复资料在 {}。",
+                    recovery.display()
+                ));
+            }
+        };
+        let record = Installation {
+            directory: target.to_path_buf(),
+            identity,
+            source: candidate.source,
+            revision: candidate.revision,
+            hash: candidate.hash,
+        };
+        ledger
+            .records
+            .installations
+            .insert(record_path, record.clone());
+        if let Err(error) = ledger.save() {
+            let rollback = directory_identity(target) == Ok(record.identity.clone())
+                && fingerprint(target) == Ok(record.hash.clone())
+                && rename_new(target, &candidate.directory).is_ok()
+                && (!backup.exists() || rename_new(&backup, target).is_ok());
+            if rollback {
+                return CopyResult::Failed(format!("{error}；文件变更已撤回。"));
+            }
+            let recovery = candidate.temp.keep();
+            return CopyResult::Partial(format!(
+                "副本已变更，但{error}；恢复资料保留在 {}，请核对。",
+                recovery.display()
+            ));
+        }
+        CopyResult::Succeeded(match self.kind {
+            ChangeKind::Install => CopySuccess::Installed,
+            ChangeKind::Update => CopySuccess::Updated,
+            ChangeKind::Uninstall => unreachable!(),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum CopySuccess {
+    Installed,
+    Updated,
+    Unchanged,
+    Uninstalled,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum CopyFailure {
+    Conflict,
+    Failed,
+}
+
+pub(crate) enum CopyResult {
+    Succeeded(CopySuccess),
+    Conflict(String),
+    Failed(String),
+    Partial(String),
+}
+
+impl CopyResult {
+    fn failure(kind: CopyFailure, message: String) -> Self {
+        match kind {
+            CopyFailure::Conflict => Self::Conflict(message),
+            CopyFailure::Failed => Self::Failed(message),
+        }
+    }
+}
+
 impl Ledger {
+    #[cfg(test)]
     pub fn read(home: &Path) -> Result<Self, String> {
         Self::read_at(&home.join(".package-manager-skills.json"))
     }
@@ -140,6 +578,20 @@ pub(crate) fn owned(home: &Path, entry: &Installation) -> Result<(), String> {
         return Err("安装副本的位置或身份已变化，不能更新或卸载。".into());
     }
     Ok(())
+}
+
+pub(crate) fn root_identity(home: &Path) -> Result<Option<Identity>, String> {
+    let root = home.join("skills");
+    match fs::symlink_metadata(&root) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        _ => {
+            let identity = directory_identity(&root)?;
+            if root.canonicalize().map_err(|error| error.to_string())? != root {
+                return Err("技能安装根目录不能是外部链接。".into());
+            }
+            Ok(Some(identity))
+        }
+    }
 }
 
 // Files are hashed in path order, including empty directories and executable permissions.

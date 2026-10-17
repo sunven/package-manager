@@ -17,6 +17,7 @@ mod observed_file;
 mod project_cleanup;
 mod scan_diagnostics;
 mod session_records;
+mod skill_installation_copy;
 mod types;
 mod vscode_storage;
 

@@ -1,7 +1,6 @@
 use crate::{
     claude_documents::{local_path, Document},
-    claude_plugins,
-    codex_skills::files,
+    claude_plugins, skill_installation_copy as files,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -445,16 +444,16 @@ pub(crate) fn read(home: &Path, plugins: Result<&Value, String>) -> Inventory {
     inventory
 }
 
-pub(crate) fn staged(stage: &files::Staged) -> Result<Definition, String> {
+pub(crate) fn staged(stage: files::StagedView<'_>) -> Result<Definition, String> {
     if !valid_name(&stage.name)
-        || matches!(stage.name.as_str(), "synced" | "anthropic-skills")
+        || matches!(stage.name, "synced" | "anthropic-skills")
         || stage.directory.join(".claude-plugin").exists()
     {
         return Err("所选目录是插件、使用保留名称或名称尚未支持，不能作为独立技能安装。".into());
     }
     let row = definition(
         &stage.directory.join("SKILL.md"),
-        &stage.name,
+        stage.name,
         "independent",
         None,
     );
