@@ -5,11 +5,11 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { claudeHookHandler, claudeHookSummary } from "../claudeCode";
-import type { ClaudeCodeState } from "../hooks/useClaudeCode";
+import type { ClaudeWorkflowState } from "../hooks/useClaudeWorkflow";
 import { ClaudeHookEditor, type ClaudeHookSelection } from "./ClaudeHookEditor";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
-export function ClaudeHooksPage({ state }: { state: ClaudeCodeState }) {
+export function ClaudeHooksPage({ state }: { state: ClaudeWorkflowState }) {
   const scan = state.hooks;
   const [expanded, setExpanded] = useState<string | null>(null);
   const [query, setQuery] = useState("");

@@ -3,11 +3,9 @@ import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
 import { useSessionRecords } from "./hooks/useSessionRecords";
-import { useCodexExtensions } from "./hooks/useCodexExtensions";
-import { useCodexSkills } from "./hooks/useCodexSkills";
+import { useCodexWorkflow } from "./hooks/useCodexWorkflow";
 import { CodexSkillsPage } from "./components/CodexSkillsPage";
-import { useClaudeSkills } from "./hooks/useClaudeSkills";
-import { useClaudeCode } from "./hooks/useClaudeCode";
+import { useClaudeWorkflow } from "./hooks/useClaudeWorkflow";
 import { ClaudeCodePage } from "./components/ClaudeCodePage";
 import { CodexMarketplacesPage } from "./components/CodexMarketplacesPage";
 import { CodexHooksPage } from "./components/CodexHooksPage";
@@ -52,14 +50,10 @@ export function App() {
   const projectCleanup = useProjectCleanup();
   const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
   const [claudeTab, setClaudeTab] = useState("marketplaces");
-  const [claudeSkillsBusy, setClaudeSkillsBusy] = useState(false);
-  const claude = useClaudeCode(activeView === "claude", claudeTab, claudeSkillsBusy);
-  const claudeSkills = useClaudeSkills(activeView === "claude" && claudeTab === "skills", String(claude.revision), claude.busy && !claudeSkillsBusy, claude.invalidate);
-  useEffect(() => { setClaudeSkillsBusy(claudeSkills.scanning || claudeSkills.phase !== null); }, [claudeSkills.scanning, claudeSkills.phase]);
+  const claude = useClaudeWorkflow(activeView === "claude", claudeTab);
   const [codexTab, setCodexTab] = useState("marketplaces");
   const [focusedPluginId, setFocusedPluginId] = useState<string | undefined>();
-  const codex = useCodexExtensions(activeView === "plugins", codexTab);
-  const skills = useCodexSkills(activeView === "plugins" && codexTab === "skills", `${codex.plugins.revision}:${codex.marketplaces.revision}`, Boolean(codex.operation));
+  const codex = useCodexWorkflow(activeView === "plugins", codexTab);
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -153,22 +147,22 @@ export function App() {
         {activeView === "plugins" ? (
           <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
             <TabsList aria-label="Codex 管理视图">
-              <TabsTrigger value="marketplaces" disabled={Boolean(codex.operation || skills.phase)}>插件市场</TabsTrigger>
-              <TabsTrigger value="hooks" disabled={Boolean(codex.operation || skills.phase)}>Hooks</TabsTrigger>
-              <TabsTrigger value="skills" disabled={Boolean(codex.operation || skills.phase)}>Skills</TabsTrigger>
+              <TabsTrigger value="marketplaces" disabled={codex.locked}>插件市场</TabsTrigger>
+              <TabsTrigger value="hooks" disabled={codex.locked}>Hooks</TabsTrigger>
+              <TabsTrigger value="skills" disabled={codex.locked}>Skills</TabsTrigger>
             </TabsList>
             <TabsContent value="marketplaces">
-              <CodexMarketplacesPage workflow={codex} focusedPluginId={focusedPluginId} onShowHooks={() => setCodexTab("hooks")} />
+              <CodexMarketplacesPage workflow={codex.extensions} focusedPluginId={focusedPluginId} onShowHooks={() => setCodexTab("hooks")} />
             </TabsContent>
             <TabsContent value="hooks">
-              <CodexHooksPage workflow={codex} onShowPlugins={() => setCodexTab("marketplaces")} />
+              <CodexHooksPage workflow={codex.extensions} onShowPlugins={() => setCodexTab("marketplaces")} />
             </TabsContent>
             <TabsContent value="skills">
-              <CodexSkillsPage workflow={skills} onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); setCodexTab("marketplaces"); }} />
+              <CodexSkillsPage workflow={codex.skills} onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); setCodexTab("marketplaces"); }} />
             </TabsContent>
           </Tabs>
         ) : activeView === "claude" ? (
-          <ClaudeCodePage state={claude} skills={claudeSkills} tab={claudeTab} onTabChange={setClaudeTab} />
+          <ClaudeCodePage workflow={claude} tab={claudeTab} onTabChange={setClaudeTab} />
         ) : activeView === "sessions" ? (
           <SessionRecordsPage
             error={sessionRecords.error}

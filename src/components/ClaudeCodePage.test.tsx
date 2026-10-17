@@ -5,7 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { ClaudeMarketplacesPage } from "./ClaudeMarketplacesPage";
 import { ClaudeHooksPage } from "./ClaudeHooksPage";
 import { ClaudeHookEditor } from "./ClaudeHookEditor";
-import { useClaudeCode, type ClaudeCodeState } from "../hooks/useClaudeCode";
+import { useClaudeCode } from "../hooks/useClaudeCode";
+import type { ClaudeWorkflowState } from "../hooks/useClaudeWorkflow";
 import { claudeExtensionFixture, claudeHookFixture } from "../test/claudeCodeFixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -13,10 +14,10 @@ afterEach(cleanup);
 beforeEach(() => vi.resetAllMocks());
 const mockedInvoke = vi.mocked(invoke);
 const success = { status: "Succeeded" as const, message: "已完成", executed: true };
-function state(): ClaudeCodeState {
+function state(): ClaudeWorkflowState {
   return { revision: 0, invalidate: vi.fn(), extensions: claudeExtensionFixture(), hooks: claudeHookFixture(), busy: false, error: null, result: null,
     refresh: vi.fn().mockResolvedValue(claudeHookFixture()), change: vi.fn().mockResolvedValue(success),
-    prepareHook: vi.fn().mockResolvedValue({ previewId: "preview-1", source: "/settings.json", before: {}, after: {}, message: "预览完成" }), commitHook: vi.fn().mockResolvedValue(success) };
+    prepareHook: vi.fn().mockResolvedValue({ previewId: "preview-1", source: "/settings.json", before: {}, after: {}, message: "预览完成" }), commitHook: vi.fn().mockResolvedValue(success), cancelHookPreview: vi.fn() };
 }
 
 describe("Claude market and plugin interface", () => {
@@ -103,6 +104,16 @@ describe("Claude Hook interface", () => {
     fireEvent.click(screen.getByRole("button", { name: "预览变更" }));
     await screen.findByText("预览完成");
     expect(vi.mocked(value.prepareHook).mock.calls[0][0].draft?.matcher).toBe("*");
+  });
+
+  it("releases the prepared workflow lock when returning to edit", async () => {
+    const value = state();
+    render(<ClaudeHookEditor selection={{ action: "Create" }} scan={value.hooks!} state={value} onClose={vi.fn()} onRestoreFocus={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("命令或可执行文件"), { target: { value: "echo check" } });
+    fireEvent.click(screen.getByRole("button", { name: "预览变更" }));
+    await screen.findByText("预览完成");
+    fireEvent.click(screen.getByRole("button", { name: "返回编辑" }));
+    expect(value.cancelHookPreview).toHaveBeenCalledWith("preview-1");
   });
 
   it("shows disabled plugin definitions and permits editing with the user switch off", () => {

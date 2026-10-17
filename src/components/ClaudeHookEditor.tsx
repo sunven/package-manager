@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "../../components/ui/input";
 import type { ClaudeHook, ClaudeHookDraft, ClaudeHookPreview, ClaudeHookScan, ClaudeHookType } from "../claudeCode";
 import { claudeHookHandler } from "../claudeCode";
-import type { ClaudeCodeState } from "../hooks/useClaudeCode";
+import type { ClaudeWorkflowState } from "../hooks/useClaudeWorkflow";
 import { errorToString } from "../utils/format";
 
 const control = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50";
@@ -25,7 +25,7 @@ const initial = (handler: Record<string, unknown> = {}) => Object.fromEntries(Ob
 export type ClaudeHookSelection = { action: "Create" | "Edit" | "Delete"; hook?: ClaudeHook };
 
 export function ClaudeHookEditor({ selection, scan, state, onClose, onRestoreFocus }: {
-  selection: ClaudeHookSelection; scan: ClaudeHookScan; state: ClaudeCodeState; onClose: () => void; onRestoreFocus: () => void;
+  selection: ClaudeHookSelection; scan: ClaudeHookScan; state: ClaudeWorkflowState; onClose: () => void; onRestoreFocus: () => void;
 }) {
   const [basis, setBasis] = useState(selection.hook);
   const [snapshotId, setSnapshotId] = useState(scan.snapshotId);
@@ -78,9 +78,15 @@ export function ClaudeHookEditor({ selection, scan, state, onClose, onRestoreFoc
     finally { setWorking(false); }
   }
 
+  function close() {
+    if (preview) state.cancelHookPreview(preview.previewId);
+    onClose();
+  }
+
   async function rebase() {
     setError(null); setPreview(null); setWorking(true);
     try {
+      if (preview) state.cancelHookPreview(preview.previewId);
       const next = await state.refresh("hooks");
       if (!next?.snapshotId) throw new Error(next?.writeBlockedReason ?? "当前定义不可维护。");
       if (basis) {
@@ -93,7 +99,7 @@ export function ClaudeHookEditor({ selection, scan, state, onClose, onRestoreFoc
     finally { setWorking(false); }
   }
 
-  return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy) close(); }}>
     <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-3xl overflow-y-auto" showCloseButton={!busy} onInteractOutside={(e) => e.preventDefault()} onCloseAutoFocus={(e) => { e.preventDefault(); onRestoreFocus(); }}>
       <DialogHeader><DialogTitle>{preview ? deleting ? "确认删除 Hook" : "确认保存 Hook" : deleting ? "删除 Hook" : selection.action === "Create" ? "新增 Hook" : "编辑 Hook"}</DialogTitle><DialogDescription>维护当前用户定义，保存后在 Claude 中核对加载结果。引用脚本与用户总开关会保留。</DialogDescription></DialogHeader>
       {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
@@ -117,9 +123,9 @@ export function ClaudeHookEditor({ selection, scan, state, onClose, onRestoreFoc
         {basis ? <details><summary className="cursor-pointer text-sm">查看原始处理程序（只读）</summary><pre className={`${raw} mt-2`}>{JSON.stringify(basis.handler, null, 2)}</pre></details> : null}
       </div>}
       <DialogFooter className="flex-wrap gap-2">
-        <Button variant="outline" disabled={busy} onClick={onClose}>取消</Button>
+        <Button variant="outline" disabled={busy} onClick={close}>取消</Button>
         {error || stale ? <Button variant="outline" disabled={busy} onClick={() => void rebase()}>重新读取并保留草稿</Button> : null}
-        {preview ? <><Button variant="outline" disabled={busy} onClick={() => setPreview(null)}>返回编辑</Button><Button disabled={busy || stale || Boolean(scan.writeBlockedReason)} onClick={async () => {
+        {preview ? <><Button variant="outline" disabled={busy} onClick={() => { state.cancelHookPreview(preview.previewId); setPreview(null); }}>返回编辑</Button><Button disabled={busy || stale || Boolean(scan.writeBlockedReason)} onClick={async () => {
           setWorking(true); setError(null);
           try { const result = await state.commitHook(preview.previewId); if (result.status === "Succeeded") onClose(); else { setError(result.message); setPreview(null); } }
           catch (e) { setError(errorToString(e)); setPreview(null); }
