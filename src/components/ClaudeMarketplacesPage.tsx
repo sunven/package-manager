@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowsClockwise, Plus } from "@phosphor-icons/react";
 import { Alert, AlertDescription } from "../../components/ui/alert";
@@ -13,7 +13,7 @@ import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
 const control = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50";
 
-export function ClaudeMarketplacesPage({ state, onShowHooks }: { state: ClaudeCodeState; onShowHooks: () => void }) {
+export function ClaudeMarketplacesPage({ state, onShowHooks, focusedPluginId }: { state: ClaudeCodeState; focusedPluginId?: string; onShowHooks: () => void }) {
   const { extensions: scan, busy } = state;
   const [expanded, setExpanded] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -29,6 +29,12 @@ export function ClaudeMarketplacesPage({ state, onShowHooks }: { state: ClaudeCo
   const blocked = busy || choosing || !scan?.snapshotId || Boolean(scan.writeBlockedReason);
   const groups = new Map<string, ClaudeMarketplace | null>((scan?.marketplaces ?? []).map((m) => [m.name, m]));
   for (const plugin of scan?.plugins ?? []) if (!groups.has(plugin.marketplaceName)) groups.set(plugin.marketplaceName, null);
+
+  useEffect(() => {
+    if (!focusedPluginId) return;
+    const target = scan?.plugins.find((plugin) => plugin.id === focusedPluginId);
+    if (target) setExpanded(target.marketplaceName);
+  }, [focusedPluginId, scan]);
 
   function confirm(operation: ClaudeOperation, target: string, element: HTMLElement, market?: ClaudeMarketplace) {
     if (!scan?.snapshotId) return;
@@ -49,6 +55,7 @@ export function ClaudeMarketplacesPage({ state, onShowHooks }: { state: ClaudeCo
         <p className="text-xs text-muted-foreground">更新市场目录后，可单独更新已安装插件。插件变更请在 Claude 中重新加载或开启新会话验证。</p>
         <p className="break-all text-xs text-muted-foreground">Claude Code 目录 <code className="ml-2 text-foreground">{scan?.directory ?? "尚未读取"}</code>{scan?.version ? ` · CLI ${scan.version}` : ""}</p>
         {scan?.writeBlockedReason ? <Alert><AlertDescription>{scan.writeBlockedReason}</AlertDescription></Alert> : null}
+        {focusedPluginId && scan && !busy && !scan.plugins.some((plugin) => plugin.id === focusedPluginId) ? <Alert><AlertDescription className="break-words">当前市场清单未找到插件 {focusedPluginId}。请重新读取；若仍未找到，请回该技能的原来源维护。</AlertDescription></Alert> : null}
       </div>
     </Panel>
     <Panel><PanelHead title="市场" action={<Button disabled={blocked} size="sm" onClick={() => setAdding(true)}><Plus aria-hidden="true" data-icon="inline-start" />添加市场</Button>} />
@@ -84,7 +91,7 @@ export function ClaudeMarketplacesPage({ state, onShowHooks }: { state: ClaudeCo
             </>}</TableCell>
           </TableRow>
           {expanded === name ? <TableRow id={`claude-market-${index}`}><TableCell colSpan={4} className="whitespace-normal bg-muted/30">
-            <ClaudePluginRows plugins={(scan?.plugins ?? []).filter((p) => p.marketplaceName === name)} blocked={blocked} onAction={confirm} onShowHooks={onShowHooks} />
+            <ClaudePluginRows focusedPluginId={focusedPluginId} plugins={(scan?.plugins ?? []).filter((p) => p.marketplaceName === name)} blocked={blocked} onAction={confirm} onShowHooks={onShowHooks} />
             {market ? <dl className="mt-4 grid gap-3 border-t pt-4 sm:grid-cols-2"><Detail label="市场本地目录" value={market.root} /><Detail label="分支或标签" value={market.refName} />{market.sparsePaths.length ? <Detail label="稀疏检出目录" value={market.sparsePaths.join("\n")} /> : null}</dl> : null}
           </TableCell></TableRow> : null}
         </Fragment>)}</TableBody>
@@ -109,10 +116,19 @@ export function ClaudeMarketplacesPage({ state, onShowHooks }: { state: ClaudeCo
   </section>;
 }
 
-function ClaudePluginRows({ plugins, blocked, onAction, onShowHooks }: { plugins: ClaudePlugin[]; blocked: boolean; onAction: (operation: ClaudeOperation, target: string, element: HTMLElement) => void; onShowHooks: () => void }) {
+function ClaudePluginRows({ plugins, blocked, onAction, onShowHooks, focusedPluginId }: { focusedPluginId?: string; plugins: ClaudePlugin[]; blocked: boolean; onAction: (operation: ClaudeOperation, target: string, element: HTMLElement) => void; onShowHooks: () => void }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const focusedButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (focusedPluginId && plugins.some((plugin) => plugin.id === focusedPluginId)) {
+      setQuery(""); setFilter("all"); setExpanded(focusedPluginId);
+    }
+  }, [focusedPluginId]);
+  useEffect(() => {
+    if (expanded === focusedPluginId) { focusedButton.current?.focus(); focusedButton.current?.scrollIntoView?.({ block: "nearest" }); }
+  }, [expanded, focusedPluginId]);
   const visible = plugins.filter((plugin) => (filter === "all" || plugin.installed === (filter === "installed")) && `${plugin.name} ${plugin.details.description ?? ""}`.toLowerCase().includes(query.toLowerCase()));
   return <div className="grid gap-3 py-2">
     <div className="flex flex-wrap items-end justify-between gap-3"><h3 className="text-sm font-semibold">插件目录</h3><div className="flex flex-wrap items-end gap-3">
@@ -121,7 +137,7 @@ function ClaudePluginRows({ plugins, blocked, onAction, onShowHooks }: { plugins
     </div></div>
     {visible.length ? <Table className="min-w-[660px] table-fixed"><TableHeader><TableRow><TableHead className="w-[25%]">插件</TableHead><TableHead className="w-[15%]">安装版本</TableHead><TableHead className="w-[24%]">用户安装与启用</TableHead><TableHead className="w-[36%] text-right">操作</TableHead></TableRow></TableHeader><TableBody>
       {visible.map((plugin) => <Fragment key={plugin.id}><TableRow>
-        <TableCell className="whitespace-normal break-all align-top"><button className="text-left font-medium text-primary underline-offset-4 hover:underline" aria-expanded={expanded === plugin.id} onClick={() => setExpanded(expanded === plugin.id ? null : plugin.id)}>{plugin.name}<span className="mt-1 block text-xs font-normal">{expanded === plugin.id ? "收起详情" : "查看详情"}</span></button></TableCell>
+        <TableCell className="whitespace-normal break-all align-top"><button ref={plugin.id === focusedPluginId ? focusedButton : undefined} className="text-left font-medium text-primary underline-offset-4 hover:underline" aria-expanded={expanded === plugin.id} onClick={() => setExpanded(expanded === plugin.id ? null : plugin.id)}>{plugin.name}<span className="mt-1 block text-xs font-normal">{expanded === plugin.id ? "收起详情" : "查看详情"}</span></button></TableCell>
         <TableCell className="whitespace-normal break-all align-top font-mono text-xs">{plugin.version ?? "未安装"}</TableCell>
         <TableCell className="whitespace-normal align-top"><p>{plugin.installed ? "已安装" : "未在用户范围安装"}</p>{plugin.installed ? <p className="mt-1 text-xs text-muted-foreground">{plugin.userEnabled === null ? `用户未显式设置；当前配置${plugin.enabled ? "启用" : "禁用"}` : plugin.userEnabled ? "用户选择启用" : "用户选择禁用"}</p> : null}</TableCell>
         <TableCell className="whitespace-normal align-top">{plugin.readOnlyReason ? <p className="text-xs text-muted-foreground">{plugin.readOnlyReason}</p> : <div className="flex flex-wrap justify-end gap-1">

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Claude Code Skills · 合成数据验证</title></head>
+<body><div id="app"></div><aside role="note" style="position:fixed;right:12px;bottom:8px;z-index:60;padding:4px 8px;background:#182235;color:white;border-radius:4px;font:12px sans-serif">合成数据验证 · 不连接本机 Claude</aside>
+<script type="module">
+import { claudeSkillsFixture } from "/src/test/claudeSkillFixtures.ts";
+import { claudeExtensionFixture, claudeHookFixture } from "/src/test/claudeCodeFixtures.ts";
+import { managerFixture } from "/src/test/fixtures.ts";
+const state = window.skillsReview = { scan: claudeSkillsFixture(), error: null, plan: null, calls: [] };
+const extensions = claudeExtensionFixture();
+window.__TAURI_INTERNALS__ = {
+  metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+  invoke: async (command, args = {}) => {
+    state.calls.push({ command, args });
+    if (command === "plugin:path|resolve_directory") return "/Users/example";
+    if (command === "plugin:window|set_theme") return;
+    if (command === "get_project_cleanup_settings") return { presets: [], activePresetId: null };
+    if (command === "scan_manager") return { manager: managerFixture("Npm", { paths: [] }), scanDurationMs: 1, diagnostics: [] };
+    if (command === "scan_claude_extensions") return extensions;
+    if (command === "scan_claude_hooks") return claudeHookFixture();
+    if (command === "scan_claude_skills") { if (state.error) throw new Error(state.error); return structuredClone(state.scan); }
+    if (command === "read_claude_skill") return "---\nname: release-notes\ndescription: 整理提交记录，编写版本说明。\n---\n\n# Release notes\n\n1. 阅读本次发布的提交。\n2. 按变更类型编写说明。\n3. 保留来源链接供读者核对。";
+    if (command === "choose_codex_marketplace_directory") return "/Users/example/skills/release-notes";
+    if (command === "prepare_claude_skill") {
+      const request = args.request;
+      const skill = state.scan.skills.find(skill => skill.path === request.path) ?? state.scan.skills[0];
+      return state.plan = { planId: "preview-1", operation: request.operation, name: skill.name, path: skill.path,
+        sourceLabel: skill.sourceLabel, revision: skill.revision, settingKey: skill.settingKey, previousMode: skill.mode, mode: request.operation === "SetMode" ? request.mode : skill.mode,
+        message: request.operation === "Uninstall" ? "整份安装副本（包括本地修改）移入废纸篓，保留原始来源和按名称的用户调用设置。清空废纸篓前可找回。" : "只修改此名称的用户默认调用设置，可能影响其他项目的同名技能；项目或更高层配置仍可覆盖。" };
+    }
+    if (command === "cancel_claude_skill") { state.plan = null; return; }
+    if (command === "commit_claude_skill") {
+      const skill = state.scan.skills.find(skill => skill.path === state.plan.path);
+      if (skill && state.plan.operation === "SetMode") skill.mode = state.plan.mode;
+      state.plan = null;
+      return { status: "Saved", message: "用户调用设置已保存，请在新会话中核对。" };
+    }
+    throw new Error(`Fixture does not implement: ${command}`);
+  }
+};
+localStorage.setItem("package-manager.enabledManagers", '["Npm"]');
+localStorage.setItem("package-manager.migratedFvm", "1");
+await import("/src/main.tsx");
+</script></body></html>

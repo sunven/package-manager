@@ -13,7 +13,7 @@ use std::{
 };
 
 #[path = "codex_skill_files.rs"]
-mod files;
+pub(crate) mod files;
 use files::{Identity, Installation, Ledger, Source, Staged};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

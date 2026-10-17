@@ -37,7 +37,15 @@ impl Document {
     }
 
     pub(crate) fn write(&self, value: &Value) -> Result<(), String> {
-        let text = hook_text(self.file.text.as_deref(), &self.value, value)?;
+        self.write_field(value, "hooks")
+    }
+
+    pub(crate) fn write_skill_overrides(&self, value: &Value) -> Result<(), String> {
+        self.write_field(value, "skillOverrides")
+    }
+
+    fn write_field(&self, value: &Value, field: &str) -> Result<(), String> {
+        let text = field_text(self.file.text.as_deref(), &self.value, value, field)?;
         let parent = self.file.path.parent().ok_or("无法确定配置目录。")?;
         fs::create_dir_all(parent).map_err(|e| format!("无法创建配置目录：{e}"))?;
         self.file
@@ -52,17 +60,22 @@ impl Document {
     }
 }
 
-// Replace only the top-level hooks value. Unrelated settings keep their exact bytes.
-fn hook_text(text: Option<&str>, previous: &Value, next: &Value) -> Result<String, String> {
-    let without_hooks = |value: &Value| {
+// Replace only the requested top-level field. Unrelated settings keep their exact bytes.
+fn field_text(
+    text: Option<&str>,
+    previous: &Value,
+    next: &Value,
+    field: &str,
+) -> Result<String, String> {
+    let without_field = |value: &Value| {
         let mut value = value.clone();
         if let Some(object) = value.as_object_mut() {
-            object.remove("hooks");
+            object.remove(field);
         }
         value
     };
-    if without_hooks(previous) != without_hooks(next) || !next["hooks"].is_object() {
-        return Err("此入口仅可修改用户 hooks 定义。".into());
+    if without_field(previous) != without_field(next) || !next[field].is_object() {
+        return Err(format!("此入口仅可修改用户 {field}。"));
     }
     let Some(text) = text else {
         return Ok(format!(
@@ -70,7 +83,7 @@ fn hook_text(text: Option<&str>, previous: &Value, next: &Value) -> Result<Strin
             serde_json::to_string_pretty(next).map_err(|e| e.to_string())?
         ));
     };
-    let rendered = serde_json::to_string_pretty(&next["hooks"])
+    let rendered = serde_json::to_string_pretty(&next[field])
         .map_err(|e| e.to_string())?
         .replace('\n', "\n  ");
     let mut cursor = text.find('{').ok_or("配置顶层不是对象。")? + 1;
@@ -118,9 +131,9 @@ fn hook_text(text: Option<&str>, previous: &Value, next: &Value) -> Result<Strin
             .ok_or("配置值缺失。")?
             .map_err(|e| e.to_string())?;
         cursor += value.byte_offset();
-        if name == "hooks" {
+        if name == field {
             if target.is_some() {
-                return Err("配置中有重复 hooks 键，请先修复原文件。".into());
+                return Err(format!("配置中有重复 {field} 键，请先修复原文件。"));
             }
             target = Some(start..cursor);
         }
@@ -144,7 +157,7 @@ fn hook_text(text: Option<&str>, previous: &Value, next: &Value) -> Result<Strin
         Ok(result)
     } else {
         let insertion = format!(
-            "{}\n  \"hooks\": {rendered}\n",
+            "{}\n  \"{field}\": {rendered}\n",
             if entries > 0 { "," } else { "" }
         );
         let mut result = text.to_string();

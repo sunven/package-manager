@@ -3,6 +3,7 @@ mod claude_documents;
 mod claude_hooks;
 mod claude_plugin_details;
 mod claude_plugins;
+mod claude_skills;
 mod codex_cli;
 mod codex_hooks;
 mod codex_marketplaces;
@@ -85,6 +86,58 @@ async fn read_codex_skill(
     snapshot_id: String,
     path: String,
     state: tauri::State<'_, codex_skills::SkillsState>,
+) -> Result<String, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.details(&snapshot_id, &path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn scan_claude_skills(
+    state: tauri::State<'_, claude_skills::SkillsState>,
+) -> Result<claude_skills::Scan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.scan())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn prepare_claude_skill(
+    request: claude_skills::Request,
+    state: tauri::State<'_, claude_skills::SkillsState>,
+) -> Result<claude_skills::Preview, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.prepare(request))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn commit_claude_skill(
+    plan_id: String,
+    state: tauri::State<'_, claude_skills::SkillsState>,
+) -> Result<claude_skills::Outcome, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.commit(&plan_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn cancel_claude_skill(
+    plan_id: String,
+    state: tauri::State<'_, claude_skills::SkillsState>,
+) -> Result<(), String> {
+    state.cancel(&plan_id)
+}
+
+#[tauri::command]
+async fn read_claude_skill(
+    snapshot_id: String,
+    path: String,
+    state: tauri::State<'_, claude_skills::SkillsState>,
 ) -> Result<String, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || state.details(&snapshot_id, &path))
@@ -558,6 +611,7 @@ pub fn run() {
         .manage(codex_skills::SkillsState::default())
         .manage(claude_plugins::ExtensionsState::default())
         .manage(claude_hooks::HooksState::default())
+        .manage(claude_skills::SkillsState::default())
         .manage(codex_plugins::CodexPluginsState::default())
         .manage(codex_marketplaces::MarketplacesState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -574,6 +628,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scan_claude_skills,
+            prepare_claude_skill,
+            commit_claude_skill,
+            cancel_claude_skill,
+            read_claude_skill,
             scan_codex_skills,
             prepare_codex_skill,
             commit_codex_skill,

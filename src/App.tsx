@@ -6,6 +6,7 @@ import { useSessionRecords } from "./hooks/useSessionRecords";
 import { useCodexExtensions } from "./hooks/useCodexExtensions";
 import { useCodexSkills } from "./hooks/useCodexSkills";
 import { CodexSkillsPage } from "./components/CodexSkillsPage";
+import { useClaudeSkills } from "./hooks/useClaudeSkills";
 import { useClaudeCode } from "./hooks/useClaudeCode";
 import { ClaudeCodePage } from "./components/ClaudeCodePage";
 import { CodexMarketplacesPage } from "./components/CodexMarketplacesPage";
@@ -51,7 +52,10 @@ export function App() {
   const projectCleanup = useProjectCleanup();
   const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
   const [claudeTab, setClaudeTab] = useState("marketplaces");
-  const claude = useClaudeCode(activeView === "claude", claudeTab);
+  const [claudeSkillsBusy, setClaudeSkillsBusy] = useState(false);
+  const claude = useClaudeCode(activeView === "claude", claudeTab, claudeSkillsBusy);
+  const claudeSkills = useClaudeSkills(activeView === "claude" && claudeTab === "skills", String(claude.revision), claude.busy && !claudeSkillsBusy, claude.invalidate);
+  useEffect(() => { setClaudeSkillsBusy(claudeSkills.scanning || claudeSkills.phase !== null); }, [claudeSkills.scanning, claudeSkills.phase]);
   const [codexTab, setCodexTab] = useState("marketplaces");
   const [focusedPluginId, setFocusedPluginId] = useState<string | undefined>();
   const codex = useCodexExtensions(activeView === "plugins", codexTab);
@@ -164,7 +168,7 @@ export function App() {
             </TabsContent>
           </Tabs>
         ) : activeView === "claude" ? (
-          <ClaudeCodePage state={claude} tab={claudeTab} onTabChange={setClaudeTab} />
+          <ClaudeCodePage state={claude} skills={claudeSkills} tab={claudeTab} onTabChange={setClaudeTab} />
         ) : activeView === "sessions" ? (
           <SessionRecordsPage
             error={sessionRecords.error}

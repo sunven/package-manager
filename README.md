@@ -55,7 +55,7 @@
 - 展示应用 PATH、可执行文件解析路径、失败命令与输出；可复制检查命令，单独重试目录测量、Homebrew 预演或 pip 更新检查。
 - 会话记录支持按标题、工作目录搜索，按使用状态筛选，并展示每条移除结果及跳过／失败原因。
 - Codex 页分为「插件市场／Hooks／Skills」：展开市场可搜索插件目录、按安装状态筛选、查看详情并单项安装、启停、重新安装或卸载，同页管理 Git／本地市场源；Hooks 保留查看与单项启停；Skills 支持查看、搜索、启停，以及本应用安装副本的安装、更新和卸载。
-- Claude Code 页提供当前用户的市场与插件维护，以及五类用户 Hook 定义增删改和插件 Hook 只读查看；写操作目前支持已验证的 Claude Code 2.1.300。
+- Claude Code 页提供当前用户的市场、插件、Hooks 与 Skills 管理；Skills 支持定义查看、原生调用设置及独立副本安装、更新和卸载。Skills 写入已验证 2.1.302，市场、插件与 Hooks 写入仍限已验证的 2.1.300。
 
 ## 当前边界
 
@@ -147,7 +147,7 @@ Hooks 首次进入、手动刷新和操作后读取；插件安装、启停、�
 
 ### Claude Code 管理
 
-侧栏「Claude Code」包含「插件市场／Hooks」两个页签，只管理 `CLAUDE_CONFIG_DIR` 指定的当前用户目录，默认 `~/.claude`。应用 PATH 中需要有 `claude`；本版写操作仅开放给已验证的 **2.1.300**，其他版本或 CLI 不可用时暂停写入，并尽可能展示可读取的用户 Hook 定义。
+侧栏「Claude Code」包含「插件市场／Hooks／Skills」三个页签，只管理 `CLAUDE_CONFIG_DIR` 指定的当前用户目录，默认 `~/.claude`。应用 PATH 中需要有 `claude`；市场、插件与 Hooks 写入仅开放给已验证的 **2.1.300**，Skills 写入单独验证为 **2.1.302**。CLI 缺失或版本未经相应能力验证时暂停写入，仍尽可能展示可读取的 Hook 与技能定义。
 
 市场支持 GitHub／Git、本地目录或 `marketplace.json`、远程 JSON，以及 Git 分支／标签和稀疏检出目录。展开市场可搜索、筛选和查看插件详情，确认后单项安装、更新、卸载、启用或禁用。更新市场目录与更新插件分别操作；依赖联动由原生 CLI 决定。详情仅读取已有本地内容，缺失信息明确说明，不自动下载。托管或归属不明的来源只读。
 
@@ -156,6 +156,10 @@ Hooks 首次进入、手动刷新和操作后读取；插件安装、启停、�
 Hooks 展示用户定义与用户已安装市场插件的声明，包含禁用插件。用户定义支持 `command`、`http`、`mcp_tool`、`prompt`、`agent` 结构化编辑，预览后保存；原始配置和插件定义只读。保存保留其他定义、未知字段、引用脚本及用户总开关；外部修改会中止旧提交并保留草稿。没有逐条启停、信任或运行测试入口。定义清单不代表会话正在执行的内容，保存后请在 Claude 中核对加载结果。
 
 操作与随后重读的结果分别反馈，不自动重放写入。实现范围及验证边界见 [PRD](./.scratch/claude-code-management/PRD.md) 和 [验收记录](./.scratch/claude-code-management/VERIFICATION.md)。
+
+Skills 展示当前用户的独立技能、旧版命令、用户已安装插件技能（含禁用插件）及可识别的同步技能，提供搜索、来源／调用设置筛选和只读详情；定义存在不代表当前会话已加载。调用设置使用原生 `skillOverrides` 的四种模式及移除用户覆盖，分别显示技能名称与实际设置名称；按名称影响用户默认行为，仍受作者声明与更高层配置约束。插件和同步技能交所属来源维护。
+
+GitHub（子目录、分支／标签）和本地目录经检查确认后复制到当前 Claude 目录的 `skills`，来源记录保存在 `.package-manager-claude-skills.json`。仅本应用新建且身份可核实的副本可更新或卸载；已有目录、共享链接不接管。更新跟随记录来源，固定标签保留原提交；本地修改、名称变化或冲突时停止。卸载将整份副本移入废纸篓。安装、更新和卸载均保留原来源及按名称的调用设置，不运行技能脚本。详见 [Skills 需求](./.scratch/claude-skills-management/PRD.md)、[验证记录](./.scratch/claude-skills-management/VERIFICATION.md) 和 [ADR-0020](./docs/adr/0020-claude-skills-use-definition-inventory-and-native-name-overrides.md)。
 
 ### 运行与验证
 

@@ -14,12 +14,22 @@ beforeEach(() => vi.resetAllMocks());
 const mockedInvoke = vi.mocked(invoke);
 const success = { status: "Succeeded" as const, message: "已完成", executed: true };
 function state(): ClaudeCodeState {
-  return { extensions: claudeExtensionFixture(), hooks: claudeHookFixture(), busy: false, error: null, result: null,
+  return { revision: 0, invalidate: vi.fn(), extensions: claudeExtensionFixture(), hooks: claudeHookFixture(), busy: false, error: null, result: null,
     refresh: vi.fn().mockResolvedValue(claudeHookFixture()), change: vi.fn().mockResolvedValue(success),
     prepareHook: vi.fn().mockResolvedValue({ previewId: "preview-1", source: "/settings.json", before: {}, after: {}, message: "预览完成" }), commitHook: vi.fn().mockResolvedValue(success) };
 }
 
 describe("Claude market and plugin interface", () => {
+  it("opens the owning plugin and explains a missing plugin destination", async () => {
+    const value = state();
+    const view = render(<ClaudeMarketplacesPage state={value} focusedPluginId="reviewer@team-tools" onShowHooks={vi.fn()} />);
+    const target = await screen.findByRole("button", { name: /reviewer收起详情/ });
+    await waitFor(() => expect(document.activeElement).toBe(target));
+    expect(screen.getByText("技能声明")).toBeTruthy();
+    view.rerender(<ClaudeMarketplacesPage state={value} focusedPluginId="external@skills-dir" onShowHooks={vi.fn()} />);
+    expect(screen.getByText(/当前市场清单未找到插件 external@skills-dir/)).toBeTruthy();
+  });
+
   it("blocks cross-scope market removal and shows the reason", () => {
     render(<ClaudeMarketplacesPage state={state()} onShowHooks={vi.fn()} />);
     const row = screen.getByText("project-shared").closest("tr")!;

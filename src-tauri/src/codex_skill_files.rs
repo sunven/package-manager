@@ -87,8 +87,12 @@ pub(crate) struct Ledger {
 
 impl Ledger {
     pub fn read(home: &Path) -> Result<Self, String> {
-        let file = ObservedFile::read(&home.join(".package-manager-skills.json"))
-            .map_err(|e| format!("无法核实本应用的技能安装记录：{e:?}"))?;
+        Self::read_at(&home.join(".package-manager-skills.json"))
+    }
+
+    pub fn read_at(path: &Path) -> Result<Self, String> {
+        let file =
+            ObservedFile::read(path).map_err(|e| format!("无法核实本应用的技能安装记录：{e:?}"))?;
         let records = match &file.text {
             None => Records {
                 version: 1,
