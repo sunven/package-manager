@@ -16,9 +16,10 @@ import { errorToString } from "../utils/format";
 import { CodexPluginFeedback, CodexPluginList } from "./CodexPluginList";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
-export function CodexMarketplacesPage({ workflow, onShowHooks }: {
+export function CodexMarketplacesPage({ workflow, onShowHooks, focusedPluginId }: {
   workflow: CodexExtensions;
   onShowHooks?: () => void;
+  focusedPluginId?: string;
 }) {
   const { scan, scanning, current, error, result } = workflow.marketplaces;
   const { plugins } = workflow;
@@ -51,6 +52,8 @@ export function CodexMarketplacesPage({ workflow, onShowHooks }: {
   for (const plugin of plugins.scan?.plugins ?? []) {
     if (!groups.has(plugin.marketplaceName)) groups.set(plugin.marketplaceName, null);
   }
+  const focusedMarket = plugins.scan?.plugins.find((plugin) => plugin.pluginId === focusedPluginId)?.marketplaceName;
+  useEffect(() => { if (focusedMarket) setExpanded(focusedMarket); }, [focusedMarket, focusedPluginId]);
   const unmatchedLabel = scanning ? "正在核实市场信息"
     : readError || scan?.status !== "Ready" ? "市场信息未能核实" : "未出现在市场清单中";
   const resultTitle = result?.status === "Succeeded" ? "市场操作已完成"
@@ -187,7 +190,7 @@ export function CodexMarketplacesPage({ workflow, onShowHooks }: {
                 </TableRow>
                 {open ? <TableRow id={detailId}><TableCell className="whitespace-normal bg-muted/30" colSpan={4}>
                   <div className="grid gap-6 py-3">
-                  <CodexPluginList workflow={workflow} onShowHooks={onShowHooks} marketplaceName={name} onRestoreFocus={() => readButton.current?.focus()} />
+                  <CodexPluginList workflow={workflow} focusedPluginId={focusedPluginId} onShowHooks={onShowHooks} marketplaceName={name} onRestoreFocus={() => readButton.current?.focus()} />
                   {market ? <div className="border-t pt-4"><dl className="grid gap-3 sm:grid-cols-2">
                     <MarketDetail label={market.sourceKind === "git" ? "市场本地副本" : "实际本地目录"} value={market.root} />
                     <MarketDetail label="用户配置路径" value={scan?.configPath ?? null} />

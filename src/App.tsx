@@ -4,6 +4,8 @@ import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
 import { useSessionRecords } from "./hooks/useSessionRecords";
 import { useCodexExtensions } from "./hooks/useCodexExtensions";
+import { useCodexSkills } from "./hooks/useCodexSkills";
+import { CodexSkillsPage } from "./components/CodexSkillsPage";
 import { useClaudeCode } from "./hooks/useClaudeCode";
 import { ClaudeCodePage } from "./components/ClaudeCodePage";
 import { CodexMarketplacesPage } from "./components/CodexMarketplacesPage";
@@ -51,7 +53,9 @@ export function App() {
   const [claudeTab, setClaudeTab] = useState("marketplaces");
   const claude = useClaudeCode(activeView === "claude", claudeTab);
   const [codexTab, setCodexTab] = useState("marketplaces");
+  const [focusedPluginId, setFocusedPluginId] = useState<string | undefined>();
   const codex = useCodexExtensions(activeView === "plugins", codexTab);
+  const skills = useCodexSkills(activeView === "plugins" && codexTab === "skills", `${codex.plugins.revision}:${codex.marketplaces.revision}`, Boolean(codex.operation));
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -145,14 +149,18 @@ export function App() {
         {activeView === "plugins" ? (
           <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
             <TabsList aria-label="Codex 管理视图">
-              <TabsTrigger value="marketplaces" disabled={Boolean(codex.operation)}>插件市场</TabsTrigger>
-              <TabsTrigger value="hooks" disabled={Boolean(codex.operation)}>Hooks</TabsTrigger>
+              <TabsTrigger value="marketplaces" disabled={Boolean(codex.operation || skills.phase)}>插件市场</TabsTrigger>
+              <TabsTrigger value="hooks" disabled={Boolean(codex.operation || skills.phase)}>Hooks</TabsTrigger>
+              <TabsTrigger value="skills" disabled={Boolean(codex.operation || skills.phase)}>Skills</TabsTrigger>
             </TabsList>
             <TabsContent value="marketplaces">
-              <CodexMarketplacesPage workflow={codex} onShowHooks={() => setCodexTab("hooks")} />
+              <CodexMarketplacesPage workflow={codex} focusedPluginId={focusedPluginId} onShowHooks={() => setCodexTab("hooks")} />
             </TabsContent>
             <TabsContent value="hooks">
               <CodexHooksPage workflow={codex} onShowPlugins={() => setCodexTab("marketplaces")} />
+            </TabsContent>
+            <TabsContent value="skills">
+              <CodexSkillsPage workflow={skills} onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); setCodexTab("marketplaces"); }} />
             </TabsContent>
           </Tabs>
         ) : activeView === "claude" ? (

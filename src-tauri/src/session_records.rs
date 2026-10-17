@@ -500,7 +500,7 @@ fn normalize_lexical(path: &Path) -> PathBuf {
     normalized
 }
 
-fn move_path_to_trash(path: &Path) -> Result<(), String> {
+pub(crate) fn move_path_to_trash(path: &Path) -> Result<(), String> {
     let quoted = apple_script_string(&path.to_string_lossy());
     let script = format!("tell application \"Finder\" to delete POSIX file {quoted}");
     let output = Command::new("osascript")

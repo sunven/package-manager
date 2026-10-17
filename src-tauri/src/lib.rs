@@ -8,6 +8,7 @@ mod codex_hooks;
 mod codex_marketplaces;
 mod codex_plugin_details;
 mod codex_plugins;
+mod codex_skills;
 mod command;
 mod disk_usage;
 mod managers;
@@ -38,6 +39,58 @@ use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+async fn scan_codex_skills(
+    state: tauri::State<'_, codex_skills::SkillsState>,
+) -> Result<codex_skills::Scan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.scan())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn prepare_codex_skill(
+    request: codex_skills::Request,
+    state: tauri::State<'_, codex_skills::SkillsState>,
+) -> Result<codex_skills::Preview, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.prepare(request))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn commit_codex_skill(
+    plan_id: String,
+    state: tauri::State<'_, codex_skills::SkillsState>,
+) -> Result<codex_skills::Outcome, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.commit(&plan_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn cancel_codex_skill(
+    plan_id: String,
+    state: tauri::State<'_, codex_skills::SkillsState>,
+) -> Result<(), String> {
+    state.cancel(&plan_id)
+}
+
+#[tauri::command]
+async fn read_codex_skill(
+    snapshot_id: String,
+    path: String,
+    state: tauri::State<'_, codex_skills::SkillsState>,
+) -> Result<String, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.details(&snapshot_id, &path))
+        .await
+        .map_err(|e| e.to_string())?
+}
 
 #[tauri::command]
 async fn scan_claude_extensions(
@@ -502,6 +555,7 @@ async fn run_cache_cleanup(manager: ManagerId) -> Result<CacheCleanupRun, String
 pub fn run() {
     tauri::Builder::default()
         .manage(codex_hooks::HooksState::default())
+        .manage(codex_skills::SkillsState::default())
         .manage(claude_plugins::ExtensionsState::default())
         .manage(claude_hooks::HooksState::default())
         .manage(codex_plugins::CodexPluginsState::default())
@@ -520,6 +574,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scan_codex_skills,
+            prepare_codex_skill,
+            commit_codex_skill,
+            cancel_codex_skill,
+            read_codex_skill,
             scan_claude_extensions,
             change_claude_extension,
             scan_claude_hooks,

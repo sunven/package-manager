@@ -1,4 +1,4 @@
-import { Fragment, useId, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -33,11 +33,12 @@ export function CodexPluginFeedback({ scan, scanning, current, error, result }: 
   </>;
 }
 
-export function CodexPluginList({ workflow, onShowHooks, marketplaceName, onRestoreFocus }: {
+export function CodexPluginList({ workflow, onShowHooks, marketplaceName, onRestoreFocus, focusedPluginId }: {
   workflow: CodexExtensions;
   onShowHooks?: () => void;
   marketplaceName: string;
   onRestoreFocus: () => void;
+  focusedPluginId?: string;
 }) {
   const { scan, scanning, current, error } = workflow.plugins;
   const confirmation = workflow.operation?.kind === "plugin" && workflow.operation.target.marketplaceName === marketplaceName ? workflow.operation : null;
@@ -47,6 +48,13 @@ export function CodexPluginList({ workflow, onShowHooks, marketplaceName, onRest
   const [expanded, setExpanded] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
+  const focusedButton = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (focusedPluginId) {
+      setExpanded(focusedPluginId); setQuery(""); setFilter("all");
+      focusedButton.current?.focus();
+    }
+  }, [focusedPluginId]);
   const trigger = useRef<HTMLButtonElement | null>(null);
   const id = useId();
   const marketPlugins = scan?.plugins.filter((plugin) => plugin.marketplaceName === marketplaceName) ?? [];
@@ -98,7 +106,7 @@ export function CodexPluginList({ workflow, onShowHooks, marketplaceName, onRest
         return <Fragment key={plugin.pluginId}>
           <TableRow>
             <TableCell className="whitespace-normal align-top">
-              <button aria-expanded={open} aria-controls={open ? detailId : undefined} className="w-full cursor-pointer break-all text-left font-medium text-primary underline-offset-4 hover:underline" onClick={() => setExpanded(open ? null : plugin.pluginId)} type="button">
+              <button ref={plugin.pluginId === focusedPluginId ? focusedButton : undefined} aria-expanded={open} aria-controls={open ? detailId : undefined} className="w-full cursor-pointer break-all text-left font-medium text-primary underline-offset-4 hover:underline" onClick={() => setExpanded(open ? null : plugin.pluginId)} type="button">
                 {plugin.details.displayName || plugin.name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{open ? "收起插件详情" : "查看插件详情"}</span>
               </button>
             </TableCell>

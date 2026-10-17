@@ -7,6 +7,7 @@ import { App } from "../App";
 import { codexMarketplaceFixture } from "../test/codexMarketplaceFixtures";
 import { codexPluginFixture } from "../test/codexPluginFixtures";
 import { codexHookScanFixture } from "../test/codexHookFixtures";
+import { codexSkillsFixture } from "../test/codexSkillFixtures";
 import { managerFixture } from "../test/fixtures";
 import type { CodexMarketplaceRequest, CodexMarketplaceResult } from "../codexMarketplaces";
 import type { CodexPluginChangeRequest } from "../codexPlugins";
@@ -41,6 +42,7 @@ beforeEach(() => {
       if (pluginError) throw new Error(pluginError);
       return structuredClone(plugins);
     }
+    if (command === "scan_codex_skills") return codexSkillsFixture();
     if (command === "scan_codex_hooks") return codexHookScanFixture();
     if (command === "change_codex_marketplace") {
       const { request } = args as { request: CodexMarketplaceRequest };
@@ -75,7 +77,7 @@ function expand(name: string) {
 describe("installed plugins organized by marketplace", () => {
   it("opens the merged tab, reads both inventories once, and scopes same-named plugins to their markets", async () => {
     await openPage();
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["插件市场", "Hooks"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["插件市场", "Hooks", "Skills"]);
     expect(screen.getByRole("tab", { name: "插件市场" }).getAttribute("aria-selected")).toBe("true");
     expect(reads("scan_codex_marketplaces")).toBe(1);
     expect(reads("scan_codex_plugins")).toBe(1);
@@ -92,6 +94,21 @@ describe("installed plugins organized by marketplace", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(screen.getByRole("button", { name: "禁用 writer（managed-tools）" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "移除市场 managed-tools" })).toBeNull();
+  });
+
+  it("opens the owning plugin from a skill and refreshes skills after plugin maintenance", async () => {
+    const user = userEvent.setup();
+    await openPage();
+    await user.click(screen.getByRole("tab", { name: "Skills" }));
+    await user.click(await screen.findByRole("button", { name: "writer@team-tools" }));
+    expect(screen.getByRole("tab", { name: "插件市场" }).getAttribute("aria-selected")).toBe("true");
+    const team = screen.getByRole("region", { name: "team-tools 的插件" });
+    expect(within(team).getByRole("button", { name: /writer.*收起插件详情/ })).toBeTruthy();
+    await user.click(within(team).getByRole("button", { name: "禁用 writer（team-tools）" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "保存设置" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await user.click(screen.getByRole("tab", { name: "Skills" }));
+    await waitFor(() => expect(reads("scan_codex_skills")).toBe(2));
   });
 
   it("keeps empty markets and unmatched plugin groups without inventing source actions", async () => {

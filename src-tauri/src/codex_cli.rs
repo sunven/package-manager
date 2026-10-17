@@ -34,9 +34,18 @@ impl Drop for Process {
 }
 
 fn start(home: &Path, args: &[&str], input: bool) -> Result<Process, String> {
+    start_program(home, "codex", args, input)
+}
+
+fn start_program(
+    home: &Path,
+    program: &str,
+    args: &[&str],
+    input: bool,
+) -> Result<Process, String> {
     let stdout = tempfile::tempfile().map_err(|e| e.to_string())?;
     let stderr = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let mut command = Command::new("codex");
+    let mut command = Command::new(program);
     command
         .args(args)
         .current_dir("/")
@@ -54,7 +63,10 @@ fn start(home: &Path, args: &[&str], input: bool) -> Result<Process, String> {
     }
     let child = command.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
-            "未找到 Codex CLI，请确认应用的 PATH 中有 codex。".to_string()
+            format!(
+                "未找到 {} CLI，请确认应用的 PATH。",
+                if program == "codex" { "Codex" } else { program }
+            )
         } else {
             format!("无法运行 Codex CLI：{e}")
         }
@@ -74,7 +86,20 @@ fn read_output(file: &mut File) -> Result<String, String> {
 }
 
 pub(crate) fn run(home: &Path, args: &[&str], timeout: Duration) -> Result<Output, String> {
-    let mut process = start(home, args, false)?;
+    run_program(home, "codex", args, timeout)
+}
+
+pub(crate) fn run_git(home: &Path, args: &[&str], timeout: Duration) -> Result<Output, String> {
+    run_program(home, "git", args, timeout)
+}
+
+fn run_program(
+    home: &Path,
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Output, String> {
+    let mut process = start_program(home, program, args, false)?;
     let started = Instant::now();
     loop {
         match process.child.try_wait().map_err(|e| e.to_string())? {

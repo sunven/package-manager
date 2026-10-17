@@ -54,7 +54,7 @@
 - 打开 cache / store / package 目录。
 - 展示应用 PATH、可执行文件解析路径、失败命令与输出；可复制检查命令，单独重试目录测量、Homebrew 预演或 pip 更新检查。
 - 会话记录支持按标题、工作目录搜索，按使用状态筛选，并展示每条移除结果及跳过／失败原因。
-- Codex 页分为「插件市场／Hooks」：展开市场可搜索插件目录、按安装状态筛选、查看详情并单项安装、启停、重新安装或卸载，同页管理 Git／本地市场源；Hooks 保留查看与单项启停。
+- Codex 页分为「插件市场／Hooks／Skills」：展开市场可搜索插件目录、按安装状态筛选、查看详情并单项安装、启停、重新安装或卸载，同页管理 Git／本地市场源；Hooks 保留查看与单项启停；Skills 支持查看、搜索、启停，以及本应用安装副本的安装、更新和卸载。
 - Claude Code 页提供当前用户的市场与插件维护，以及五类用户 Hook 定义增删改和插件 Hook 只读查看；写操作目前支持已验证的 Claude Code 2.1.300。
 
 ## 当前边界
@@ -113,7 +113,7 @@ Codex 与 Claude 来源分别扫描、搜索、筛选和移除。搜索及使用
 
 ### Codex 管理
 
-入口为侧栏「Codex」，包含「插件市场／Hooks」两个页签，只管理当前 `CODEX_HOME`（默认 `~/.codex`）；使用相同目录的 CLI 与桌面 App 共用这份本地配置。即使只使用桌面 App，也需要应用的 PATH 中有兼容的 Codex CLI。已验证版本为 0.162.1，不代表最低支持版本，各项能力分别判断兼容性。
+入口为侧栏「Codex」，包含「插件市场／Hooks／Skills」三个页签，只管理当前 `CODEX_HOME`（默认 `~/.codex`）；使用相同目录的 CLI 与桌面 App 共用这份本地配置。即使只使用桌面 App，也需要应用的 PATH 中有兼容的 Codex CLI。插件与 Hooks 已验证版本为 0.162.1，Skills 为 0.163.0；这些不是最低支持版本，各项能力分别判断兼容性。
 
 「插件市场」默认展示本机 Codex 发现或配置的市场，展开后浏览已安装与未安装插件，按名称或简介搜索，并以「全部／已安装／未安装」筛选。插件清单需要 CLI 支持 `codex plugin list --available --json`。首次进入、手动及操作后读取；安装状态与用户默认启用设置分别显示，不从缓存是否存在推断安装。
 
@@ -138,6 +138,12 @@ Codex 与 Claude 来源分别扫描、搜索、筛选和移除。搜索及使用
 Hooks 依赖 CLI 的 `app-server` 清单、功能状态和配置读写能力。只有已信任、非托管且来源可核实的单条 Hook 才能确认后启停；信任审查使用 Codex CLI 的 `/hooks` 或桌面 App 的 Hooks 界面。本工具只写该 Hook 的用户级 `enabled`，不修改信任记录、定义、总开关或插件设置。保存前复核定义、信任、启用状态及配置版本，外部变化时中止并重新读取，不自动覆盖重试。
 
 Hooks 首次进入、手动刷新和操作后读取；插件安装、启停、重新安装、卸载或市场维护后，再次进入 Hooks 会重读。保存成功与随后读取失败分别报告，过期清单暂时不能修改；保存后请在新会话中验证。需求、验证与边界见 [Hooks PRD](./.scratch/codex-hooks-management/PRD.md)、[验证记录](./.scratch/codex-hooks-management/VERIFICATION.md) 和 [ADR-0013](./docs/adr/0013-codex-hooks-use-native-inventory-and-user-state.md)。
+
+「Skills」通过原生清单查看当前用户技能，支持名称／说明／路径搜索、来源与启停筛选及只读 `SKILL.md` 详情。已有普通目录、共享或链接技能只提供 Codex 启停；插件技能可跳转所属插件，内置和其他来源只读。禁用插件未被原生发现的技能不补读，项目技能不进入用户管理。已在 Codex CLI **0.163.0** 验证。
+
+可从 GitHub 仓库（子目录、分支／标签）或本地目录检查并安装一个技能，独立复制到当前 `CODEX_HOME/skills`，新装启用。应用仅维护自己创建并记录的副本，不接管既有技能或其他工具的记录；目标目录存在时拒绝覆盖。更新跟随已记录分支、固定标签提交或原本地目录，保留启停选择；副本有本地修改时停止更新。卸载把副本及本地修改一起移入废纸篓，保留原始来源。
+
+所有技能维护都先预览、单项确认，再核对配置、来源记录、内容及目录身份；操作与清单刷新结果分别反馈。GitHub 来源沿用本机 Git 认证，不运行技能脚本；含链接／特殊文件的安装来源不复制。安装来源及基准保存在 `CODEX_HOME/.package-manager-skills.json`，不可读或身份无法核实时暂停文件维护。验证范围见 [Skills 验证记录](./.scratch/codex-skills-management/VERIFICATION.md)，设计边界见 [ADR-0019](./docs/adr/0019-codex-skills-use-native-discovery-and-owned-installations.md)。
 
 ### Claude Code 管理
 
