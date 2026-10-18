@@ -1,4 +1,5 @@
 use super::*;
+use std::path::{Path, PathBuf};
 use std::{cell::Cell, fs};
 
 fn observe(home: &Path) -> (DefinitionScan, Option<DefinitionObservation>) {

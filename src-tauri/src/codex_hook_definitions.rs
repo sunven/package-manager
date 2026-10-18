@@ -9,10 +9,7 @@ use crate::codex_cli::{self, AppServer};
 use crate::codex_plugins::resolve_home;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    collections::{BTreeMap, HashSet},
-    path::{Path, PathBuf},
-};
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Default)]
 pub(super) struct DefinitionStore {
