@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   bulkRemovalConfirmText,
   bulkRemovalRequest,
+  filterOpenCodeSessions,
+  openCodeDeletionPlan,
+  openCodeSessionDescendantCount,
   groupSessionRecords,
   recordsOlderThan,
   removableSessionRecords,
@@ -12,6 +15,7 @@ import {
   singleRemovalConfirmText,
   type SessionRecord,
   type SessionSourceScan,
+  type OpenCodeSessionRecord,
 } from "./sessionRecords";
 
 function localMs(year: number, month: number, day: number, hour = 12) {
@@ -28,6 +32,49 @@ function record(overrides: Partial<SessionRecord> & Pick<SessionRecord, "id" | "
 }
 
 describe("session record grouping", () => {
+  it("filters OpenCode sessions by title, working directory, and archive state", () => {
+    const records: OpenCodeSessionRecord[] = [
+      { id: "older", title: "Project setup", lastActivityMs: 10, workingDirectory: "/work/alpha", archived: false, parentId: null, parentTitle: null },
+      { id: "archived", title: "Follow-up", lastActivityMs: 30, workingDirectory: "/work/alpha/subproject", archived: true, parentId: "older", parentTitle: "Project setup" },
+      { id: "newer", title: "Project review", lastActivityMs: 20, workingDirectory: "/work/beta", archived: false, parentId: null, parentTitle: null },
+    ];
+
+    expect(filterOpenCodeSessions(records, { query: " PROJECT ", archived: "active" }).map(({ id }) => id)).toEqual(["newer", "older"]);
+    expect(filterOpenCodeSessions(records, { query: "subproject", archived: "archived" }).map(({ id }) => id)).toEqual(["archived"]);
+  });
+
+  it("counts all known OpenCode descendants without looping on malformed cycles", () => {
+    const records: OpenCodeSessionRecord[] = [
+      { id: "root", title: "Root", lastActivityMs: 1, workingDirectory: "/work", archived: false, parentId: null, parentTitle: null },
+      { id: "child", title: "Child", lastActivityMs: 2, workingDirectory: "/work", archived: false, parentId: "root", parentTitle: "Root" },
+      { id: "grandchild", title: "Grandchild", lastActivityMs: 3, workingDirectory: "/work", archived: false, parentId: "child", parentTitle: "Child" },
+      { id: "other", title: "Other", lastActivityMs: 4, workingDirectory: "/work", archived: false, parentId: null, parentTitle: null },
+    ];
+
+    expect(openCodeSessionDescendantCount(records, "root")).toBe(2);
+    expect(openCodeSessionDescendantCount(records, "grandchild")).toBe(0);
+    expect(openCodeSessionDescendantCount([
+      ...records,
+      { ...records[0], parentId: "grandchild" },
+    ], "root")).toBe(2);
+  });
+
+  it("deduplicates selected descendants and previews every known cascade target", () => {
+    const records: OpenCodeSessionRecord[] = [
+      { id: "root", title: "Root", lastActivityMs: 1, workingDirectory: "/work", archived: false, parentId: null, parentTitle: null },
+      { id: "child", title: "Child", lastActivityMs: 2, workingDirectory: "/work", archived: false, parentId: "root", parentTitle: "Root" },
+      { id: "grandchild", title: "Grandchild", lastActivityMs: 3, workingDirectory: "/work", archived: true, parentId: "child", parentTitle: "Child" },
+      { id: "other", title: "Other", lastActivityMs: 4, workingDirectory: "/work", archived: false, parentId: null, parentTitle: null },
+    ];
+
+    expect(openCodeDeletionPlan(records, ["root", "child"])).toMatchObject({
+      selected: [{ id: "root" }, { id: "child" }],
+      roots: [{ id: "root" }],
+      affectedRecords: [{ id: "root" }, { id: "child" }, { id: "grandchild" }],
+    });
+    expect(openCodeDeletionPlan(records, ["child"]).affectedRecords.map(({ id }) => id)).toEqual(["child", "grandchild"]);
+  });
+
   it("groups by local month newest first and keeps records without last activity separate", () => {
     const groups = groupSessionRecords([
       record({ id: "may", lastActivityMs: localMs(2026, 5, 2), bytes: 10 }),

@@ -23,6 +23,97 @@ export type SessionRecordScan = {
 
 export type SessionSourceId = "codex" | "claude";
 
+export type OpenCodeSessionRecord = {
+  id: string;
+  title: string;
+  lastActivityMs: number;
+  workingDirectory: string;
+  archived: boolean;
+  parentId: string | null;
+  parentTitle: string | null;
+};
+
+export type OpenCodeSessionScan = {
+  status: "ready" | "unavailable" | "failed";
+  records: OpenCodeSessionRecord[];
+  message: string | null;
+};
+
+export type OpenCodeDeletionItem = {
+  id: string;
+  status: "deleted" | "failed" | "notAttempted";
+  message: string | null;
+};
+
+export type OpenCodeDeletionResult = {
+  preflightError: string | null;
+  items: OpenCodeDeletionItem[];
+};
+
+export type OpenCodeSessionFilter = { query: string; archived: "all" | "active" | "archived" };
+
+export function filterOpenCodeSessions(records: OpenCodeSessionRecord[], filter: OpenCodeSessionFilter) {
+  const query = filter.query.trim().toLocaleLowerCase();
+  return records
+    .filter((record) =>
+      (filter.archived === "all" || (filter.archived === "archived" ? record.archived : !record.archived)) &&
+      (!query || [record.title, record.workingDirectory].some((value) => value.toLocaleLowerCase().includes(query))),
+    )
+    .sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title));
+}
+
+export function openCodeSessionDescendantCount(records: OpenCodeSessionRecord[], sessionId: string) {
+  const children = new Map<string, string[]>();
+  for (const record of records) {
+    if (!record.parentId) continue;
+    children.set(record.parentId, [...(children.get(record.parentId) ?? []), record.id]);
+  }
+
+  const visited = new Set([sessionId]);
+  const pending = [...(children.get(sessionId) ?? [])];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    pending.push(...(children.get(id) ?? []));
+  }
+  return visited.size - 1;
+}
+
+export function openCodeDeletionPlan(records: OpenCodeSessionRecord[], selectedIds: readonly string[]) {
+  const selectedSet = new Set(selectedIds);
+  const selected = records.filter((record) => selectedSet.has(record.id));
+  const selectedRecords = new Map(selected.map((record) => [record.id, record]));
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  const roots = selected.filter((record) => {
+    const visited = new Set<string>([record.id]);
+    let parentId = record.parentId;
+    while (parentId && !visited.has(parentId)) {
+      if (selectedRecords.has(parentId)) return false;
+      visited.add(parentId);
+      parentId = recordsById.get(parentId)?.parentId ?? null;
+    }
+    return true;
+  });
+  const safeRoots = roots.length ? roots : selected.slice(0, 1);
+  const affectedIds = new Set(safeRoots.map((record) => record.id));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const record of records) {
+      if (record.parentId && affectedIds.has(record.parentId) && !affectedIds.has(record.id)) {
+        affectedIds.add(record.id);
+        changed = true;
+      }
+    }
+  }
+  return {
+    selected,
+    roots: safeRoots,
+    affectedRecords: records.filter((record) => affectedIds.has(record.id)),
+  };
+}
+
 export type SessionRemovalResult = {
   moved: number;
   failed: number;

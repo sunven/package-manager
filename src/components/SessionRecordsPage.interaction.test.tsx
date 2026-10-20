@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionRecordsPage } from "./SessionRecordsPage";
 import { removalResult } from "../test/fixtures";
-import type { SessionRecordScan } from "../sessionRecords";
+import type { OpenCodeSessionScan, SessionRecordScan } from "../sessionRecords";
 
 afterEach(cleanup);
 
@@ -16,6 +16,15 @@ const scan: SessionRecordScan = {
   claude: { directory: "/claude/projects", status: "Missing", records: [], message: null },
 };
 
+const openCodeScan: OpenCodeSessionScan = {
+  status: "ready",
+  message: null,
+  records: [
+    { id: "ses_parent", title: "Parent session", lastActivityMs: 20, workingDirectory: "/work/project", archived: false, parentId: null, parentTitle: null },
+    { id: "ses_child", title: "Archived child", lastActivityMs: 30, workingDirectory: "/work/project/subproject", archived: true, parentId: "ses_parent", parentTitle: "Parent session" },
+  ],
+};
+
 function setup(overrides: Partial<Parameters<typeof SessionRecordsPage>[0]> = {}) {
   const selected = vi.fn().mockResolvedValue(removalResult({ skipped: 1, items: [{ id: "beta.jsonl", status: "Skipped", reason: "InUse", message: null }] }));
   const age = vi.fn().mockResolvedValue(removalResult());
@@ -25,6 +34,105 @@ function setup(overrides: Partial<Parameters<typeof SessionRecordsPage>[0]> = {}
 }
 
 describe("session selection boundaries", () => {
+  it("filters OpenCode records and opens the selected session", async () => {
+    const onOpenOpenCode = vi.fn().mockResolvedValue(null);
+    setup({ initialSource: "opencode", openCodeScan, onOpenOpenCode });
+
+    const list = screen.getByRole("list", { name: "OpenCode 会话记录" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getAllByText("Parent session")).toHaveLength(2);
+    expect(within(list).getByText("已归档")).toBeTruthy();
+    expect(within(list).queryByText("会话 ID")).toBeNull();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 OpenCode 会话" }), { target: { value: "subproject" } });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("radio", { name: "已归档" }));
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+
+    fireEvent.click(within(list).getByRole("button", { name: "在 OpenCode 中打开" }));
+    await waitFor(() => expect(onOpenOpenCode).toHaveBeenCalledExactlyOnceWith("ses_child"));
+  });
+
+  it("requires confirmation before permanently deleting an OpenCode session and its children", async () => {
+    const onDeleteOpenCode = vi.fn().mockResolvedValue(null);
+    const onRefreshOpenCode = vi.fn();
+    setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCode, onRefreshOpenCode });
+
+    fireEvent.click(screen.getByRole("button", { name: "永久删除 Parent session" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText(/永久删除「Parent session」及其全部子会话/)).toBeTruthy();
+    expect(within(dialog).getByText(/当前列表中可见 1 条子会话/)).toBeTruthy();
+    expect(onDeleteOpenCode).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(onDeleteOpenCode).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "永久删除 Parent session" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久删除" }));
+    await waitFor(() => expect(onDeleteOpenCode).toHaveBeenCalledExactlyOnceWith("ses_parent"));
+    await waitFor(() => expect(onRefreshOpenCode).toHaveBeenCalledExactlyOnceWith());
+    expect(await screen.findByText("OpenCode 会话已永久删除")).toBeTruthy();
+  });
+
+  it("previews cascade descendants and clears OpenCode selection when filters change", () => {
+    setup({ initialSource: "opencode", openCodeScan });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 Parent session" }));
+    fireEvent.click(screen.getByRole("button", { name: "永久删除 1 条" }));
+    const dialog = screen.getByRole("alertdialog");
+    const list = within(dialog).getByRole("list", { name: "待永久删除的 OpenCode 会话" });
+    expect(within(dialog).getByText(/将永久删除 2 条会话，其中已选择 1 条/)).toBeTruthy();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByText("级联删除")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 Parent session" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 OpenCode 会话" }), { target: { value: "Archived" } });
+    expect((screen.getByRole("button", { name: "永久删除 0 条" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("deduplicates selected parent-child sessions and reports the batch result", async () => {
+    const onDeleteOpenCode = vi.fn().mockResolvedValue(null);
+    const onDeleteOpenCodeMany = vi.fn().mockResolvedValue({
+      preflightError: null,
+      items: [{ id: "ses_parent", status: "deleted", message: null }],
+    });
+    const onRefreshOpenCode = vi.fn();
+    setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCode, onDeleteOpenCodeMany, onRefreshOpenCode });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 Parent session" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 Archived child" }));
+    fireEvent.click(screen.getByRole("button", { name: "永久删除 2 条" }));
+    const dialog = screen.getByRole("alertdialog");
+    const list = within(dialog).getByRole("list", { name: "待永久删除的 OpenCode 会话" });
+    expect(within(dialog).getByText(/将永久删除 2 条会话，其中已选择 2 条/)).toBeTruthy();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(onDeleteOpenCodeMany).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "永久删除" }));
+    await waitFor(() => expect(onDeleteOpenCodeMany).toHaveBeenCalledExactlyOnceWith(["ses_parent"]));
+    expect(onDeleteOpenCode).not.toHaveBeenCalled();
+    await waitFor(() => expect(onRefreshOpenCode).toHaveBeenCalledExactlyOnceWith());
+    expect(await screen.findByText("OpenCode 会话已永久删除")).toBeTruthy();
+  });
+
+  it("does not refresh after a batch preflight cancels all deletions", async () => {
+    const onDeleteOpenCodeMany = vi.fn().mockResolvedValue({
+      preflightError: "未删除任何会话。「ses_parent」仍在运行。",
+      items: [],
+    });
+    const onRefreshOpenCode = vi.fn();
+    setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCodeMany, onRefreshOpenCode });
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 Parent session" }));
+    fireEvent.click(screen.getByRole("button", { name: "永久删除 1 条" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久删除" }));
+    expect(await screen.findByText("OpenCode 批量删除已取消")).toBeTruthy();
+    expect(screen.getByText(/仍在运行/)).toBeTruthy();
+    expect(onRefreshOpenCode).not.toHaveBeenCalled();
+  });
+
   it("names a single removal target and explains recovery before confirmation", () => {
     const onRemove = vi.fn().mockResolvedValue(removalResult());
     setup({ onRemove });

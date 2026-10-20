@@ -16,6 +16,7 @@ mod environment_inspection;
 mod manager_history;
 mod managers;
 mod observed_file;
+mod opencode_sessions;
 mod project_cleanup;
 mod scan_diagnostics;
 mod session_records;
@@ -378,6 +379,40 @@ async fn scan_session_source(
 }
 
 #[tauri::command]
+async fn scan_opencode_sessions() -> opencode_sessions::OpenCodeSessionScan {
+    tauri::async_runtime::spawn_blocking(opencode_sessions::scan_default)
+        .await
+        .unwrap_or_else(|_| opencode_sessions::OpenCodeSessionScan {
+            status: opencode_sessions::OpenCodeScanStatus::Failed,
+            records: Vec::new(),
+            message: Some("OpenCode 会话读取任务未能完成。".into()),
+        })
+}
+
+#[tauri::command]
+async fn open_opencode_session(session_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || opencode_sessions::open_default(&session_id))
+        .await
+        .map_err(|_| "OpenCode 会话打开任务未能完成。".to_string())?
+}
+
+#[tauri::command]
+async fn delete_opencode_session(session_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || opencode_sessions::delete_default(&session_id))
+        .await
+        .map_err(|_| "OpenCode 会话删除任务未能完成。".to_string())?
+}
+
+#[tauri::command]
+async fn delete_opencode_sessions(
+    session_ids: Vec<String>,
+) -> Result<opencode_sessions::OpenCodeDeletionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || opencode_sessions::delete_many_default(&session_ids))
+        .await
+        .map_err(|_| "OpenCode 批量删除任务未能完成。".to_string())?
+}
+
+#[tauri::command]
 async fn scan_vscode_storage() -> Result<vscode_storage::VscodeStorageScan, String> {
     tauri::async_runtime::spawn_blocking(vscode_storage::scan_default)
         .await
@@ -688,6 +723,10 @@ pub fn run() {
             remove_session_records_older_than,
             scan_session_records,
             scan_session_source,
+            scan_opencode_sessions,
+            open_opencode_session,
+            delete_opencode_session,
+            delete_opencode_sessions,
             scan_vscode_storage,
             get_project_cleanup_settings,
             choose_project_cleanup_root,

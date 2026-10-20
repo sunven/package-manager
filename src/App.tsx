@@ -9,6 +9,7 @@ import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
 import { useSessionRecords } from "./hooks/useSessionRecords";
+import { useOpenCodeSessions } from "./hooks/useOpenCodeSessions";
 import { useCodexWorkflow } from "./hooks/useCodexWorkflow";
 import { CodexSkillsPage } from "./components/CodexSkillsPage";
 import { useClaudeWorkflow } from "./hooks/useClaudeWorkflow";
@@ -67,6 +68,7 @@ export function App() {
   const codex = useCodexWorkflow(activeView === "plugins", codexTab);
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
+  const openCodeSessions = useOpenCodeSessions(activeView === "sessions");
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const { actions, currentManager, scanningManagers, selectedManager } = state;
   const scanning = scanningManagers.has(selectedManager);
@@ -211,12 +213,19 @@ export function App() {
           <SessionRecordsPage
             error={sessionRecords.error}
             homeDirectory={state.homeDirectory}
+            onOpenOpenCode={openCodeSessions.openSession}
+            onDeleteOpenCode={openCodeSessions.deleteSession}
+            onDeleteOpenCodeMany={openCodeSessions.deleteSessions}
+            onRefreshOpenCode={() => void openCodeSessions.refresh()}
             onRefresh={(source) => void sessionRecords.refresh(source)}
             onRemove={sessionRecords.removeOne}
             onRemoveOlder={sessionRecords.removeOlder}
             onRemoveSelected={sessionRecords.removeSelected}
             scan={sessionRecords.scan}
             scanningSources={sessionRecords.scanningSources}
+            openCodeError={openCodeSessions.error}
+            openCodeScan={openCodeSessions.scan}
+            openCodeScanning={openCodeSessions.scanning}
           />
         ) : activeView === "vscode" ? (
           <VscodeStoragePage
