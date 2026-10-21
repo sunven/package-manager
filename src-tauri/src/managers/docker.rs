@@ -1,21 +1,37 @@
 use super::scan_support::{
     empty_snapshot, finish, home_dir, json_string, package_row, push_signal,
 };
-use crate::command::{envelope, envelope_owned, parse_failure, run_command, run_recorded_command};
+use crate::command::{
+    command_failure, envelope, envelope_owned, parse_failure, run_command, run_recorded_command,
+};
 use crate::disk_usage::path_info;
 use crate::types::{
-    AsyncStatus, CommandFailure, CommandRun, DockerDiskUsageRow, DockerResourceHealth, ManagerId,
-    ManagerSnapshot, PackageKind, PackageRow, PackageSignal, PathKind,
+    AsyncStatus, CommandFailure, CommandRun, DockerDiskUsageRow, DockerResourceHealth, FailureKind,
+    ManagerId, ManagerSnapshot, PackageKind, PackageRow, PackageSignal, PathKind,
 };
 use serde_json::Value;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(test)]
+#[path = "docker_source_tests.rs"]
+mod source_tests;
+
 pub(super) fn scan_docker() -> ManagerSnapshot {
-    scan_docker_with_runner_and_home(&run_command, home_dir().as_deref())
+    let home = home_dir();
+    let config = std::env::var_os("DOCKER_CONFIG")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.as_ref().map(|home| home.join(".docker")));
+    scan_docker_with_runner_and_config(&run_command, home.as_deref(), config.as_deref())
 }
 
-fn scan_docker_with_runner_and_home<F>(runner: &F, home: Option<&Path>) -> ManagerSnapshot
+fn scan_docker_with_runner_and_config<F>(
+    runner: &F,
+    home: Option<&Path>,
+    config: Option<&Path>,
+) -> ManagerSnapshot
 where
     F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
 {
@@ -36,6 +52,34 @@ where
         None => return finish(snapshot),
     };
     snapshot.version = Some(parse_docker_version(&version_run.stdout));
+
+    let connection = match freeze_connection(runner, config) {
+        Ok(connection) => Some(connection),
+        Err(failure) => {
+            snapshot.failures.push(failure);
+            None
+        }
+    };
+    let connected_runner = |program: &str, args: &[&str], timeout: Duration| {
+        let args: Vec<&str> = connection
+            .iter()
+            .flat_map(|connection| connection.args.iter().map(String::as_str))
+            .chain(args.iter().copied())
+            .collect();
+        runner(program, &args, timeout).map_err(|mut failure| {
+            if let Some(connection) = connection.as_ref() {
+                failure.message = failure.message.replace(
+                    connection._config.path().to_string_lossy().as_ref(),
+                    "<temporary Docker connection>",
+                );
+            }
+            failure
+        })
+    };
+    let runner = &connected_runner;
+    let before = connection
+        .as_ref()
+        .and_then(|_| read_daemon_id(&mut snapshot, runner));
 
     let mut images = Vec::new();
     let mut containers = Vec::new();
@@ -153,7 +197,188 @@ where
         disk_usage_message,
     });
 
+    if let Some(connection) = connection.as_ref() {
+        let after = read_daemon_id(&mut snapshot, runner);
+        if let (Some(before), Some(after)) = (before, after) {
+            if before == after {
+                // Legacy keys were probed after inventory and cannot establish
+                // this guarantee. Keep them readable without comparing to v2.
+                snapshot.scope_key = serde_json::to_string(&(
+                    "docker-observation-source-v2",
+                    &connection.endpoint,
+                    before,
+                ))
+                .ok();
+            } else {
+                snapshot.failures.push(source_failure(
+                    "Docker daemon identity changed during this observation",
+                ));
+            }
+        }
+    }
+
     finish(snapshot)
+}
+
+struct DockerConnection {
+    // Own the exported TLS material until all queries have completed.
+    _config: tempfile::TempDir,
+    args: Vec<String>,
+    endpoint: String,
+}
+
+fn source_failure(message: impl Into<String>) -> CommandFailure {
+    CommandFailure {
+        kind: FailureKind::CommandFailed,
+        message: message.into(),
+        command: None,
+        stdout: String::new(),
+        stderr: String::new(),
+    }
+}
+
+fn source_command<F>(runner: &F, args: &[&str]) -> Result<CommandRun, CommandFailure>
+where
+    F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let run = runner("docker", args, Duration::from_secs(10)).map_err(|mut failure| {
+        // Failure messages are archived; temporary config paths stay in the
+        // live diagnostics, whose command/output fields are not archived.
+        failure.message = match failure.kind {
+            FailureKind::Timeout => "Docker observation source probe timed out",
+            _ => "Docker observation source could not be verified",
+        }
+        .into();
+        failure
+    })?;
+    if run.exit_code != Some(0) {
+        return Err(command_failure(
+            FailureKind::CommandFailed,
+            "Docker observation source could not be verified",
+            run,
+        ));
+    }
+    Ok(run)
+}
+
+fn freeze_connection<F>(
+    runner: &F,
+    config: Option<&Path>,
+) -> Result<DockerConnection, CommandFailure>
+where
+    F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let config = config
+        .and_then(Path::to_str)
+        .ok_or_else(|| source_failure("Docker config directory could not be resolved"))?;
+    let temporary = tempfile::tempdir()
+        .map_err(|error| source_failure(format!("Could not freeze Docker connection: {error}")))?;
+    let private_config = temporary.path().join("config");
+    fs::create_dir(&private_config)
+        .map_err(|error| source_failure(format!("Could not freeze Docker connection: {error}")))?;
+    // Daemon requests use HttpHeaders. Do not copy registry credentials or helpers.
+    let client_config = match fs::read(Path::new(config).join("config.json")) {
+        Ok(bytes) => serde_json::from_slice::<Value>(&bytes)
+            .map_err(|_| source_failure("Docker client config could not be parsed"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(error) => {
+            return Err(source_failure(format!(
+                "Docker client config could not be read: {error}"
+            )))
+        }
+    };
+    let mut headers = serde_json::json!({});
+    if let Some(value) = client_config.get("HttpHeaders") {
+        headers["HttpHeaders"] = value.clone();
+    }
+    fs::write(private_config.join("config.json"), headers.to_string()).map_err(|error| {
+        source_failure(format!("Could not freeze Docker client settings: {error}"))
+    })?;
+
+    let context = source_command(runner, &["--config", config, "context", "show"])?;
+    let name = context.stdout.trim();
+    if name.is_empty() || name.lines().count() != 1 {
+        return Err(parse_failure(
+            "Docker did not identify an observation context".into(),
+            context,
+        ));
+    }
+    let archive = temporary.path().join("connection.dockercontext");
+    let archive = archive
+        .to_str()
+        .ok_or_else(|| source_failure("Docker temporary path could not be encoded"))?;
+    let private_path = private_config
+        .to_str()
+        .ok_or_else(|| source_failure("Docker temporary path could not be encoded"))?;
+    // Docker can export its dynamic default context too, including resolved host
+    // and TLS material. Importing under a new name freezes both kinds uniformly.
+    source_command(
+        runner,
+        &["--config", config, "context", "export", name, archive],
+    )?;
+    source_command(
+        runner,
+        &[
+            "--config",
+            private_path,
+            "context",
+            "import",
+            "observation",
+            archive,
+        ],
+    )?;
+    let inspect = source_command(
+        runner,
+        &[
+            "--config",
+            private_path,
+            "context",
+            "inspect",
+            "observation",
+        ],
+    )?;
+    let endpoint = serde_json::from_str::<Value>(&inspect.stdout)
+        .ok()
+        .and_then(|value| {
+            value
+                .get(0)?
+                .get("Endpoints")?
+                .get("docker")?
+                .get("Host")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .filter(|endpoint| !endpoint.trim().is_empty())
+        .ok_or_else(|| parse_failure("Frozen Docker context has no endpoint".into(), inspect))?;
+    Ok(DockerConnection {
+        args: vec![
+            "--config".into(),
+            private_path.into(),
+            "--context".into(),
+            "observation".into(),
+        ],
+        endpoint,
+        _config: temporary,
+    })
+}
+
+fn read_daemon_id<F>(snapshot: &mut ManagerSnapshot, runner: &F) -> Option<String>
+where
+    F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let result = source_command(runner, &["info", "--format", "{{json .ID}}"]).and_then(|run| {
+        serde_json::from_str::<String>(&run.stdout)
+            .ok()
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| parse_failure("Docker returned no daemon identity".into(), run))
+    });
+    match result {
+        Ok(id) => Some(id),
+        Err(failure) => {
+            snapshot.failures.push(failure);
+            None
+        }
+    }
 }
 
 fn push_docker_paths(snapshot: &mut ManagerSnapshot, home: Option<&Path>) {
@@ -397,7 +622,7 @@ fn attach_docker_volume_actions(rows: &mut [PackageRow]) {
 mod tests {
     use super::{
         parse_docker_containers, parse_docker_disk_usage, parse_docker_images,
-        parse_docker_volumes, scan_docker_with_runner_and_home,
+        parse_docker_volumes, scan_docker_with_runner_and_config,
     };
     use crate::command::envelope;
     use crate::managers::test_support::fake_run;
@@ -519,9 +744,11 @@ mod tests {
             }
         };
 
-        let snapshot = scan_docker_with_runner_and_home(&runner, Some(Path::new("/Users/sunven")));
+        let snapshot =
+            scan_docker_with_runner_and_config(&runner, Some(Path::new("/Users/sunven")), None);
 
-        assert_eq!(snapshot.status, ManagerStatus::Ready);
+        assert_eq!(snapshot.status, ManagerStatus::Partial);
+        assert!(snapshot.scope_key.is_none());
         assert_eq!(snapshot.version.as_deref(), Some("28.2.2"));
         assert!(snapshot
             .paths
@@ -569,7 +796,8 @@ mod tests {
             })
         };
 
-        let snapshot = scan_docker_with_runner_and_home(&runner, Some(Path::new("/Users/sunven")));
+        let snapshot =
+            scan_docker_with_runner_and_config(&runner, Some(Path::new("/Users/sunven")), None);
 
         assert_eq!(snapshot.status, ManagerStatus::Missing);
         assert!(snapshot.packages.is_empty());

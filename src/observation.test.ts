@@ -56,6 +56,28 @@ describe("snapshot comparison", () => {
       expect(diff.issue).toBeTruthy(); expect(diff.packages).toEqual([]);
     }
   });
+  it("preserves Docker observations while excluding legacy, unknown and changed daemons from comparisons", () => {
+    const before = archive("1", [pkg("old", "1", { kind: "DockerImage" })], "Docker");
+    const after = archive("2", [pkg("new", "1", { kind: "DockerImage" })], "Docker");
+    const endpoint = "unix:///var/run/docker.sock";
+    after.scopeKey = JSON.stringify(["docker-observation-source-v2", endpoint, "daemon-a"]);
+    for (const source of [
+      JSON.stringify(["Docker", endpoint, null, null]),
+      JSON.stringify(["docker-observation-source-v2", endpoint, "daemon-b"]),
+      null,
+    ]) {
+      before.scopeKey = source;
+      const diff = compareSnapshots(before, after);
+      expect(diff.issue).toBeTruthy();
+      expect(diff.packages).toEqual([]);
+      expect(before.packages[0].name).toBe("old");
+    }
+    before.scopeKey = after.scopeKey;
+    expect(compareSnapshots(before, after).packages.map((change) => change.change)).toEqual(["removed", "added"]);
+    const unknown = snapshotDraft(managerFixture("Docker", { scopeKey: null, packages: [pkg("visible")] }), null);
+    expect(unknown.scopeKey).toBeNull();
+    expect(unknown.packages[0].name).toBe("visible");
+  });
   it("only computes a footprint delta for complete measurements of the same source and path", () => {
     const before = archive("1", []), after = archive("2", []);
     before.paths = [{ kind: "Cache", label: "缓存", path: "/cache", bytes: 100, complete: true }];

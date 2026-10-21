@@ -1,4 +1,6 @@
-use super::scan_support::{empty_snapshot, finish, package_row, push_signal, trimmed};
+use super::scan_support::{
+    empty_snapshot, finish, package_row, path_scope_key, push_signal, trimmed,
+};
 use crate::command::{envelope_owned, parse_failure, run_command, run_recorded_command};
 use crate::disk_usage::path_info;
 use crate::types::{
@@ -80,6 +82,7 @@ where
         }
     }
 
+    snapshot.scope_key = path_scope_key(&snapshot, &[PathKind::FvmVersions], None);
     finish(snapshot)
 }
 
@@ -344,6 +347,10 @@ mod tests {
     fn scan_fvm_collects_versions_paths_and_copy_actions() {
         let snapshot = scan_fvm_with_runner(&runner);
 
+        assert_eq!(
+            snapshot.scope_key.as_deref(),
+            Some(r#"["Fvm",["/Users/sunven/fvm/versions"],null]"#)
+        );
         assert_eq!(snapshot.status, ManagerStatus::Ready);
         assert_eq!(snapshot.version.as_deref(), Some("4.3.1"));
         assert_eq!(snapshot.packages.len(), 2);

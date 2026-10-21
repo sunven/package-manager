@@ -1,4 +1,6 @@
-use super::scan_support::{empty_snapshot, expand_tilde, finish, home_dir, package_row};
+use super::scan_support::{
+    empty_snapshot, expand_tilde, finish, home_dir, package_row, path_scope_key,
+};
 use crate::command::{envelope_owned, parse_failure, run_command, run_recorded_command};
 use crate::disk_usage::path_info;
 use crate::types::{
@@ -81,6 +83,7 @@ where
         Err(message) => snapshot.failures.push(parse_failure(message, list_run)),
     }
 
+    snapshot.scope_key = path_scope_key(&snapshot, &[PathKind::CargoBin], None);
     finish(snapshot)
 }
 
@@ -303,6 +306,11 @@ mod tests {
             scan_cargo_with_runner_and_home(&runner, PathBuf::from("/Users/sunven/.cargo"));
 
         assert_eq!(snapshot.status, ManagerStatus::Ready);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(snapshot.scope_key.as_deref().unwrap())
+                .unwrap(),
+            serde_json::json!(["Cargo", ["/Users/sunven/.cargo/bin"], null])
+        );
         assert_eq!(snapshot.version.as_deref(), Some("1.88.0"));
         assert_eq!(snapshot.commands.len(), 2);
         assert!(snapshot

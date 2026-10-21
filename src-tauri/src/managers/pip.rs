@@ -1,4 +1,6 @@
-use super::scan_support::{empty_snapshot, finish, json_string, package_row, push_signal, trimmed};
+use super::scan_support::{
+    empty_snapshot, finish, json_string, package_row, path_scope_key, push_signal, trimmed,
+};
 use crate::command::{command_failure, envelope_owned, parse_failure, run_command_owned};
 use crate::disk_usage::path_info;
 use crate::types::{
@@ -36,7 +38,7 @@ where
     )
     .unwrap_or_else(|| "unknown".to_string());
 
-    let python_executable = command_stdout_owned(
+    let resolved_python = command_stdout_owned(
         python.as_str(),
         vec![
             "-c".to_string(),
@@ -46,8 +48,8 @@ where
         &mut snapshot,
         runner,
         "Python executable probe failed",
-    )
-    .unwrap_or_else(|| python.clone());
+    );
+    let python_executable = resolved_python.clone().unwrap_or_else(|| python.clone());
 
     let pip_version = match command_stdout_owned(
         python_executable.as_str(),
@@ -245,6 +247,13 @@ where
         outdated_message: Some("Outdated scan pending".to_string()),
     });
 
+    snapshot.scope_key = resolved_python.as_ref().and_then(|_| {
+        path_scope_key(
+            &snapshot,
+            &[PathKind::SitePackages, PathKind::UserSite],
+            Some(&python_executable),
+        )
+    });
     finish(snapshot)
 }
 
@@ -535,6 +544,60 @@ fn parse_pip_outdated(stdout: &str) -> Result<Vec<String>, String> {
 mod tests {
     use super::{enrich_pip_from_inspect, parse_pip_list, parse_pip_outdated};
     use crate::types::{PackageKind, PackageSignal};
+
+    #[test]
+    fn scan_source_uses_the_same_interpreter_as_inventory_and_never_a_failed_probe_fallback() {
+        use crate::managers::test_support::{fake_failed_run, fake_run};
+        for executable in [
+            Some("/observation/python-a"),
+            Some("/observation/python-b"),
+            None,
+        ] {
+            let runner = |program: &str, args: &[String], timeout| {
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                let output = match args.as_slice() {
+                    ["--version"] => "Python 3.12.0",
+                    ["-c", "import sys; print(sys.executable)"] => match executable {
+                        Some(path) => path,
+                        None => {
+                            return Ok(fake_failed_run(
+                                program,
+                                &args,
+                                timeout,
+                                "no interpreter identity",
+                            ))
+                        }
+                    },
+                    ["-m", "pip", rest @ ..] => {
+                        assert_eq!(program, executable.unwrap_or("python3"));
+                        match *rest {
+                            ["--version"] => "pip 25.0",
+                            ["list", "--format=json"] => r#"[{"name":"tool","version":"1"}]"#,
+                            ["cache", "dir"] => "/observation/cache",
+                            ["cache", "info"] => "cache info",
+                            ["inspect", "--local"] => {
+                                r#"{"installed":[{"metadata":{"name":"tool"},"location":"/observation/site-packages"}]}"#
+                            }
+                            _ => panic!("unexpected pip command: {args:?}"),
+                        }
+                    }
+                    _ => panic!("unexpected command: {program} {args:?}"),
+                };
+                Ok(fake_run(program, &args, timeout, output))
+            };
+            let snapshot = super::scan_pip_with_runner(&runner);
+            assert_eq!(snapshot.packages.len(), 1);
+            assert_eq!(
+                snapshot.scope_key,
+                executable.map(|path| serde_json::json!([
+                    "Pip",
+                    ["/observation/site-packages"],
+                    path
+                ])
+                .to_string())
+            );
+        }
+    }
 
     #[test]
     fn parse_pip_list_sorts_packages() {

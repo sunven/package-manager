@@ -1,5 +1,6 @@
 use super::scan_support::{
-    empty_snapshot, expand_tilde, finish, home_dir, package_row, split_package_version, trimmed,
+    empty_snapshot, expand_tilde, finish, home_dir, package_row, path_scope_key,
+    split_package_version, trimmed,
 };
 use crate::command::{
     envelope, envelope_owned, run_command, run_recorded_command, run_recorded_stdout,
@@ -13,10 +14,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub(super) fn scan_bun() -> ManagerSnapshot {
-    scan_bun_with_runner_and_home(&run_command, home_dir().as_deref())
+    scan_bun_with_runner_and_root(
+        &run_command,
+        resolve_bun_install_from_env(home_dir().as_deref()),
+    )
 }
 
-fn scan_bun_with_runner_and_home<F>(runner: &F, home: Option<&Path>) -> ManagerSnapshot
+fn scan_bun_with_runner_and_root<F>(runner: &F, bun_root: PathBuf) -> ManagerSnapshot
 where
     F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
 {
@@ -35,7 +39,6 @@ where
     };
     snapshot.version = Some(trimmed(version_run.stdout));
 
-    let bun_root = resolve_bun_install_from_env(home);
     snapshot.paths.push(path_info(
         "Bun install",
         PathKind::BunInstall,
@@ -80,6 +83,11 @@ where
         "Bun global package list failed",
     ) {
         snapshot.packages = parse_bun_global_packages(&run.stdout, &global_bin);
+        // The install root alone is not evidence for a custom bunfig globalDir.
+        let expected_global = bun_root.join("install/global");
+        if run.stdout.lines().next().map(str::trim) == expected_global.to_str() {
+            snapshot.scope_key = path_scope_key(&snapshot, &[PathKind::BunInstall], None);
+        }
     }
     attach_bun_actions(&mut snapshot.packages);
 
@@ -159,10 +167,31 @@ fn attach_bun_actions(rows: &mut [PackageRow]) {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::fake_run;
-    use super::{parse_bun_global_packages, scan_bun_with_runner_and_home};
+    use super::{parse_bun_global_packages, scan_bun_with_runner_and_root};
     use crate::types::{CommandFailure, CommandRun, ManagerStatus, PackageKind, PathKind};
-    use std::path::Path;
     use std::time::Duration;
+
+    #[test]
+    fn scan_only_identifies_the_install_root_when_the_inventory_confirms_it() {
+        for header in ["/observation/bun/install/global", "/different/global", ""] {
+            let runner = |program: &str, args: &[&str], timeout| {
+                let output = match args {
+                    ["--version"] => "1.2.17".into(),
+                    ["pm", "cache"] => "/observation/cache".into(),
+                    ["pm", "bin", "-g"] => "/observation/bun/bin".into(),
+                    ["pm", "ls", "-g"] => format!("{header}\n└── tool@1.0.0\n"),
+                    _ => panic!("unexpected command: {args:?}"),
+                };
+                Ok(fake_run(program, args, timeout, &output))
+            };
+            let snapshot = scan_bun_with_runner_and_root(&runner, "/observation/bun".into());
+            assert_eq!(snapshot.packages.len(), 1);
+            assert_eq!(
+                snapshot.scope_key.is_some(),
+                header == "/observation/bun/install/global"
+            );
+        }
+    }
 
     #[test]
     fn parse_bun_global_packages_reads_package_rows() {
@@ -211,8 +240,12 @@ mod tests {
             }
         };
 
-        let snapshot = scan_bun_with_runner_and_home(&runner, Some(Path::new("/Users/sunven")));
+        let snapshot = scan_bun_with_runner_and_root(&runner, "/Users/sunven/.bun".into());
 
+        assert_eq!(
+            snapshot.scope_key.as_deref(),
+            Some(r#"["Bun",["/Users/sunven/.bun"],null]"#)
+        );
         assert_eq!(snapshot.status, ManagerStatus::Ready);
         assert_eq!(snapshot.version.as_deref(), Some("1.2.17"));
         assert!(snapshot

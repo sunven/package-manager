@@ -1,4 +1,6 @@
-use super::scan_support::{empty_snapshot, finish, json_string, package_row, push_signal};
+use super::scan_support::{
+    empty_snapshot, finish, json_string, package_row, path_scope_key, push_signal,
+};
 use crate::command::{
     command_failure, envelope, envelope_owned, parse_failure, run_command, run_recorded_command,
     run_recorded_stdout,
@@ -196,6 +198,7 @@ where
         return snapshot;
     }
 
+    snapshot.scope_key = path_scope_key(&snapshot, &[PathKind::Prefix], None);
     finish(snapshot)
 }
 
@@ -617,6 +620,11 @@ mod tests {
         let snapshot = scan_homebrew_with_runner(&runner);
 
         assert_eq!(snapshot.status, ManagerStatus::Ready);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(snapshot.scope_key.as_deref().unwrap())
+                .unwrap(),
+            serde_json::json!(["Homebrew", ["/opt/homebrew"], null])
+        );
         assert_eq!(snapshot.version.as_deref(), Some("4.4.0"));
         assert_eq!(snapshot.packages.len(), 3);
         assert!(snapshot

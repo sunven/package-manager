@@ -1,6 +1,6 @@
 use super::scan_support::{
-    empty_snapshot, expand_tilde, finish, home_dir, json_string, package_row, push_signal,
-    split_package_version, trimmed,
+    empty_snapshot, expand_tilde, finish, home_dir, json_string, package_row, path_scope_key,
+    push_signal, split_package_version, trimmed,
 };
 use crate::command::{command_failure, envelope_owned, parse_failure, push_command, run_command};
 use crate::disk_usage::path_info;
@@ -88,6 +88,7 @@ where
             .push(path_info("Global modules", PathKind::GlobalModules, path));
     }
 
+    snapshot.scope_key = path_scope_key(&snapshot, &[PathKind::GlobalModules], None);
     finish(snapshot)
 }
 
@@ -161,6 +162,7 @@ where
             .push(path_info("Global modules", PathKind::GlobalModules, path));
     }
 
+    snapshot.scope_key = path_scope_key(&snapshot, &[PathKind::GlobalModules], None);
     finish(snapshot)
 }
 
@@ -210,6 +212,7 @@ where
         }
     }
 
+    snapshot.scope_key = path_scope_key(&snapshot, &[PathKind::GlobalDir], None);
     finish(snapshot)
 }
 
@@ -339,6 +342,7 @@ fn scan_nvm_with_context(nvm_dir: PathBuf, nvm_bin: Option<String>) -> ManagerSn
 
     let current_version = current_nvm_node_version(&nvm_dir, nvm_bin.as_deref());
     snapshot.packages = scan_nvm_node_versions(&node_versions_dir, current_version.as_deref());
+    snapshot.scope_key = path_scope_key(&snapshot, &[PathKind::NvmDir], None);
     finish(snapshot)
 }
 
@@ -726,6 +730,67 @@ mod tests {
     }
 
     #[test]
+    fn node_package_scans_return_their_observed_global_source_or_unknown() {
+        for manager in [ManagerId::Npm, ManagerId::Pnpm, ManagerId::Yarn] {
+            for root in [
+                Some("/observation/global-a"),
+                Some("/observation/global-b"),
+                Some("relative-global"),
+                Some(""),
+                None,
+            ] {
+                let runner = |program: &str, args: &[&str], timeout| {
+                    let output = match args {
+                        ["--version"] => {
+                            if manager == ManagerId::Yarn {
+                                "1.22.22"
+                            } else {
+                                "10.0.0"
+                            }
+                        }
+                        ["ls", "-g", "--depth=0", "--json"] => {
+                            r#"{"dependencies":{"tool":{"version":"1"}}}"#
+                        }
+                        ["list", "-g", "--depth=0", "--json"] => {
+                            r#"[{"dependencies":{"tool":{"version":"1"}}}]"#
+                        }
+                        ["global", "list", "--json"] => {
+                            r#"{"type":"tree","data":{"trees":[{"name":"tool@1"}]}}"#
+                        }
+                        ["root", "-g"] | ["global", "dir"] => match root {
+                            Some(root) => root,
+                            None => {
+                                return Ok(fake_failed_run(
+                                    program,
+                                    args,
+                                    timeout,
+                                    "no global source",
+                                ))
+                            }
+                        },
+                        ["config", "get", "cache"] | ["store", "path"] | ["cache", "dir"] => {
+                            "/observation/cache"
+                        }
+                        _ => panic!("unexpected command: {program} {args:?}"),
+                    };
+                    Ok(fake_run(program, args, timeout, output))
+                };
+                let snapshot = match manager {
+                    ManagerId::Npm => super::scan_npm_with_runner(&runner),
+                    ManagerId::Pnpm => super::scan_pnpm_with_runner(&runner),
+                    ManagerId::Yarn => super::scan_yarn_with_runner(&runner),
+                    _ => unreachable!(),
+                };
+                assert_eq!(snapshot.packages.len(), 1);
+                let expected = root
+                    .filter(|root| Path::new(root).is_absolute())
+                    .map(|root| serde_json::json!([manager, [root], null]).to_string());
+                assert_eq!(snapshot.scope_key, expected);
+            }
+        }
+    }
+
+    #[test]
     fn scan_npm_collects_packages_paths_and_commands() {
         let runner = |program: &str,
                       args: &[&str],
@@ -756,6 +821,11 @@ mod tests {
         let snapshot = scan_npm_with_runner(&runner);
 
         assert_eq!(snapshot.status, ManagerStatus::Ready);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(snapshot.scope_key.as_deref().unwrap())
+                .unwrap(),
+            serde_json::json!(["Npm", ["/opt/homebrew/lib/node_modules"], null])
+        );
         assert_eq!(snapshot.version.as_deref(), Some("10.8.2"));
         assert_eq!(snapshot.packages.len(), 1);
         assert_eq!(snapshot.packages[0].name, "prettier");
@@ -798,6 +868,12 @@ mod tests {
 
         let snapshot = scan_nvm_with_context(root.path().to_path_buf(), None);
 
+        assert_eq!(
+            snapshot.scope_key,
+            Some(
+                serde_json::json!(["Nvm", [root.path().canonicalize().unwrap()], null]).to_string()
+            )
+        );
         assert_eq!(snapshot.status, ManagerStatus::Ready);
         assert_eq!(snapshot.id, ManagerId::Nvm);
         assert!(snapshot.paths.iter().any(|path| {

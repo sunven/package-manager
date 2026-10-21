@@ -1,4 +1,4 @@
-use super::scan_support::{empty_snapshot, finish, package_row};
+use super::scan_support::{empty_snapshot, finish, package_row, path_scope_key};
 use crate::command::{
     envelope, envelope_owned, parse_failure, run_command, run_recorded_command, run_recorded_stdout,
 };
@@ -104,6 +104,13 @@ where
     snapshot
         .commands
         .push(envelope("uv", &["cache", "clean"], 0));
+    let sources = [PathKind::UvTools, PathKind::UvPythonInstallations];
+    if sources
+        .iter()
+        .all(|kind| snapshot.paths.iter().any(|path| path.kind == *kind))
+    {
+        snapshot.scope_key = path_scope_key(&snapshot, &sources, None);
+    }
     finish(snapshot)
 }
 
@@ -313,6 +320,18 @@ mod tests {
         let snapshot = scan_uv_with_runner(&runner);
 
         assert_eq!(snapshot.status, ManagerStatus::Ready);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(snapshot.scope_key.as_deref().unwrap())
+                .unwrap(),
+            serde_json::json!([
+                "Uv",
+                [
+                    "/Users/sunven/.local/share/uv/python",
+                    "/Users/sunven/.local/share/uv/tools"
+                ],
+                null
+            ])
+        );
         assert_eq!(snapshot.version.as_deref(), Some("0.7.13"));
         assert!(snapshot
             .paths
@@ -339,5 +358,29 @@ mod tests {
             .commands
             .iter()
             .any(|command| command.preview == "uv cache prune"));
+    }
+
+    #[test]
+    fn scan_needs_both_installation_roots_to_identify_its_combined_inventory() {
+        for missing in ["tool", "python"] {
+            let runner = |program: &str, args: &[&str], timeout| {
+                let output = match args {
+                    ["--version"] => "uv 0.7.13",
+                    [kind, "dir"] if *kind == missing => "",
+                    ["tool", "dir"] => "/observation/tools",
+                    ["python", "dir"] => "/observation/pythons",
+                    ["cache", "dir"] => "/observation/cache",
+                    ["tool", "list"] => "ruff v1.0\n- ruff\n",
+                    ["python", "list", "--only-installed"] => {
+                        "cpython-3.12.7-macos-aarch64-none /observation/pythons/cpython-3.12.7\n"
+                    }
+                    _ => panic!("unexpected command: {args:?}"),
+                };
+                Ok(fake_run(program, args, timeout, output))
+            };
+            let snapshot = scan_uv_with_runner(&runner);
+            assert_eq!(snapshot.packages.len(), 2);
+            assert!(snapshot.scope_key.is_none());
+        }
     }
 }

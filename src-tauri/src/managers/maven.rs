@@ -1,5 +1,5 @@
 use super::scan_support::{
-    empty_snapshot, expand_tilde, finish, home_dir, package_row, push_signal,
+    empty_snapshot, expand_tilde, finish, home_dir, package_row, path_scope_key, push_signal,
 };
 use crate::command::{command_failure, envelope, envelope_owned, push_command, run_command};
 use crate::disk_usage::path_info;
@@ -14,10 +14,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub(super) fn scan_maven() -> ManagerSnapshot {
-    scan_maven_with_runner(&run_command)
+    scan_maven_with_runner_and_home(&run_command, home_dir().as_deref())
 }
 
-fn scan_maven_with_runner<F>(runner: &F) -> ManagerSnapshot
+fn scan_maven_with_runner_and_home<F>(runner: &F, home: Option<&Path>) -> ManagerSnapshot
 where
     F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
 {
@@ -43,7 +43,7 @@ where
     snapshot.version = Some(parse_maven_version(&version_run.stdout));
 
     let maven_home = parse_maven_home(&version_run.stdout);
-    let resolution = resolve_maven_local_repository(maven_home.as_deref());
+    let resolution = resolve_maven_local_repository(maven_home.as_deref(), home);
     if let Some(message) = resolution.message.as_ref() {
         snapshot.failures.push(CommandFailure {
             kind: FailureKind::ParseFailure,
@@ -78,6 +78,7 @@ where
     snapshot.packages = scan.packages;
     snapshot.maven = Some(scan.health);
 
+    snapshot.scope_key = path_scope_key(&snapshot, &[PathKind::LocalRepository], None);
     finish(snapshot)
 }
 
@@ -135,8 +136,10 @@ fn parse_maven_home(stdout: &str) -> Option<String> {
     })
 }
 
-fn resolve_maven_local_repository(maven_home: Option<&str>) -> MavenLocalRepositoryResolution {
-    let home = home_dir();
+fn resolve_maven_local_repository(
+    maven_home: Option<&str>,
+    home: Option<&Path>,
+) -> MavenLocalRepositoryResolution {
     let user_settings = home.as_ref().map(|home| home.join(".m2/settings.xml"));
     let global_settings = maven_home.map(|home| Path::new(home).join("conf/settings.xml"));
     let fallback = home
@@ -416,6 +419,44 @@ mod tests {
     use super::{parse_maven_local_repository_setting, scan_maven_repository, MavenScanLimits};
     use crate::managers::test_support::{temp_dir, write_file};
     use crate::types::PackageSignal;
+
+    #[test]
+    fn scan_returns_the_repository_it_actually_reads_as_its_source() {
+        let home = temp_dir("maven-observation");
+        let repository = home.path().join("custom-repository");
+        write_file(
+            &home.path().join(".m2/settings.xml"),
+            format!(
+                "<settings><localRepository>{}</localRepository></settings>",
+                repository.display()
+            )
+            .as_bytes(),
+        );
+        write_file(
+            &repository.join("org/example/tool/1.0/tool-1.0.pom"),
+            b"<project />",
+        );
+        let runner = |program: &str, args: &[&str], timeout| {
+            assert_eq!(program, "mvn");
+            assert_eq!(args, ["--version"]);
+            Ok(crate::managers::test_support::fake_run(
+                program,
+                args,
+                timeout,
+                "Apache Maven 3.9.9",
+            ))
+        };
+        let snapshot = super::scan_maven_with_runner_and_home(&runner, Some(home.path()));
+        assert_eq!(snapshot.packages.len(), 1);
+        assert_eq!(snapshot.packages[0].name, "org.example:tool");
+        assert_eq!(
+            snapshot.scope_key,
+            Some(
+                serde_json::json!(["Maven", [repository.canonicalize().unwrap()], null])
+                    .to_string()
+            )
+        );
+    }
 
     #[test]
     fn parse_maven_settings_reads_only_top_level_local_repository() {

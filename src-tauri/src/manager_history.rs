@@ -1,4 +1,4 @@
-use crate::types::{ManagerId, ManagerSnapshot, PathKind};
+use crate::types::ManagerId;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -313,75 +313,6 @@ fn write<T: Serialize>(path: &Path, items: &[T]) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn scope_key(snapshot: &ManagerSnapshot) -> Option<String> {
-    use ManagerId::*;
-    // The same CLI can observe another environment after an interpreter,
-    // installation root or Docker endpoint changes.
-    if snapshot.id == Docker {
-        let run = crate::command::run_command(
-            "docker",
-            &["context", "inspect"],
-            std::time::Duration::from_secs(10),
-        )
-        .ok()?;
-        if run.exit_code != Some(0) {
-            return None;
-        }
-        let value: serde_json::Value = serde_json::from_str(&run.stdout).ok()?;
-        let endpoint = value
-            .get(0)?
-            .get("Endpoints")?
-            .get("docker")?
-            .get("Host")?
-            .as_str()?;
-        return serde_json::to_string(&(
-            "Docker",
-            endpoint,
-            std::env::var("DOCKER_HOST").ok(),
-            std::env::var("DOCKER_CONTEXT").ok(),
-        ))
-        .ok();
-    }
-    let kinds: &[PathKind] = match snapshot.id {
-        Npm | Pnpm | Yarn => &[PathKind::GlobalDir, PathKind::GlobalModules],
-        Nvm => &[PathKind::NvmDir],
-        Homebrew => &[PathKind::Prefix],
-        Maven => &[PathKind::LocalRepository],
-        Pip => &[PathKind::SitePackages, PathKind::UserSite],
-        Cargo => &[PathKind::CargoBin],
-        Bun => &[
-            PathKind::GlobalDir,
-            PathKind::GlobalModules,
-            PathKind::BunInstall,
-        ],
-        Uv => &[PathKind::UvTools, PathKind::UvPythonInstallations],
-        Fvm => &[PathKind::FvmVersions],
-        Docker => unreachable!(),
-    };
-    let mut roots: Vec<String> = snapshot
-        .paths
-        .iter()
-        .filter(|p| kinds.contains(&p.kind))
-        .map(|p| {
-            fs::canonicalize(&p.path)
-                .unwrap_or_else(|_| PathBuf::from(&p.path))
-                .display()
-                .to_string()
-        })
-        .collect();
-    roots.sort();
-    roots.dedup();
-    if roots.is_empty() {
-        return None;
-    }
-    serde_json::to_string(&(
-        snapshot.id,
-        roots,
-        snapshot.pip.as_ref().map(|p| &p.python_executable),
-    ))
-    .ok()
-}
-
 pub(crate) fn uninstall_summary(
     run: &crate::types::MaintenanceRunPreview,
 ) -> (&'static str, String) {
@@ -451,6 +382,41 @@ mod tests {
             packages: Vec::new(),
             paths: Vec::new(),
             message: None,
+        }
+    }
+
+    #[test]
+    fn keeps_legacy_new_and_unknown_docker_sources_unchanged_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let sources = [
+            Some(r#"["Docker","unix:///var/run/docker.sock",null,null]"#.to_string()),
+            Some(
+                r#"["docker-observation-source-v2","unix:///var/run/docker.sock","engine-a"]"#
+                    .to_string(),
+            ),
+            None,
+        ];
+        let store = HistoryState::new(dir.path().into());
+        for source in &sources {
+            let mut observation = draft(ManagerId::Docker);
+            observation.scope_key = source.clone();
+            observation.packages.push(ArchivedPackage {
+                observation_id: "image-a".into(),
+                name: "visible".into(),
+                version: "1".into(),
+                observed_versions: None,
+                path: None,
+                kind: "DockerImage".into(),
+                signals: Vec::new(),
+            });
+            store.save(observation).unwrap();
+        }
+        let reopened = HistoryState::new(dir.path().into());
+        let history = reopened.list(ManagerId::Docker);
+        assert_eq!(history.snapshots.len(), 3);
+        for (snapshot, source) in history.snapshots.iter().zip(sources.iter().rev()) {
+            assert_eq!(&snapshot.observation.scope_key, source);
+            assert_eq!(snapshot.observation.packages[0].name, "visible");
         }
     }
 

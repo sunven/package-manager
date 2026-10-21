@@ -63,6 +63,36 @@ pub(super) fn expand_tilde(value: &str, home: Option<&Path>) -> PathBuf {
     PathBuf::from(value)
 }
 
+pub(super) fn path_scope_key(
+    snapshot: &ManagerSnapshot,
+    kinds: &[PathKind],
+    interpreter: Option<&str>,
+) -> Option<String> {
+    let mut roots = Vec::new();
+    for path in snapshot
+        .paths
+        .iter()
+        .filter(|path| kinds.contains(&path.kind))
+    {
+        if path.path.trim().is_empty() || !Path::new(&path.path).is_absolute() {
+            return None;
+        }
+        let root = match std::fs::canonicalize(&path.path) {
+            Ok(root) => root,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => PathBuf::from(&path.path),
+            Err(_) => return None,
+        };
+        roots.push(root.display().to_string());
+    }
+    roots.sort();
+    roots.dedup();
+    if roots.is_empty() || interpreter.is_some_and(|value| !Path::new(value).is_absolute()) {
+        return None;
+    }
+    // Preserve the existing encoding for observations of the same installation.
+    serde_json::to_string(&(snapshot.id, roots, interpreter)).ok()
+}
+
 pub(super) fn finish(mut snapshot: ManagerSnapshot) -> ManagerSnapshot {
     if matches!(snapshot.status, ManagerStatus::Unsupported) {
         return snapshot;
