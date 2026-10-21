@@ -211,21 +211,9 @@ export function App() {
           <ClaudeCodePage workflow={claude} tab={claudeTab} onTabChange={setClaudeTab} />
         ) : activeView === "sessions" ? (
           <SessionRecordsPage
-            error={sessionRecords.error}
             homeDirectory={state.homeDirectory}
-            onOpenOpenCode={openCodeSessions.openSession}
-            onDeleteOpenCode={openCodeSessions.deleteSession}
-            onDeleteOpenCodeMany={openCodeSessions.deleteSessions}
-            onRefreshOpenCode={() => void openCodeSessions.refresh()}
-            onRefresh={(source) => void sessionRecords.refresh(source)}
-            onRemove={sessionRecords.removeOne}
-            onRemoveOlder={sessionRecords.removeOlder}
-            onRemoveSelected={sessionRecords.removeSelected}
-            scan={sessionRecords.scan}
-            scanningSources={sessionRecords.scanningSources}
-            openCodeError={openCodeSessions.error}
-            openCodeScan={openCodeSessions.scan}
-            openCodeScanning={openCodeSessions.scanning}
+            records={sessionRecords}
+            openCode={openCodeSessions}
           />
         ) : activeView === "vscode" ? (
           <VscodeStoragePage

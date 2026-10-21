@@ -23,6 +23,11 @@ export type SessionRecordScan = {
 
 export type SessionSourceId = "codex" | "claude";
 
+export type SessionRefresh = {
+  status: "notRequested" | "refreshing" | "ready" | "failed";
+  message: string | null;
+};
+
 export type OpenCodeSessionRecord = {
   id: string;
   title: string;

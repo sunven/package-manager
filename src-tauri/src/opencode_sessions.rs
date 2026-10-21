@@ -194,12 +194,35 @@ pub(crate) fn delete_many_default(
         .map_err(|error| error.message())?
         .ok_or_else(|| "未发现正在运行的 OpenCode 服务，请启动 OpenCode 后重试。".to_string())?;
     let client = client()?;
-    let records = scan_service(&service).map_err(|error| match error {
+    delete_selected(&client, &service, &session_ids)
+}
+
+fn delete_selected(
+    client: &Client,
+    service: &Service,
+    session_ids: &[String],
+) -> Result<OpenCodeDeletionResult, String> {
+    let records = scan_service(service).map_err(|error| match error {
         ScanError::Unavailable(message) | ScanError::Failed(message) => {
             format!("无法核对当前 OpenCode 会话，未删除任何会话：{message}")
         }
     })?;
-    let (roots, preflight_session_ids) = open_code_deletion_plan(&records, &session_ids);
+    let existing_ids = records
+        .iter()
+        .map(|record| record.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    if let Some(missing) = session_ids
+        .iter()
+        .find(|id| !existing_ids.contains(id.as_str()))
+    {
+        return Ok(OpenCodeDeletionResult {
+            preflight_error: Some(format!(
+                "所选 OpenCode 会话「{missing}」已不存在，未删除任何会话。请刷新后重试。"
+            )),
+            items: Vec::new(),
+        });
+    }
+    let (roots, preflight_session_ids) = open_code_deletion_plan(&records, session_ids);
     if roots.is_empty() {
         return Ok(OpenCodeDeletionResult {
             preflight_error: Some("所选 OpenCode 会话已不存在，未删除任何会话。请刷新后重试。".into()),
@@ -209,7 +232,7 @@ pub(crate) fn delete_many_default(
     if roots.iter().any(|id| !preflight_session_ids.contains(id)) {
         return Err("OpenCode 会话删除计划无效，未删除任何会话。".into());
     }
-    delete_many(&client, &service, &roots, &preflight_session_ids)
+    delete_many(client, service, &roots, &preflight_session_ids)
 }
 
 fn open_code_deletion_plan(
@@ -892,6 +915,35 @@ mod tests {
             "ses_child".to_string(),
             "ses_new_child".to_string(),
         ]);
+    }
+
+    #[test]
+    fn batch_deletion_rejects_a_missing_selected_target_before_preflight_or_delete() {
+        let (url, server) = mock_server(vec![(
+            200,
+            r#"{"data":[{"id":"ses_parent","title":"Parent","time":{"created":1,"updated":10},"location":{"directory":"/work"}}],"cursor":{}}"#,
+        )]);
+        let service = Service {
+            url,
+            password: None,
+            version: "2.0.32".into(),
+            pid: 1,
+        };
+        let result = delete_selected(
+            &client().unwrap(),
+            &service,
+            &["ses_parent".into(), "ses_missing_child".into()],
+        )
+        .unwrap();
+        let requests = server.join().unwrap();
+
+        let error = result.preflight_error.unwrap();
+        assert!(error.contains("ses_missing_child"));
+        assert!(error.contains("已不存在"));
+        assert!(error.contains("未删除任何会话"));
+        assert!(result.items.is_empty());
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("get /api/session?"));
     }
 
     #[test]

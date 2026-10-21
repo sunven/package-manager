@@ -18,7 +18,7 @@ import { Button } from "../../components/ui/button";
 import { CardContent } from "../../components/ui/card";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { errorToString, formatBytes, formatHomePath } from "../utils/format";
+import { formatBytes, formatHomePath } from "../utils/format";
 import {
   bulkRemovalConfirmText,
   bulkRemovalRequest,
@@ -30,10 +30,7 @@ import {
   type SessionFilter,
   filterOpenCodeSessions,
   type OpenCodeSessionFilter,
-  type OpenCodeDeletionResult,
   type OpenCodeSessionScan,
-  openCodeDeletionPlan,
-  type OpenCodeSessionRecord,
   type SessionUsageFilter,
   selectedRemovalConfirmText,
   selectedRemovalRequest,
@@ -41,12 +38,13 @@ import {
   type SessionSort,
   singleRemovalConfirmText,
   type SessionRecord,
-  type SessionRecordScan,
-  type SessionRemovalResult,
   type SessionSectionView,
   type SessionSourceId,
   type SessionSourceScan,
+  type SessionRefresh,
 } from "../sessionRecords";
+import type { useSessionRecords } from "../hooks/useSessionRecords";
+import type { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { EmptyState, Panel, StatCard } from "./ui";
 
 const sources = [
@@ -54,75 +52,49 @@ const sources = [
   { key: "claude" as const, label: "Claude", empty: "没有 Claude 会话记录", fallback: "~/.claude/projects" },
 ];
 
-type PendingRemoval =
-  | { kind: "one"; source: SessionSourceId; id: string; title: string }
-  | { kind: "age"; source: SessionSourceId; label: string; days: 7 | 30; count: number }
-  | { kind: "selected"; source: SessionSourceId; label: string; records: SessionRecord[] };
-
-type PendingOpenCodeDelete = {
-  kind: "one" | "selected";
-  plan: ReturnType<typeof openCodeDeletionPlan>;
-};
-
 const emptySelection: Record<SessionSourceId, string[]> = { codex: [], claude: [] };
 
 export function SessionRecordsPage({
-  scan,
-  scanningSources,
-  error,
-  onRefresh,
-  onRemove,
-  onRemoveOlder,
-  onRemoveSelected,
+  records,
+  openCode,
   nowMs = Date.now(),
   initialSource = "codex",
   homeDirectory,
-  openCodeScan = null,
-  openCodeScanning = false,
-  openCodeError = null,
-  onRefreshOpenCode = () => {},
-  onOpenOpenCode = async () => "OpenCode 会话打开功能不可用。",
-  onDeleteOpenCode = async () => "OpenCode 会话删除功能不可用。",
-  onDeleteOpenCodeMany = async () => ({ preflightError: "OpenCode 批量删除功能不可用。", items: [] }),
 }: {
-  scan: SessionRecordScan | null;
-  scanningSources: Record<SessionSourceId, boolean>;
-  error: string | null;
-  onRefresh: (source: SessionSourceId) => void;
-  onRemove: (source: SessionSourceId, id: string) => Promise<SessionRemovalResult>;
-  onRemoveOlder: (source: SessionSourceId, days: 7 | 30) => Promise<SessionRemovalResult>;
-  onRemoveSelected: (source: SessionSourceId, ids: string[]) => Promise<SessionRemovalResult>;
+  records: ReturnType<typeof useSessionRecords>;
+  openCode: ReturnType<typeof useOpenCodeSessions>;
   nowMs?: number;
   initialSource?: SessionSourceId | "opencode";
   homeDirectory: string | null;
-  openCodeScan?: OpenCodeSessionScan | null;
-  openCodeScanning?: boolean;
-  openCodeError?: string | null;
-  onRefreshOpenCode?: () => void;
-  onOpenOpenCode?: (sessionId: string) => Promise<string | null>;
-  onDeleteOpenCode?: (sessionId: string) => Promise<string | null>;
-  onDeleteOpenCodeMany?: (sessionIds: string[]) => Promise<OpenCodeDeletionResult>;
 }) {
+  const { scan, scanningSources, error, refresh: onRefresh } = records;
+  const { scan: openCodeScan, scanning: openCodeScanning, error: openCodeError } = openCode;
+  const pending = records.operation?.phase !== "refreshing" ? records.operation?.target ?? null : null;
+  const removing = records.operation !== null && records.operation.phase !== "confirming";
+  const result = records.outcome?.result;
+  const resultSource = records.outcome?.source === "codex" ? "Codex" : "Claude";
+  const pendingOpenCodeDelete = openCode.operation?.phase !== "refreshing" ? openCode.operation?.target ?? null : null;
+  const deletingOpenCodeId = openCode.operation && openCode.operation.phase !== "confirming" ? openCode.operation.target.plan.roots[0].id : null;
+  const openCodeDeleteResult = openCode.outcome;
   const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time" });
   const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" } });
   const sections = useMemo(() => (scan ? sessionSections(scan, sorts, filters) : null), [scan, sorts, filters]);
   const [activeSource, setActiveSource] = useState<SessionSourceId | "opencode">(initialSource);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [pending, setPending] = useState<PendingRemoval | null>(null);
   const selectionTrigger = useRef<HTMLButtonElement | null>(null);
-  const [removing, setRemoving] = useState(false);
-  const [result, setResult] = useState<SessionRemovalResult | null>(null);
-  const [resultSource, setResultSource] = useState("");
   const [selectedIds, setSelectedIds] = useState<Record<SessionSourceId, string[]>>(emptySelection);
   const [openCodeSelectedIds, setOpenCodeSelectedIds] = useState<string[]>([]);
   const replaceOpenCodeSelection = useCallback((ids: string[]) => setOpenCodeSelectedIds(ids), []);
-  const [pendingOpenCodeDelete, setPendingOpenCodeDelete] = useState<PendingOpenCodeDelete | null>(null);
-  const [deletingOpenCodeId, setDeletingOpenCodeId] = useState<string | null>(null);
-  const [openCodeDeleteResult, setOpenCodeDeleteResult] = useState<{
-    pending: PendingOpenCodeDelete;
-    result: OpenCodeDeletionResult | null;
-    error: string | null;
-  } | null>(null);
+  const completedRemovalIds = records.outcome?.completedIds;
+  const completedRemovalSource = records.outcome?.source;
+  const completedDeletionIds = openCode.outcome?.completedIds;
+  useEffect(() => {
+    if (!completedRemovalIds || !completedRemovalSource) return;
+    setSelectedIds((current) => ({ ...current, [completedRemovalSource]: current[completedRemovalSource].filter((id) => !completedRemovalIds.includes(id)) }));
+  }, [completedRemovalIds, completedRemovalSource]);
+  useEffect(() => {
+    if (completedDeletionIds) setOpenCodeSelectedIds((current) => current.filter((id) => !completedDeletionIds.includes(id)));
+  }, [completedDeletionIds]);
 
   useEffect(() => {
     if (!scan) return;
@@ -144,7 +116,7 @@ export function SessionRecordsPage({
       <AlertDialog
         open={pending !== null}
         onOpenChange={(open) => {
-          if (!open && !removing) setPending(null);
+          if (!open && records.operation) records.cancel(records.operation.id);
         }}
       >
         <AlertDialogContent
@@ -210,30 +182,7 @@ export function SessionRecordsPage({
                 disabled={removing}
                 onClick={(event) => {
                   event.preventDefault();
-                  if (!pending) return;
-                  const current = pending;
-                  setRemoving(true);
-                  setResultSource(current.source === "codex" ? "Codex" : "Claude");
-                  const action = Promise.resolve().then(() => current.kind === "one"
-                    ? onRemove(current.source, current.id)
-                    : current.kind === "age"
-                      ? onRemoveOlder(current.source, current.days)
-                      : onRemoveSelected(current.source, current.records.map((record) => record.id)));
-                  void action.then((next) => {
-                    if (current.kind === "selected") {
-                      const submitted = new Set(current.records.map((record) => record.id));
-                      setSelectedIds((existing) => ({
-                        ...existing,
-                        [current.source]: existing[current.source].filter((id) => !submitted.has(id)),
-                      }));
-                    }
-                    setResult(next);
-                  }).catch((error) => {
-                    setResult({ moved: 0, failed: 0, skipped: 0, items: [], message: null, operationError: errorToString(error) });
-                  }).finally(() => {
-                    setPending(null);
-                    setRemoving(false);
-                  });
+                  if (records.operation) void records.confirm(records.operation.id);
                 }}
                 type="button"
                 variant="destructive"
@@ -248,7 +197,7 @@ export function SessionRecordsPage({
       <AlertDialog
         open={pendingOpenCodeDelete !== null}
         onOpenChange={(open) => {
-          if (!open && deletingOpenCodeId === null) setPendingOpenCodeDelete(null);
+          if (!open && openCode.operation) openCode.cancel(openCode.operation.id);
         }}
       >
         <AlertDialogContent>
@@ -287,32 +236,7 @@ export function SessionRecordsPage({
                 disabled={deletingOpenCodeId !== null}
                 onClick={(event) => {
                   event.preventDefault();
-                  if (!pendingOpenCodeDelete) return;
-                  const target = pendingOpenCodeDelete;
-                  setDeletingOpenCodeId(target.plan.roots[0]?.id ?? "batch");
-                  setOpenCodeDeleteResult(null);
-                  const operation = target.kind === "one"
-                    ? onDeleteOpenCode(target.plan.roots[0].id).then((error) => ({
-                      preflightError: error,
-                      items: error ? [] : [{ id: target.plan.roots[0].id, status: "deleted" as const, message: null }],
-                    }))
-                    : onDeleteOpenCodeMany(target.plan.roots.map((record) => record.id));
-                  void operation.then((result) => {
-                    setOpenCodeDeleteResult({ pending: target, result, error: null });
-                    if (!result.preflightError) {
-                      if (target.kind === "selected") {
-                        const submitted = new Set(target.plan.selected.map((record) => record.id));
-                        setOpenCodeSelectedIds((current) => current.filter((id) => !submitted.has(id)));
-                      }
-                      onRefreshOpenCode();
-                    }
-                  }).catch((error) => {
-                    setOpenCodeDeleteResult({ pending: target, result: null, error: errorToString(error) });
-                    onRefreshOpenCode();
-                  }).finally(() => {
-                    setPendingOpenCodeDelete(null);
-                    setDeletingOpenCodeId(null);
-                  });
+                  if (openCode.operation) void openCode.confirm(openCode.operation.id);
                 }}
                 type="button"
                 variant="destructive"
@@ -336,7 +260,7 @@ export function SessionRecordsPage({
             {openCodeDeleteResult.result?.preflightError ? <p>{openCodeDeleteResult.result.preflightError}</p> : null}
             {openCodeDeleteResult.result?.items.length ? (
               <>
-                <p>删除成功 {openCodeDeleteResult.result.items.filter((item) => item.status === "deleted").length} 条，失败 {openCodeDeleteResult.result.items.filter((item) => item.status === "failed").length} 条，未执行 {openCodeDeleteResult.result.items.filter((item) => item.status === "notAttempted").length} 条。列表正在刷新。</p>
+                <p>删除成功 {openCodeDeleteResult.result.items.filter((item) => item.status === "deleted").length} 条，失败 {openCodeDeleteResult.result.items.filter((item) => item.status === "failed").length} 条，未执行 {openCodeDeleteResult.result.items.filter((item) => item.status === "notAttempted").length} 条。</p>
                 <ul className="flex max-h-64 flex-col gap-1 overflow-auto">
                   {openCodeDeleteResult.result.items.map((item) => {
                     const title = openCodeDeleteResult.pending.plan.roots.find((record) => record.id === item.id)?.title ?? item.id;
@@ -346,6 +270,7 @@ export function SessionRecordsPage({
                 </ul>
               </>
             ) : null}
+            <RefreshNotice value={openCodeDeleteResult.refresh} onRetry={openCode.refresh} />
           </AlertDescription>
         </Alert>
       ) : null}
@@ -356,6 +281,7 @@ export function SessionRecordsPage({
           <AlertDescription className="flex flex-col gap-2">
             {result.operationError ? <p>{result.operationError}。请刷新会话记录，核对后再试。</p> : <p>以上为实际移除结果，可能与确认时的条数不同。清空废纸篓前可恢复记录，磁盘空间不会立即释放。</p>}
             {result.message ? <p>{result.message}</p> : null}
+            {records.outcome ? <RefreshNotice value={records.outcome.refresh} onRetry={() => void records.refresh(completedRemovalSource)} /> : null}
             {result.items.length ? <details><summary className="cursor-pointer">查看逐条结果（{result.items.length}）</summary><ul className="mt-2 flex max-h-64 flex-col gap-2 overflow-auto">
               {result.items.map((item) => <li key={item.id} className="break-all"><strong>{item.id}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
             </ul></details> : null}
@@ -405,17 +331,14 @@ export function SessionRecordsPage({
                   setSelectedIds((current) => ({ ...current, [source.key]: [] }));
                 }}
                 onRequestAgeRemoval={(days, count) => {
-                  setResult(null);
-                  setPending({ kind: "age", source: source.key, label: source.label, days, count });
+                  records.request({ kind: "age", source: source.key, label: source.label, days, count });
                 }}
                 onRequestRemoval={(id, title) => {
-                  setResult(null);
-                  setPending({ kind: "one", source: source.key, id, title });
+                  records.request({ kind: "one", source: source.key, id, title });
                 }}
-                onRequestSelectedRemoval={(records, trigger) => {
+                onRequestSelectedRemoval={(selectedRecords, trigger) => {
                   selectionTrigger.current = trigger;
-                  setResult(null);
-                  setPending({ kind: "selected", source: source.key, label: source.label, records });
+                  records.request({ kind: "selected", source: source.key, label: source.label, records: selectedRecords });
                 }}
                 onSelectAll={() => {
                   setSelectedIds((current) => ({
@@ -461,15 +384,9 @@ export function SessionRecordsPage({
             error={openCodeError}
             homeDirectory={homeDirectory}
             deletingId={deletingOpenCodeId}
-            onOpen={onOpenOpenCode}
-            onRequestDelete={(plan, kind) => {
-              setOpenCodeDeleteResult(null);
-              setPendingOpenCodeDelete({ plan, kind });
-            }}
-            onDeleteSelected={(records) => {
-              setOpenCodeDeleteResult(null);
-              setPendingOpenCodeDelete({ kind: "selected", plan: openCodeDeletionPlan(records, openCodeSelectedIds) });
-            }}
+            onOpen={openCode.openSession}
+            onRequestDelete={(id) => openCode.request("one", [id])}
+            onDeleteSelected={() => openCode.request("selected", openCodeSelectedIds)}
             onClearSelection={() => setOpenCodeSelectedIds([])}
             onSelectAll={(ids) => setOpenCodeSelectedIds(ids)}
             onSetSelected={(id, selected) => setOpenCodeSelectedIds((current) => {
@@ -480,7 +397,7 @@ export function SessionRecordsPage({
             })}
             onReplaceSelection={replaceOpenCodeSelection}
             selectedIds={openCodeSelectedIds}
-            onRefresh={onRefreshOpenCode}
+            onRefresh={openCode.refresh}
             scan={openCodeScan}
             scanning={openCodeScanning}
           />
@@ -488,6 +405,15 @@ export function SessionRecordsPage({
       </Tabs>
     </main>
   );
+}
+
+function RefreshNotice({ value, onRetry }: { value: SessionRefresh; onRetry: () => void }) {
+  if (value.status === "notRequested") return null;
+  if (value.status === "failed") return <div>
+    <p className="wrap-anywhere" role="status">列表刷新失败：{value.message} 执行结果已保留。</p>
+    <Button className="mt-2" onClick={onRetry} size="sm" type="button" variant="outline">重试刷新</Button>
+  </div>;
+  return <p role="status">{value.status === "refreshing" ? "列表正在刷新。" : "列表已刷新。"}</p>;
 }
 
 function OpenCodeSection({
@@ -511,8 +437,8 @@ function OpenCodeSection({
   error: string | null;
   onRefresh: () => void;
   onOpen: (sessionId: string) => Promise<string | null>;
-  onRequestDelete: (plan: ReturnType<typeof openCodeDeletionPlan>, kind: "one") => void;
-  onDeleteSelected: (records: OpenCodeSessionRecord[]) => void;
+  onRequestDelete: (id: string) => void;
+  onDeleteSelected: () => void;
   onClearSelection: () => void;
   onSelectAll: (ids: string[]) => void;
   onSetSelected: (id: string, selected: boolean) => void;
@@ -554,13 +480,13 @@ function OpenCodeSection({
       {scan?.status === "ready" && records.length === 0 ? <p className="p-6 text-sm text-muted-foreground">{scan.records.length ? "没有匹配的会话，请调整搜索词或归档筛选" : "没有 OpenCode 会话记录"}</p> : null}
       {records.length ? (
         <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
-          <Button disabled={scanning || scan?.status !== "ready" || selectedRecords.length === records.length} onClick={() => onSelectAll([...new Set([...selectedIds, ...records.map((record) => record.id)])])} size="sm" type="button" variant="outline">
+          <Button disabled={deletingId !== null || scanning || scan?.status !== "ready" || selectedRecords.length === records.length} onClick={() => onSelectAll([...new Set([...selectedIds, ...records.map((record) => record.id)])])} size="sm" type="button" variant="outline">
             全选当前结果
           </Button>
-          <Button disabled={scanning || selectedRecords.length === 0} onClick={onClearSelection} size="sm" type="button" variant="outline">
+          <Button disabled={deletingId !== null || scanning || selectedRecords.length === 0} onClick={onClearSelection} size="sm" type="button" variant="outline">
             取消选择
           </Button>
-          <Button disabled={scanning || scan?.status !== "ready" || selectedRecords.length === 0} onClick={() => onDeleteSelected(allRecords)} size="sm" type="button" variant="destructive">
+          <Button disabled={deletingId !== null || scanning || scan?.status !== "ready" || selectedRecords.length === 0} onClick={onDeleteSelected} size="sm" type="button" variant="destructive">
             永久删除 {selectedRecords.length} 条
           </Button>
         </div>
@@ -607,7 +533,7 @@ function OpenCodeSection({
                   aria-label={`永久删除 ${record.title}`}
                   disabled={openingId !== null || deletingId !== null || scanning || scan?.status !== "ready"}
                   onClick={() => {
-                    onRequestDelete(openCodeDeletionPlan(allRecords, [record.id]), "one");
+                    onRequestDelete(record.id);
                   }}
                   size="icon-sm"
                   title="永久删除会话及其子会话"

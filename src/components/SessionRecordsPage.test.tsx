@@ -1,7 +1,15 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SessionRecordsPage } from "./SessionRecordsPage";
+import { SessionRecordsPage as Page } from "./SessionRecordsPage";
+import { useSessionRecords } from "../hooks/useSessionRecords";
+import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import type { SessionRecordScan, SessionSourceScan } from "../sessionRecords";
+
+function SessionRecordsPage({ scan, ...props }: { scan: SessionRecordScan; homeDirectory: string | null; initialSource?: "codex" | "claude" }) {
+  const records = useSessionRecords(false);
+  const openCode = useOpenCodeSessions(false);
+  return <Page {...props} records={{ ...records, scan }} openCode={openCode} />;
+}
 
 const codex: SessionSourceScan = {
   directory: "/Users/example/.codex/sessions",
@@ -33,14 +41,8 @@ describe("SessionRecordsPage", () => {
   it("shows the trash note, the month summary, and an in-use record", () => {
     const html = renderToStaticMarkup(
       <SessionRecordsPage
-        error={null}
         homeDirectory="/Users/example"
-        onRefresh={() => {}}
-        onRemove={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
-        onRemoveOlder={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
-        onRemoveSelected={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
         scan={scan}
-        scanningSources={{ codex: false, claude: false }}
       />,
     );
 
@@ -60,12 +62,7 @@ describe("SessionRecordsPage", () => {
   it("offers removal for a record that is not in use", () => {
     const html = renderToStaticMarkup(
       <SessionRecordsPage
-        error={null}
         homeDirectory="/Users/example"
-        onRefresh={() => {}}
-        onRemove={async () => ({ moved: 1, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
-        onRemoveOlder={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
-        onRemoveSelected={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
         scan={{
           ...scan,
           codex: {
@@ -73,7 +70,6 @@ describe("SessionRecordsPage", () => {
             records: [{ ...codex.records[0], id: "free.jsonl", title: "可以移走", inUse: false }],
           },
         }}
-        scanningSources={{ codex: false, claude: false }}
       />,
     );
 
@@ -88,17 +84,11 @@ describe("SessionRecordsPage", () => {
   it("shows an empty Codex section when the sessions directory is missing", () => {
     const html = renderToStaticMarkup(
       <SessionRecordsPage
-        error={null}
         homeDirectory={null}
-        onRefresh={() => {}}
-        onRemove={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
-        onRemoveOlder={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
-        onRemoveSelected={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
         scan={{
           codex: { ...codex, status: "Missing", records: [] },
           claude: scan.claude,
         }}
-        scanningSources={{ codex: false, claude: false }}
       />,
     );
 
@@ -109,12 +99,7 @@ describe("SessionRecordsPage", () => {
   it("keeps the Codex list visible when Claude fails", () => {
     const html = renderToStaticMarkup(
       <SessionRecordsPage
-        error={null}
         homeDirectory="/Users/example"
-        onRefresh={() => {}}
-        onRemove={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
-        onRemoveOlder={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
-        onRemoveSelected={async () => ({ moved: 0, failed: 0, skipped: 0, items: [], operationError: null, message: null })}
         initialSource="claude"
         scan={{
           codex,
@@ -125,7 +110,6 @@ describe("SessionRecordsPage", () => {
             records: [],
           },
         }}
-        scanningSources={{ codex: false, claude: false }}
       />,
     );
 

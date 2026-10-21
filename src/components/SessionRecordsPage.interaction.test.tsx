@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import { useSessionRecords } from "../hooks/useSessionRecords";
+import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { SessionRecordsPage } from "./SessionRecordsPage";
 import { removalResult } from "../test/fixtures";
-import type { OpenCodeSessionScan, SessionRecordScan } from "../sessionRecords";
+import type { OpenCodeDeletionResult, OpenCodeSessionScan, SessionRecordScan, SessionRemovalResult, SessionSourceId } from "../sessionRecords";
 
-afterEach(cleanup);
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+const mockedInvoke = vi.mocked(invoke);
+afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 const scan: SessionRecordScan = {
   codex: { directory: "/codex/sessions", status: "Ready", message: null, records: [
@@ -25,18 +30,65 @@ const openCodeScan: OpenCodeSessionScan = {
   ],
 };
 
-function setup(overrides: Partial<Parameters<typeof SessionRecordsPage>[0]> = {}) {
+type Options = Partial<Pick<Parameters<typeof SessionRecordsPage>[0], "initialSource" | "homeDirectory" | "nowMs">> & {
+  scan?: SessionRecordScan;
+  openCodeScan?: OpenCodeSessionScan;
+  onOpenOpenCode?: (id: string) => Promise<string | null>;
+  onDeleteOpenCode?: (id: string) => Promise<string | null>;
+  onDeleteOpenCodeMany?: (ids: string[]) => Promise<OpenCodeDeletionResult>;
+  onRefreshOpenCode?: () => void;
+  onRemove?: (source: SessionSourceId, id: string) => Promise<SessionRemovalResult>;
+  onRemoveSelected?: (source: SessionSourceId, ids: string[]) => Promise<SessionRemovalResult>;
+};
+
+async function setup(overrides: Options = {}) {
   const selected = vi.fn().mockResolvedValue(removalResult({ skipped: 1, items: [{ id: "beta.jsonl", status: "Skipped", reason: "InUse", message: null }] }));
   const age = vi.fn().mockResolvedValue(removalResult());
-  const props = { scan, scanningSources: { codex: false, claude: false }, error: null, homeDirectory: null, onRefresh: vi.fn(), onRemove: vi.fn().mockResolvedValue(removalResult()), onRemoveOlder: age, onRemoveSelected: selected, ...overrides };
-  const { rerender } = render(<SessionRecordsPage {...props} />);
-  return { selected, age, props, rerender };
+  const fixtures = { scan, openCodeScan: { status: "ready", records: [], message: null } as OpenCodeSessionScan, ...overrides };
+  mockedInvoke.mockImplementation(async (command, args) => {
+    const params = args as { source: SessionSourceId; id: string; ids: string[]; days: 7 | 30; sessionId: string; sessionIds: string[] };
+    switch (command) {
+      case "scan_session_records": return fixtures.scan;
+      case "scan_session_source": return fixtures.scan[params.source];
+      case "scan_opencode_sessions": fixtures.onRefreshOpenCode?.(); return fixtures.openCodeScan;
+      case "remove_session_record": return fixtures.onRemove?.(params.source, params.id) ?? removalResult();
+      case "remove_session_records_older_than": return age(params.source, params.days);
+      case "remove_session_records": return (fixtures.onRemoveSelected ?? selected)(params.source, params.ids);
+      case "open_opencode_session": {
+        const error = await fixtures.onOpenOpenCode?.(params.sessionId);
+        if (error) throw new Error(error);
+        return;
+      }
+      case "delete_opencode_session": {
+        const error = await fixtures.onDeleteOpenCode?.(params.sessionId);
+        if (error) throw new Error(error);
+        return;
+      }
+      case "delete_opencode_sessions": return fixtures.onDeleteOpenCodeMany?.(params.sessionIds) ?? { preflightError: null, items: [] };
+      default: throw new Error(`Unexpected command: ${command}`);
+    }
+  });
+  let records!: ReturnType<typeof useSessionRecords>;
+  let openCode!: ReturnType<typeof useOpenCodeSessions>;
+  function Harness({ visible = true }: { visible?: boolean }) {
+    records = useSessionRecords(true);
+    openCode = useOpenCodeSessions(true);
+    return visible ? <SessionRecordsPage records={records} openCode={openCode} homeDirectory={fixtures.homeDirectory ?? null} initialSource={fixtures.initialSource} nowMs={fixtures.nowMs} /> : null;
+  }
+  const { rerender } = render(<Harness />);
+  await waitFor(() => expect(records.scan).not.toBeNull());
+  await waitFor(() => expect(openCode.scan).not.toBeNull());
+  vi.clearAllMocks();
+  return { selected, age,
+    updateScan: async (next: SessionRecordScan) => { fixtures.scan = next; await act(async () => { await records.refresh(); }); },
+    showPage: (visible: boolean) => rerender(<Harness visible={visible} />),
+  };
 }
 
 describe("session selection boundaries", () => {
   it("filters OpenCode records and opens the selected session", async () => {
     const onOpenOpenCode = vi.fn().mockResolvedValue(null);
-    setup({ initialSource: "opencode", openCodeScan, onOpenOpenCode });
+    await setup({ initialSource: "opencode", openCodeScan, onOpenOpenCode });
 
     const list = screen.getByRole("list", { name: "OpenCode 会话记录" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(2);
@@ -56,7 +108,7 @@ describe("session selection boundaries", () => {
   it("requires confirmation before permanently deleting an OpenCode session and its children", async () => {
     const onDeleteOpenCode = vi.fn().mockResolvedValue(null);
     const onRefreshOpenCode = vi.fn();
-    setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCode, onRefreshOpenCode });
+    await setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCode, onRefreshOpenCode });
 
     fireEvent.click(screen.getByRole("button", { name: "永久删除 Parent session" }));
     const dialog = screen.getByRole("alertdialog");
@@ -75,8 +127,8 @@ describe("session selection boundaries", () => {
     expect(await screen.findByText("OpenCode 会话已永久删除")).toBeTruthy();
   });
 
-  it("previews cascade descendants and clears OpenCode selection when filters change", () => {
-    setup({ initialSource: "opencode", openCodeScan });
+  it("previews cascade descendants and clears OpenCode selection when filters change", async () => {
+    await setup({ initialSource: "opencode", openCodeScan });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 Parent session" }));
     fireEvent.click(screen.getByRole("button", { name: "永久删除 1 条" }));
@@ -92,14 +144,14 @@ describe("session selection boundaries", () => {
     expect((screen.getByRole("button", { name: "永久删除 0 条" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("deduplicates selected parent-child sessions and reports the batch result", async () => {
+  it("deduplicates selected parent-child sessions through the backend and reports the batch result", async () => {
     const onDeleteOpenCode = vi.fn().mockResolvedValue(null);
     const onDeleteOpenCodeMany = vi.fn().mockResolvedValue({
       preflightError: null,
       items: [{ id: "ses_parent", status: "deleted", message: null }],
     });
     const onRefreshOpenCode = vi.fn();
-    setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCode, onDeleteOpenCodeMany, onRefreshOpenCode });
+    await setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCode, onDeleteOpenCodeMany, onRefreshOpenCode });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 Parent session" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 Archived child" }));
@@ -111,7 +163,7 @@ describe("session selection boundaries", () => {
     expect(onDeleteOpenCodeMany).not.toHaveBeenCalled();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "永久删除" }));
-    await waitFor(() => expect(onDeleteOpenCodeMany).toHaveBeenCalledExactlyOnceWith(["ses_parent"]));
+    await waitFor(() => expect(onDeleteOpenCodeMany).toHaveBeenCalledExactlyOnceWith(["ses_parent", "ses_child"]));
     expect(onDeleteOpenCode).not.toHaveBeenCalled();
     await waitFor(() => expect(onRefreshOpenCode).toHaveBeenCalledExactlyOnceWith());
     expect(await screen.findByText("OpenCode 会话已永久删除")).toBeTruthy();
@@ -123,7 +175,7 @@ describe("session selection boundaries", () => {
       items: [],
     });
     const onRefreshOpenCode = vi.fn();
-    setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCodeMany, onRefreshOpenCode });
+    await setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCodeMany, onRefreshOpenCode });
 
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 Parent session" }));
     fireEvent.click(screen.getByRole("button", { name: "永久删除 1 条" }));
@@ -133,9 +185,61 @@ describe("session selection boundaries", () => {
     expect(onRefreshOpenCode).not.toHaveBeenCalled();
   });
 
-  it("names a single removal target and explains recovery before confirmation", () => {
+  it("preserves failed and unattempted selections through a failed refresh and retries only reading", async () => {
+    const onDeleteOpenCodeMany = vi.fn().mockResolvedValue({ preflightError: null, items: [
+      { id: "ses_parent", status: "deleted", message: null },
+      { id: "ses_failed", status: "failed", message: "仍在运行" },
+      { id: "ses_pending", status: "notAttempted", message: "前一项失败" },
+    ] });
+    const onRefreshOpenCode = vi.fn();
+    await setup({ initialSource: "opencode", openCodeScan: { ...openCodeScan, records: [
+      ...openCodeScan.records,
+      { ...openCodeScan.records[0], id: "ses_failed", title: "Failed session" },
+      { ...openCodeScan.records[0], id: "ses_pending", title: "Unattempted session" },
+    ] }, onDeleteOpenCodeMany, onRefreshOpenCode });
+    onRefreshOpenCode.mockImplementationOnce(() => { throw new Error("service stopped"); });
+
+    fireEvent.click(screen.getByRole("button", { name: "全选当前结果" }));
+    fireEvent.click(screen.getByRole("button", { name: "永久删除 4 条" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久删除" }));
+    expect(await screen.findByText("OpenCode 批量删除部分完成")).toBeTruthy();
+    expect(await screen.findByText(/列表刷新失败：service stopped/)).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "选择 Failed session" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("checkbox", { name: "选择 Unattempted session" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.queryByRole("checkbox", { name: "选择 Archived child" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "重试刷新" }));
+    expect(await screen.findByText("列表已刷新。")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "选择 Failed session" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("checkbox", { name: "选择 Unattempted session" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("checkbox", { name: "选择 Parent session" }).getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByRole("checkbox", { name: "选择 Archived child" }).getAttribute("aria-checked")).toBe("false");
+    expect(onDeleteOpenCodeMany).toHaveBeenCalledTimes(1);
+    expect(onRefreshOpenCode).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an executing operation and its result when the page is rebuilt", async () => {
+    let resolve!: (value: string | null) => void;
+    const onDeleteOpenCode = vi.fn().mockImplementation(() => new Promise<string | null>((yes) => { resolve = yes; }));
+    const { showPage } = await setup({ initialSource: "opencode", openCodeScan, onDeleteOpenCode });
+    fireEvent.click(screen.getByRole("button", { name: "永久删除 Parent session" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "永久删除" }));
+    await waitFor(() => expect(onDeleteOpenCode).toHaveBeenCalledTimes(1));
+    showPage(false);
+    showPage(true);
+    const confirm = within(screen.getByRole("alertdialog")).getByRole("button", { name: "正在删除" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.click(confirm);
+    await act(async () => { resolve(null); });
+    expect(await screen.findByText("OpenCode 会话已永久删除")).toBeTruthy();
+    showPage(false);
+    showPage(true);
+    expect(screen.getByText("OpenCode 会话已永久删除")).toBeTruthy();
+    expect(onDeleteOpenCode).toHaveBeenCalledTimes(1);
+  });
+
+  it("names a single removal target and explains recovery before confirmation", async () => {
     const onRemove = vi.fn().mockResolvedValue(removalResult());
-    setup({ onRemove });
+    await setup({ onRemove });
     fireEvent.click(screen.getByRole("button", { name: "将 Alpha project 移入废纸篓" }));
     const dialog = screen.getByRole("alertdialog");
     expect(within(dialog).getByText(/清空废纸篓前可恢复记录/)).toBeTruthy();
@@ -153,7 +257,7 @@ describe("session selection boundaries", () => {
       { ...scan.codex.records[0], id: "unselected.jsonl", title: "未选择的记录" },
       scan.codex.records[2],
     ];
-    const { selected, age } = setup({
+    const { selected, age } = await setup({
       homeDirectory: "/Users/example",
       initialSource: source,
       scan: { ...scan, [source]: { ...scan[source], status: "Ready", records } },
@@ -187,13 +291,13 @@ describe("session selection boundaries", () => {
   });
 
   it("keeps the reviewed summaries and submitted IDs stable when the scan changes", async () => {
-    const { selected, props, rerender } = setup();
+    const { selected, updateScan } = await setup();
     fireEvent.click(screen.getByRole("button", { name: "全选当前结果中可移除记录" }));
     fireEvent.click(screen.getByRole("button", { name: "移入废纸篓 2 条" }));
-    rerender(<SessionRecordsPage {...props} scan={{ ...scan, codex: { ...scan.codex, records: [
+    await updateScan({ ...scan, codex: { ...scan.codex, records: [
       { ...scan.codex.records[1], title: "更新后的标题", inUse: true },
       { ...scan.codex.records[0], id: "new.jsonl", title: "新发现的记录" },
-    ] } }} />);
+    ] } });
 
     const dialog = screen.getByRole("alertdialog");
     const list = within(dialog).getByRole("list", { name: "Codex 待移入废纸篓的会话记录" });
@@ -208,7 +312,7 @@ describe("session selection boundaries", () => {
   });
 
   it("clears hidden selections, selects visible eligible records and explains skipped results", async () => {
-    const { selected } = setup();
+    const { selected } = await setup();
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 Alpha project" }));
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "beta" } });
     expect((screen.getByRole("button", { name: "移入废纸篓 0 条" }) as HTMLButtonElement).disabled).toBe(true);
@@ -222,7 +326,7 @@ describe("session selection boundaries", () => {
   });
 
   it("keeps age removal scoped to the whole source despite a search", async () => {
-    const { age } = setup();
+    const { age } = await setup();
     fireEvent.change(screen.getByRole("searchbox"), { target: { value: "alpha" } });
     fireEvent.click(screen.getByRole("button", { name: "移除 7 天前的记录" }));
     const dialog = screen.getByRole("alertdialog");
@@ -234,7 +338,7 @@ describe("session selection boundaries", () => {
   });
 
   it("reports a rejected operation without inventing a failed record", async () => {
-    setup({ onRemoveSelected: vi.fn().mockRejectedValue(new Error("无法读取使用状态")) });
+    await setup({ onRemoveSelected: vi.fn().mockRejectedValue(new Error("无法读取使用状态")) });
     fireEvent.click(screen.getByRole("checkbox", { name: "选择 Alpha project" }));
     fireEvent.click(screen.getByRole("button", { name: "移入废纸篓 1 条" }));
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "移入废纸篓" }));
