@@ -42,6 +42,8 @@ export type OpenCodeSessionScan = {
   status: "ready" | "unavailable" | "failed";
   records: OpenCodeSessionRecord[];
   message: string | null;
+  activeSessionIds: string[] | null;
+  activityMessage: string | null;
 };
 
 export type OpenCodeDeletionItem = {
@@ -117,6 +119,36 @@ export function openCodeDeletionPlan(records: OpenCodeSessionRecord[], selectedI
     roots: safeRoots,
     affectedRecords: records.filter((record) => affectedIds.has(record.id)),
   };
+}
+
+export function groupOpenCodeSessions(records: OpenCodeSessionRecord[]) {
+  const groups = new Map<string, { key: string; label: string; records: OpenCodeSessionRecord[] }>();
+  for (const record of [...records].sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title))) {
+    const key = monthKey(record.lastActivityMs);
+    const group = groups.get(key) ?? { key, label: monthLabel(record.lastActivityMs), records: [] };
+    group.records.push(record);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((left, right) => right.key.localeCompare(left.key));
+}
+
+export function openCodeAgeDeletionPlan(records: OpenCodeSessionRecord[], activeSessionIds: readonly string[] | null, days: 7 | 30, nowMs: number) {
+  if (activeSessionIds === null) return null;
+  const cutoffMs = nowMs - days * DAY_MS;
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const active = new Set(activeSessionIds);
+  const blocked = new Set<string>();
+  for (const record of records) {
+    if (Number.isFinite(record.lastActivityMs) && record.lastActivityMs < cutoffMs && !active.has(record.id)) continue;
+    let current: OpenCodeSessionRecord | undefined = record;
+    while (current && !blocked.has(current.id)) {
+      blocked.add(current.id);
+      current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+  }
+  const plan = openCodeDeletionPlan(records, records.filter((record) => !blocked.has(record.id)).map((record) => record.id));
+  if (!plan.roots.length) return null;
+  return { days, cutoffMs, plan };
 }
 
 export type SessionRemovalResult = {

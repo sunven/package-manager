@@ -18,7 +18,7 @@ function deferred<T>() {
 function record(id: string, parentId: string | null = null): OpenCodeSessionRecord {
   return { id, parentId, title: id, parentTitle: parentId, archived: false, lastActivityMs: 1, workingDirectory: "/work" };
 }
-const initial: OpenCodeSessionScan = { status: "ready", message: null, records: [record("parent"), record("child", "parent"), record("failed"), record("unattempted")] };
+const initial: OpenCodeSessionScan = { status: "ready", message: null, activeSessionIds: [], activityMessage: null, records: [record("parent"), record("child", "parent"), record("failed"), record("unattempted")] };
 
 async function setup() {
   mockedInvoke.mockResolvedValueOnce(initial);
@@ -29,6 +29,42 @@ async function setup() {
 }
 
 describe("OpenCode Session Deletion", () => {
+  it("freezes the age cutoff and reviewed descendants, submits once, and rereads after rejection", async () => {
+    const { result } = await setup();
+    const nowMs = 50 * 24 * 60 * 60 * 1000;
+    act(() => result.current.requestAge(30, nowMs));
+    const operation = result.current.operation!;
+    mockedInvoke.mockResolvedValueOnce({ ...initial, records: [...initial.records, record("new-child", "parent")] });
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.operation).toEqual(operation);
+    mockedInvoke.mockClear();
+    const deletion = deferred<{ preflightError: string; items: [] }>();
+    mockedInvoke.mockReturnValueOnce(deletion.promise).mockResolvedValueOnce(initial);
+    let completion!: Promise<void>;
+    act(() => { completion = result.current.confirm(operation.id); void result.current.confirm(operation.id); });
+    expect(mockedInvoke).toHaveBeenCalledExactlyOnceWith("delete_opencode_sessions_older_than", {
+      sessionIds: ["parent", "failed", "unattempted"],
+      cutoffMs: nowMs - 30 * 24 * 60 * 60 * 1000,
+      expectedRecords: initial.records.map(({ id, parentId }) => ({ id, parentId })),
+    });
+    await act(async () => { deletion.resolve({ preflightError: "后代范围变化", items: [] }); await completion; });
+    expect(result.current.outcome).toMatchObject({ result: { preflightError: "后代范围变化" }, completedIds: [], refresh: { status: "ready" } });
+    expect(mockedInvoke.mock.calls.map(([command]) => command)).toEqual(["delete_opencode_sessions_older_than", "scan_opencode_sessions"]);
+  });
+
+  it("does not create age confirmation without readable activity or after cancellation", async () => {
+    const { result } = await setup();
+    act(() => result.current.requestAge(7, 50 * 24 * 60 * 60 * 1000));
+    const id = result.current.operation!.id;
+    act(() => result.current.cancel(id));
+    await act(async () => { await result.current.confirm(id); });
+    expect(mockedInvoke).not.toHaveBeenCalled();
+    mockedInvoke.mockResolvedValueOnce({ ...initial, activeSessionIds: null, activityMessage: "unreadable" });
+    await act(async () => { await result.current.refresh(); });
+    act(() => result.current.requestAge(7, 50 * 24 * 60 * 60 * 1000));
+    expect(result.current.operation).toBeNull();
+  });
+
   it("cancels without deleting and keeps the reviewed cascade fixed across reads", async () => {
     const { result } = await setup();
     act(() => result.current.request("selected", ["parent", "child"]));

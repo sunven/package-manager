@@ -24,6 +24,8 @@ const scan: SessionRecordScan = {
 const openCodeScan: OpenCodeSessionScan = {
   status: "ready",
   message: null,
+  activeSessionIds: [],
+  activityMessage: null,
   records: [
     { id: "ses_parent", title: "Parent session", lastActivityMs: 20, workingDirectory: "/work/project", archived: false, parentId: null, parentTitle: null },
     { id: "ses_child", title: "Archived child", lastActivityMs: 30, workingDirectory: "/work/project/subproject", archived: true, parentId: "ses_parent", parentTitle: "Parent session" },
@@ -44,7 +46,7 @@ type Options = Partial<Pick<Parameters<typeof SessionRecordsPage>[0], "initialSo
 async function setup(overrides: Options = {}) {
   const selected = vi.fn().mockResolvedValue(removalResult({ skipped: 1, items: [{ id: "beta.jsonl", status: "Skipped", reason: "InUse", message: null }] }));
   const age = vi.fn().mockResolvedValue(removalResult());
-  const fixtures = { scan, openCodeScan: { status: "ready", records: [], message: null } as OpenCodeSessionScan, ...overrides };
+  const fixtures = { scan, openCodeScan: { status: "ready", records: [], message: null, activeSessionIds: [], activityMessage: null } as OpenCodeSessionScan, ...overrides };
   mockedInvoke.mockImplementation(async (command, args) => {
     const params = args as { source: SessionSourceId; id: string; ids: string[]; days: 7 | 30; sessionId: string; sessionIds: string[] };
     switch (command) {
@@ -65,6 +67,7 @@ async function setup(overrides: Options = {}) {
         return;
       }
       case "delete_opencode_sessions": return fixtures.onDeleteOpenCodeMany?.(params.sessionIds) ?? { preflightError: null, items: [] };
+      case "delete_opencode_sessions_older_than": return { preflightError: null, items: params.sessionIds.map((id) => ({ id, status: "deleted", message: null })) };
       default: throw new Error(`Unexpected command: ${command}`);
     }
   });
@@ -86,11 +89,40 @@ async function setup(overrides: Options = {}) {
 }
 
 describe("session selection boundaries", () => {
+  it("collapses OpenCode months and reviews age targets from the entire source despite search", async () => {
+    const nowMs = new Date(2026, 9, 21, 12).getTime();
+    await setup({ initialSource: "opencode", openCodeScan, nowMs });
+    const month = screen.getByRole("button", { name: /1970年1月/ });
+    fireEvent.click(month);
+    expect(screen.queryByRole("checkbox", { name: "选择 Parent session" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "按最后活动时间" }));
+    expect(screen.getByRole("checkbox", { name: "选择 Parent session" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "按大小" })).toBeNull();
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 OpenCode 会话" }), { target: { value: "no matches" } });
+    fireEvent.click(screen.getByRole("button", { name: "永久删除 30 天前的记录" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText(/整个 OpenCode 来源/)).toBeTruthy();
+    expect(within(dialog).getByRole("list", { name: "待永久删除的 OpenCode 会话" }).children).toHaveLength(2);
+    fireEvent.click(within(dialog).getByRole("button", { name: "永久删除" }));
+    await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("delete_opencode_sessions_older_than", {
+      sessionIds: ["ses_parent"], cutoffMs: nowMs - 30 * 24 * 60 * 60 * 1000,
+      expectedRecords: [{ id: "ses_parent", parentId: null }, { id: "ses_child", parentId: "ses_parent" }],
+    }));
+  });
+
+  it("keeps OpenCode metadata visible and disables age actions when activity cannot be read", async () => {
+    await setup({ initialSource: "opencode", openCodeScan: { ...openCodeScan, activeSessionIds: null, activityMessage: "无法核对运行状态" } });
+    expect(screen.getByRole("checkbox", { name: "选择 Parent session" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "永久删除 7 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "永久删除 30 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("OpenCode 运行状态暂不可读取")).toBeTruthy();
+  });
+
   it("filters OpenCode records and opens the selected session", async () => {
     const onOpenOpenCode = vi.fn().mockResolvedValue(null);
     await setup({ initialSource: "opencode", openCodeScan, onOpenOpenCode });
 
-    const list = screen.getByRole("list", { name: "OpenCode 会话记录" });
+    const list = screen.getByLabelText("OpenCode 会话记录");
     expect(within(list).getAllByRole("listitem")).toHaveLength(2);
     expect(within(list).getAllByText("Parent session")).toHaveLength(2);
     expect(within(list).getByText("已归档")).toBeTruthy();

@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { openCodeDeletionPlan, type OpenCodeDeletionResult, type OpenCodeSessionScan, type SessionRefresh } from "../sessionRecords";
+import { openCodeAgeDeletionPlan, openCodeDeletionPlan, type OpenCodeDeletionResult, type OpenCodeSessionScan, type SessionRefresh } from "../sessionRecords";
 import { errorToString } from "../utils/format";
 
-type PendingDeletion = { kind: "one" | "selected"; plan: ReturnType<typeof openCodeDeletionPlan> };
+type PendingDeletion = { kind: "one" | "selected"; plan: ReturnType<typeof openCodeDeletionPlan> }
+  | { kind: "age"; days: 7 | 30; cutoffMs: number; plan: ReturnType<typeof openCodeDeletionPlan> };
 type Operation = { id: number; phase: "confirming" | "executing" | "refreshing"; target: PendingDeletion };
 type DeletionOutcome = { pending: PendingDeletion; result: OpenCodeDeletionResult | null; error: string | null; completedIds: string[]; refresh: SessionRefresh };
 
@@ -76,6 +77,15 @@ export function useOpenCodeSessions(active: boolean) {
     setOperation(null);
   }
 
+  function requestAge(days: 7 | 30, nowMs: number = Date.now()) {
+    if (pending.current || scanning || scan?.status !== "ready") return;
+    const target = openCodeAgeDeletionPlan(scan.records.map((record) => ({ ...record })), scan.activeSessionIds, days, nowMs);
+    if (!target) return;
+    pending.current = { id: ++operationId.current, phase: "confirming", target: { kind: "age", ...target } };
+    setOperation(pending.current);
+    setOutcome(null);
+  }
+
   async function confirm(id: number) {
     const approval = pending.current;
     if (!approval || approval.id !== id || approval.phase !== "confirming") return;
@@ -91,6 +101,12 @@ export function useOpenCodeSessions(active: boolean) {
         const sessionId = target.plan.selected[0].id;
         await invoke("delete_opencode_session", { sessionId });
         result = { preflightError: null, items: [{ id: sessionId, status: "deleted", message: null }] };
+      } else if (target.kind === "age") {
+        result = await invoke<OpenCodeDeletionResult>("delete_opencode_sessions_older_than", {
+          sessionIds: target.plan.roots.map((record) => record.id),
+          cutoffMs: target.cutoffMs,
+          expectedRecords: target.plan.affectedRecords.map(({ id, parentId }) => ({ id, parentId })),
+        });
       } else {
         // The backend needs every explicit target to preflight missing records;
         // it deduplicates the actual DELETE requests after reading current ancestry.
@@ -103,7 +119,7 @@ export function useOpenCodeSessions(active: boolean) {
     const deleted = result?.items.filter((item) => item.status === "deleted").map((item) => item.id) ?? [];
     const completedIds = openCodeDeletionPlan(target.plan.affectedRecords, deleted).affectedRecords.map((record) => record.id);
     setScan((current) => current && { ...current, records: current.records.filter((record) => !completedIds.includes(record.id)) });
-    const needsRefresh = !result?.preflightError;
+    const needsRefresh = target.kind === "age" || !result?.preflightError;
     setOutcome({ pending: target, result, error: failure, completedIds, refresh: { status: needsRefresh ? "refreshing" : "notRequested", message: null } });
     if (needsRefresh) {
       pending.current = { ...approval, phase: "refreshing" };
@@ -114,5 +130,5 @@ export function useOpenCodeSessions(active: boolean) {
     setOperation(null);
   }
 
-  return { scan, scanning, error, refresh, openSession, operation, outcome, request, confirm, cancel };
+  return { scan, scanning, error, refresh, openSession, operation, outcome, request, requestAge, confirm, cancel };
 }

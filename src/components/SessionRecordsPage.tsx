@@ -29,6 +29,8 @@ import {
   filterSessionRecords,
   type SessionFilter,
   filterOpenCodeSessions,
+  groupOpenCodeSessions,
+  openCodeAgeDeletionPlan,
   type OpenCodeSessionFilter,
   type OpenCodeSessionScan,
   type SessionUsageFilter,
@@ -57,7 +59,7 @@ const emptySelection: Record<SessionSourceId, string[]> = { codex: [], claude: [
 export function SessionRecordsPage({
   records,
   openCode,
-  nowMs = Date.now(),
+  nowMs,
   initialSource = "codex",
   homeDirectory,
 }: {
@@ -200,18 +202,20 @@ export function SessionRecordsPage({
           if (!open && openCode.operation) openCode.cancel(openCode.operation.id);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className={pendingOpenCodeDelete?.kind === "age" ? "flex max-h-[calc(100dvh-2rem)] flex-col" : undefined}>
           <AlertDialogHeader>
-            <AlertDialogTitle>{pendingOpenCodeDelete?.kind === "selected" ? "永久删除所选 OpenCode 会话？" : "永久删除 OpenCode 会话？"}</AlertDialogTitle>
+            <AlertDialogTitle>{pendingOpenCodeDelete?.kind === "age" ? `永久删除 ${pendingOpenCodeDelete.days} 天前的 OpenCode 记录？` : pendingOpenCodeDelete?.kind === "selected" ? "永久删除所选 OpenCode 会话？" : "永久删除 OpenCode 会话？"}</AlertDialogTitle>
             <AlertDialogDescription>
-              {pendingOpenCodeDelete ? pendingOpenCodeDelete.kind === "one"
+              {pendingOpenCodeDelete ? pendingOpenCodeDelete.kind === "age"
+                ? `将永久删除整个 OpenCode 来源中早于 ${formatSessionActivity(pendingOpenCodeDelete.cutoffMs)} 的 ${pendingOpenCodeDelete.plan.affectedRecords.length} 条记录，不受搜索和归档筛选限制。目标及全部后代都必须早于门槛且未运行；执行前发现记录或父子关系变化时，整批不开始，请刷新后重新确认。此操作无法恢复。`
+                : pendingOpenCodeDelete.kind === "one"
                 ? `将永久删除「${pendingOpenCodeDelete.plan.selected[0]?.title ?? ""}」及其全部子会话。当前列表中可见 ${pendingOpenCodeDelete.plan.affectedRecords.length - 1} 条子会话。若会话仍在运行，请先在 OpenCode 中结束。此操作不会移入废纸篓，无法恢复。`
                 : `将永久删除 ${pendingOpenCodeDelete.plan.affectedRecords.length} 条会话，其中已选择 ${pendingOpenCodeDelete.plan.selected.length} 条，其余会由父会话级联删除。若会话仍在运行，请先在 OpenCode 中结束。此操作不会移入废纸篓，无法恢复。`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {pendingOpenCodeDelete ? (
-            <ul aria-label="待永久删除的 OpenCode 会话" className="max-h-80 divide-y overflow-y-auto rounded-lg border">
+            <ul aria-label="待永久删除的 OpenCode 会话" className="min-h-0 max-h-80 divide-y overflow-y-auto rounded-lg border">
               {pendingOpenCodeDelete.plan.affectedRecords.map((record) => {
                 const isSelected = pendingOpenCodeDelete.plan.selected.some((selected) => selected.id === record.id);
                 return (
@@ -219,8 +223,9 @@ export function SessionRecordsPage({
                     <div className="min-w-0">
                       <p className="wrap-anywhere text-sm font-medium">{record.title || record.id}</p>
                       <p className="break-all text-xs text-muted-foreground">{formatHomePath(record.workingDirectory, homeDirectory)}{record.archived ? " · 已归档" : ""}</p>
+                      {pendingOpenCodeDelete.kind === "age" ? <p className="break-all text-xs text-muted-foreground">{formatSessionActivity(record.lastActivityMs)}{record.parentId ? ` · 父会话：${record.parentTitle || record.parentId}` : ""}</p> : null}
                     </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">{isSelected ? "已选择" : "级联删除"}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{pendingOpenCodeDelete.kind === "age" ? pendingOpenCodeDelete.plan.roots.some((root) => root.id === record.id) ? "按年龄删除" : "级联删除" : isSelected ? "已选择" : "级联删除"}</span>
                   </li>
                 );
               })}
@@ -326,7 +331,7 @@ export function SessionRecordsPage({
                 fallbackPath={source.fallback}
                 homeDirectory={homeDirectory}
                 label={source.label}
-                nowMs={nowMs}
+                nowMs={nowMs ?? Date.now()}
                 onClearSelection={() => {
                   setSelectedIds((current) => ({ ...current, [source.key]: [] }));
                 }}
@@ -386,6 +391,7 @@ export function SessionRecordsPage({
             deletingId={deletingOpenCodeId}
             onOpen={openCode.openSession}
             onRequestDelete={(id) => openCode.request("one", [id])}
+            onRequestAgeDelete={(days) => openCode.requestAge(days, nowMs)}
             onDeleteSelected={() => openCode.request("selected", openCodeSelectedIds)}
             onClearSelection={() => setOpenCodeSelectedIds([])}
             onSelectAll={(ids) => setOpenCodeSelectedIds(ids)}
@@ -400,6 +406,7 @@ export function SessionRecordsPage({
             onRefresh={openCode.refresh}
             scan={openCodeScan}
             scanning={openCodeScanning}
+            nowMs={nowMs ?? Date.now()}
           />
         </TabsContent>
       </Tabs>
@@ -423,6 +430,7 @@ function OpenCodeSection({
   onRefresh,
   onOpen,
   onRequestDelete,
+  onRequestAgeDelete,
   onDeleteSelected,
   onClearSelection,
   onSelectAll,
@@ -431,6 +439,7 @@ function OpenCodeSection({
   selectedIds,
   deletingId,
   homeDirectory,
+  nowMs,
 }: {
   scan: OpenCodeSessionScan | null;
   scanning: boolean;
@@ -438,6 +447,7 @@ function OpenCodeSection({
   onRefresh: () => void;
   onOpen: (sessionId: string) => Promise<string | null>;
   onRequestDelete: (id: string) => void;
+  onRequestAgeDelete: (days: 7 | 30) => void;
   onDeleteSelected: () => void;
   onClearSelection: () => void;
   onSelectAll: (ids: string[]) => void;
@@ -446,12 +456,15 @@ function OpenCodeSection({
   selectedIds: readonly string[];
   deletingId: string | null;
   homeDirectory: string | null;
+  nowMs: number;
 }) {
   const [filter, setFilter] = useState<OpenCodeSessionFilter>({ query: "", archived: "all" });
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const allRecords = useMemo(() => filterOpenCodeSessions(scan?.records ?? [], { query: "", archived: "all" }), [scan]);
   const records = useMemo(() => filterOpenCodeSessions(scan?.records ?? [], filter), [scan, filter]);
+  const groups = useMemo(() => groupOpenCodeSessions(records), [records]);
   const selectedSet = new Set(selectedIds);
   const selectedRecords = records.filter((record) => selectedSet.has(record.id));
   useEffect(() => {
@@ -469,11 +482,27 @@ function OpenCodeSection({
           <ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="active">未归档</ToggleGroupItem><ToggleGroupItem value="archived">已归档</ToggleGroupItem>
         </ToggleGroup>
         <span className="text-xs text-muted-foreground" role="status">{scan?.status === "ready" ? `匹配 ${records.length} / 已读取 ${scan.records.length} 条` : "OpenCode 服务不可用"}</span>
-        <Button disabled={scanning} onClick={onRefresh} size="sm" type="button" variant="outline">
+      </div>
+      <div className="flex flex-wrap items-center justify-end gap-2 border-b px-3 py-2">
+        <Button aria-pressed="true" onClick={() => setCollapsed({})} size="sm" type="button" variant="secondary">按最后活动时间</Button>
+        <Button disabled={scanning || deletingId !== null} onClick={onRefresh} size="sm" type="button" variant="outline">
           <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
           {scanning ? "读取中" : "刷新"}
         </Button>
+        {([7, 30] as const).map((days) => (
+          <Button
+            aria-describedby="opencode-age-deletion-help"
+            disabled={scanning || deletingId !== null || openingId !== null || scan?.status !== "ready" || !openCodeAgeDeletionPlan(scan.records, scan.activeSessionIds, days, nowMs)}
+            key={days}
+            onClick={() => onRequestAgeDelete(days)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >永久删除 {days} 天前的记录</Button>
+        ))}
       </div>
+      <p className="px-3 py-2 text-xs text-muted-foreground" id="opencode-age-deletion-help">按天数永久删除以最后活动时间为准，作用于整个 OpenCode 来源，不受搜索和归档筛选限制。有近期或运行中后代的父会话保留；删除不会移入废纸篓，无法恢复。</p>
+      {scan?.activityMessage ? <Alert className="m-3"><AlertTitle>OpenCode 运行状态暂不可读取</AlertTitle><AlertDescription>{scan.activityMessage} 请刷新重试。</AlertDescription></Alert> : null}
       {error ? <Alert className="m-3" variant="destructive"><AlertTitle>OpenCode 会话读取失败</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {scan?.message ? <Alert className="m-3" variant={scan.status === "failed" ? "destructive" : "default"}><AlertTitle>{scan.status === "unavailable" ? "OpenCode 暂不可读取" : "OpenCode 会话读取失败"}</AlertTitle><AlertDescription>{scan.message}</AlertDescription></Alert> : null}
       {openError ? <Alert className="m-3" variant="destructive"><AlertTitle>无法打开 OpenCode 会话</AlertTitle><AlertDescription>{openError}</AlertDescription></Alert> : null}
@@ -492,60 +521,71 @@ function OpenCodeSection({
         </div>
       ) : null}
       {records.length ? (
-        <ul aria-label="OpenCode 会话记录" className="divide-y">
-          {records.map((record) => (
-            <li className="flex min-w-0 flex-wrap items-start justify-between gap-3 px-4 py-3" key={record.id}>
-              <Checkbox
-                aria-label={`选择 ${record.title}`}
-                checked={selectedSet.has(record.id)}
-                disabled={openingId !== null || deletingId !== null || scanning || scan?.status !== "ready"}
-                onCheckedChange={(checked) => onSetSelected(record.id, checked === true)}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="wrap-anywhere text-sm font-medium">{record.title}</p>
-                  {record.archived ? <Badge variant="secondary">已归档</Badge> : null}
-                </div>
-                <dl className="mt-2 grid gap-1 text-xs text-muted-foreground">
-                  <div className="flex flex-wrap gap-x-2"><dt>最后活动时间</dt><dd>{formatSessionActivity(record.lastActivityMs)}</dd></div>
-                  <div className="flex flex-wrap gap-x-2"><dt>工作目录</dt><dd className="min-w-0 break-all">{formatHomePath(record.workingDirectory, homeDirectory)}</dd></div>
-                  {record.parentId ? <div className="flex flex-wrap gap-x-2"><dt>父会话</dt><dd className="min-w-0 break-all">{record.parentTitle || record.parentId}</dd></div> : null}
-                </dl>
-              </div>
-              <div className="flex items-center gap-1">
-                <Button
-                  disabled={openingId !== null || deletingId !== null || scanning}
-                  onClick={async () => {
-                    setOpeningId(record.id);
-                    setOpenError(null);
-                    const nextError = await onOpen(record.id);
-                    setOpenError(nextError);
-                    setOpeningId(null);
-                  }}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  <ArrowSquareOut data-icon="inline-start" />
-                  {openingId === record.id ? "正在打开" : "在 OpenCode 中打开"}
-                </Button>
-                <Button
-                  aria-label={`永久删除 ${record.title}`}
-                  disabled={openingId !== null || deletingId !== null || scanning || scan?.status !== "ready"}
-                  onClick={() => {
-                    onRequestDelete(record.id);
-                  }}
-                  size="icon-sm"
-                  title="永久删除会话及其子会话"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Trash aria-hidden="true" />
-                </Button>
-              </div>
-            </li>
+        <div aria-label="OpenCode 会话记录" role="region">
+          {groups.map((group) => (
+            <section className="border-t" key={group.key}>
+              <h3>
+                <button aria-controls={`opencode-month-${group.key}`} aria-expanded={!collapsed[group.key]} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setCollapsed((current) => ({ ...current, [group.key]: !current[group.key] }))} type="button">
+                  <span>{group.label}</span><span className="text-xs text-muted-foreground">{group.records.length} 条 · {collapsed[group.key] ? "展开" : "折叠"}</span>
+                </button>
+              </h3>
+              <ul className="divide-y" hidden={collapsed[group.key]} id={`opencode-month-${group.key}`}>
+                {group.records.map((record) => (
+                  <li className="flex min-w-0 flex-wrap items-start justify-between gap-3 px-4 py-3" key={record.id}>
+                    <Checkbox
+                      aria-label={`选择 ${record.title}`}
+                      checked={selectedSet.has(record.id)}
+                      disabled={openingId !== null || deletingId !== null || scanning || scan?.status !== "ready"}
+                      onCheckedChange={(checked) => onSetSelected(record.id, checked === true)}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="wrap-anywhere text-sm font-medium">{record.title}</p>
+                        {record.archived ? <Badge variant="secondary">已归档</Badge> : null}
+                      </div>
+                      <dl className="mt-2 grid gap-1 text-xs text-muted-foreground">
+                        <div className="flex flex-wrap gap-x-2"><dt>最后活动时间</dt><dd>{formatSessionActivity(record.lastActivityMs)}</dd></div>
+                        <div className="flex flex-wrap gap-x-2"><dt>工作目录</dt><dd className="min-w-0 break-all">{formatHomePath(record.workingDirectory, homeDirectory)}</dd></div>
+                        {record.parentId ? <div className="flex flex-wrap gap-x-2"><dt>父会话</dt><dd className="min-w-0 break-all">{record.parentTitle || record.parentId}</dd></div> : null}
+                      </dl>
+                    </div>
+                    <div className="flex w-full items-center justify-end gap-1 sm:w-auto">
+                      <Button
+                        disabled={openingId !== null || deletingId !== null || scanning}
+                        onClick={async () => {
+                          setOpeningId(record.id);
+                          setOpenError(null);
+                          const nextError = await onOpen(record.id);
+                          setOpenError(nextError);
+                          setOpeningId(null);
+                        }}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        <ArrowSquareOut data-icon="inline-start" />
+                        {openingId === record.id ? "正在打开" : "在 OpenCode 中打开"}
+                      </Button>
+                      <Button
+                        aria-label={`永久删除 ${record.title}`}
+                        disabled={openingId !== null || deletingId !== null || scanning || scan?.status !== "ready"}
+                        onClick={() => {
+                          onRequestDelete(record.id);
+                        }}
+                        size="icon-sm"
+                        title="永久删除会话及其子会话"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Trash aria-hidden="true" />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
           ))}
-        </ul>
+        </div>
       ) : null}
     </Panel>
   );

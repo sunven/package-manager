@@ -386,6 +386,8 @@ async fn scan_opencode_sessions() -> opencode_sessions::OpenCodeSessionScan {
             status: opencode_sessions::OpenCodeScanStatus::Failed,
             records: Vec::new(),
             message: Some("OpenCode 会话读取任务未能完成。".into()),
+            active_session_ids: None,
+            activity_message: None,
         })
 }
 
@@ -410,6 +412,17 @@ async fn delete_opencode_sessions(
     tauri::async_runtime::spawn_blocking(move || opencode_sessions::delete_many_default(&session_ids))
         .await
         .map_err(|_| "OpenCode 批量删除任务未能完成。".to_string())?
+}
+
+#[tauri::command]
+async fn delete_opencode_sessions_older_than(
+    session_ids: Vec<String>,
+    cutoff_ms: i64,
+    expected_records: Vec<opencode_sessions::OpenCodeAgeDeletionRecord>,
+) -> Result<opencode_sessions::OpenCodeDeletionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || opencode_sessions::delete_age_default(&session_ids, cutoff_ms, &expected_records))
+        .await
+        .map_err(|_| "OpenCode 按年龄删除任务未能完成。".to_string())?
 }
 
 #[tauri::command]
@@ -727,6 +740,7 @@ pub fn run() {
             open_opencode_session,
             delete_opencode_session,
             delete_opencode_sessions,
+            delete_opencode_sessions_older_than,
             scan_vscode_storage,
             get_project_cleanup_settings,
             choose_project_cleanup_root,

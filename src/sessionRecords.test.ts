@@ -3,6 +3,8 @@ import {
   bulkRemovalConfirmText,
   bulkRemovalRequest,
   filterOpenCodeSessions,
+  groupOpenCodeSessions,
+  openCodeAgeDeletionPlan,
   openCodeDeletionPlan,
   openCodeSessionDescendantCount,
   groupSessionRecords,
@@ -32,6 +34,39 @@ function record(overrides: Partial<SessionRecord> & Pick<SessionRecord, "id" | "
 }
 
 describe("session record grouping", () => {
+  it("groups OpenCode by local month with recent months and records first", () => {
+    const base: OpenCodeSessionRecord = { id: "base", title: "Base", lastActivityMs: 1, parentId: null, parentTitle: null, archived: false, workingDirectory: "/work" };
+    const groups = groupOpenCodeSessions([
+      { ...base, id: "september", lastActivityMs: localMs(2026, 9, 1) },
+      { ...base, id: "october-old", lastActivityMs: localMs(2026, 10, 1) },
+      { ...base, id: "october-new", lastActivityMs: localMs(2026, 10, 20) },
+    ]);
+    expect(groups.map((group) => [group.label, group.records.map(({ id }) => id)])).toEqual([
+      ["2026年10月", ["october-new", "october-old"]], ["2026年9月", ["september"]],
+    ]);
+  });
+
+  it.each([7, 30] as const)("selects independent old branches and protects recent or running descendants for %s days", (days) => {
+    const day = 24 * 60 * 60 * 1000;
+    const now = 50 * day;
+    const base: OpenCodeSessionRecord = { id: "old-parent", title: "Base", lastActivityMs: 1, parentId: null, parentTitle: null, archived: false, workingDirectory: "/work" };
+    const records = [
+      base,
+      { ...base, id: "recent-child", parentId: base.id, lastActivityMs: now - day },
+      { ...base, id: "old-child", parentId: base.id, archived: true },
+      { ...base, id: "old-grandchild", parentId: "old-child" },
+      { ...base, id: "busy-parent" },
+      { ...base, id: "busy-child", parentId: "busy-parent" },
+      { ...base, id: "exact", lastActivityMs: now - days * day },
+      { ...base, id: "just-old", lastActivityMs: now - days * day - 1 },
+    ];
+    const result = openCodeAgeDeletionPlan(records, ["busy-child"], days, now)!;
+    expect(result.plan.roots.map(({ id }) => id)).toEqual(["old-child", "just-old"]);
+    expect(result.plan.affectedRecords.map(({ id }) => id)).toEqual(["old-child", "old-grandchild", "just-old"]);
+    expect(openCodeAgeDeletionPlan(records, null, days, now)).toBeNull();
+    expect(openCodeAgeDeletionPlan([], [], days, now)).toBeNull();
+  });
+
   it("filters OpenCode sessions by title, working directory, and archive state", () => {
     const records: OpenCodeSessionRecord[] = [
       { id: "older", title: "Project setup", lastActivityMs: 10, workingDirectory: "/work/alpha", archived: false, parentId: null, parentTitle: null },
