@@ -16,6 +16,7 @@ mod environment_inspection;
 mod manager_history;
 mod managers;
 mod observed_file;
+mod opencode_deletion;
 mod opencode_sessions;
 mod project_cleanup;
 mod scan_diagnostics;
@@ -399,30 +400,25 @@ async fn open_opencode_session(session_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn delete_opencode_session(session_id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || opencode_sessions::delete_default(&session_id))
+async fn prepare_opencode_deletion(
+    request: opencode_deletion::PrepareRequest,
+    state: tauri::State<'_, opencode_deletion::DeletionState>,
+) -> Result<opencode_deletion::DeletionPlan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.prepare(request))
+        .await
+        .map_err(|_| "OpenCode 删除计划准备任务未能完成。".to_string())?
+}
+
+#[tauri::command]
+async fn commit_opencode_deletion(
+    plan_id: String,
+    state: tauri::State<'_, opencode_deletion::DeletionState>,
+) -> Result<opencode_deletion::OpenCodeDeletionResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.commit(&plan_id))
         .await
         .map_err(|_| "OpenCode 会话删除任务未能完成。".to_string())?
-}
-
-#[tauri::command]
-async fn delete_opencode_sessions(
-    session_ids: Vec<String>,
-) -> Result<opencode_sessions::OpenCodeDeletionResult, String> {
-    tauri::async_runtime::spawn_blocking(move || opencode_sessions::delete_many_default(&session_ids))
-        .await
-        .map_err(|_| "OpenCode 批量删除任务未能完成。".to_string())?
-}
-
-#[tauri::command]
-async fn delete_opencode_sessions_older_than(
-    session_ids: Vec<String>,
-    cutoff_ms: i64,
-    expected_records: Vec<opencode_sessions::OpenCodeAgeDeletionRecord>,
-) -> Result<opencode_sessions::OpenCodeDeletionResult, String> {
-    tauri::async_runtime::spawn_blocking(move || opencode_sessions::delete_age_default(&session_ids, cutoff_ms, &expected_records))
-        .await
-        .map_err(|_| "OpenCode 按年龄删除任务未能完成。".to_string())?
 }
 
 #[tauri::command]
@@ -690,6 +686,7 @@ pub fn run() {
         .manage(claude_skills::SkillsState::default())
         .manage(codex_plugins::CodexPluginsState::default())
         .manage(codex_marketplaces::MarketplacesState::default())
+        .manage(opencode_deletion::DeletionState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -738,9 +735,8 @@ pub fn run() {
             scan_session_source,
             scan_opencode_sessions,
             open_opencode_session,
-            delete_opencode_session,
-            delete_opencode_sessions,
-            delete_opencode_sessions_older_than,
+            prepare_opencode_deletion,
+            commit_opencode_deletion,
             scan_vscode_storage,
             get_project_cleanup_settings,
             choose_project_cleanup_root,

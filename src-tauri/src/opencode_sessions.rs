@@ -30,14 +30,7 @@ pub(crate) struct OpenCodeSessionScan {
     pub activity_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct OpenCodeAgeDeletionRecord {
-    pub id: String,
-    pub parent_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OpenCodeSessionRecord {
     pub id: String,
@@ -49,35 +42,17 @@ pub(crate) struct OpenCodeSessionRecord {
     pub parent_title: Option<String>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct OpenCodeDeletionResult {
-    pub preflight_error: Option<String>,
-    pub items: Vec<OpenCodeDeletionItem>,
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct OpenCodeDeletionItem {
-    pub id: String,
-    pub status: OpenCodeDeletionStatus,
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum OpenCodeDeletionStatus {
-    Deleted,
-    Failed,
-    NotAttempted,
-}
-
 #[derive(Clone)]
-struct Service {
+pub(crate) struct Service {
     url: Url,
     password: Option<String>,
     version: String,
     pid: u32,
+}
+
+#[cfg(test)]
+pub(crate) fn test_service(url: Url) -> Service {
+    Service { url, password: None, version: "2.1.1".into(), pid: 1 }
 }
 
 #[derive(Deserialize)]
@@ -179,284 +154,6 @@ pub(crate) fn open_default(session_id: &str) -> Result<(), String> {
         .map_err(|error| error.message())?
         .ok_or_else(|| "该 OpenCode 会话已不存在，请刷新会话记录后重试。".to_string())?;
     launch_terminal(&service, session_id, &directory_path)
-}
-
-pub(crate) fn delete_default(session_id: &str) -> Result<(), String> {
-    if !valid_session_id(session_id) {
-        return Err("OpenCode 会话标识无效，请刷新后重试。".into());
-    }
-    let service = discover_service()
-        .map_err(|error| error.message())?
-        .ok_or_else(|| "未发现正在运行的 OpenCode 服务，请启动 OpenCode 后重试。".to_string())?;
-    let client = client()?;
-    delete_session(&client, &service, session_id)
-}
-
-pub(crate) fn delete_many_default(
-    session_ids: &[String],
-) -> Result<OpenCodeDeletionResult, String> {
-    let session_ids = unique_valid_session_ids(session_ids)?;
-    if session_ids.is_empty() {
-        return Err("OpenCode 会话标识无效，请刷新后重试。".into());
-    }
-    let service = discover_service()
-        .map_err(|error| error.message())?
-        .ok_or_else(|| "未发现正在运行的 OpenCode 服务，请启动 OpenCode 后重试。".to_string())?;
-    let client = client()?;
-    delete_selected(&client, &service, &session_ids)
-}
-
-fn delete_selected(
-    client: &Client,
-    service: &Service,
-    session_ids: &[String],
-) -> Result<OpenCodeDeletionResult, String> {
-    let records = scan_service(service).map_err(|error| match error {
-        ScanError::Unavailable(message) | ScanError::Failed(message) => {
-            format!("无法核对当前 OpenCode 会话，未删除任何会话：{message}")
-        }
-    })?;
-    let existing_ids = records
-        .iter()
-        .map(|record| record.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    if let Some(missing) = session_ids
-        .iter()
-        .find(|id| !existing_ids.contains(id.as_str()))
-    {
-        return Ok(OpenCodeDeletionResult {
-            preflight_error: Some(format!(
-                "所选 OpenCode 会话「{missing}」已不存在，未删除任何会话。请刷新后重试。"
-            )),
-            items: Vec::new(),
-        });
-    }
-    let (roots, preflight_session_ids) = open_code_deletion_plan(&records, session_ids);
-    if roots.is_empty() {
-        return Ok(OpenCodeDeletionResult {
-            preflight_error: Some("所选 OpenCode 会话已不存在，未删除任何会话。请刷新后重试。".into()),
-            items: Vec::new(),
-        });
-    }
-    if roots.iter().any(|id| !preflight_session_ids.contains(id)) {
-        return Err("OpenCode 会话删除计划无效，未删除任何会话。".into());
-    }
-    delete_many(client, service, &roots, &preflight_session_ids)
-}
-
-pub(crate) fn delete_age_default(
-    session_ids: &[String],
-    cutoff_ms: i64,
-    expected_records: &[OpenCodeAgeDeletionRecord],
-) -> Result<OpenCodeDeletionResult, String> {
-    let session_ids = unique_valid_session_ids(session_ids)?;
-    if session_ids.is_empty() || cutoff_ms <= 0 {
-        return Err("OpenCode 按年龄删除请求无效，请刷新后重试。".into());
-    }
-    unique_valid_session_ids(&expected_records.iter().map(|record| record.id.clone()).collect::<Vec<_>>())?;
-    let service = discover_service()
-        .map_err(|error| error.message())?
-        .ok_or_else(|| "未发现正在运行的 OpenCode 服务，请启动 OpenCode 后重试。".to_string())?;
-    delete_age(&client()?, &service, &session_ids, cutoff_ms, expected_records)
-}
-
-fn check_age_deletion(
-    client: &Client,
-    service: &Service,
-    session_ids: &[String],
-    cutoff_ms: i64,
-    expected_records: &[OpenCodeAgeDeletionRecord],
-) -> Result<(), String> {
-    let records = scan_service(service).map_err(|error| match error {
-        ScanError::Unavailable(message) | ScanError::Failed(message) => message,
-    })?;
-    let (roots, affected_ids) = open_code_deletion_plan(&records, session_ids);
-    let expected = expected_records.iter().map(|record| (record.id.as_str(), record.parent_id.as_deref()))
-        .collect::<std::collections::HashMap<_, _>>();
-    let affected = affected_ids.iter().map(String::as_str).collect::<std::collections::HashSet<_>>();
-    if roots != session_ids || affected.len() != expected.len()
-        || records.iter().filter(|record| affected.contains(record.id.as_str())).any(|record| {
-            expected.get(record.id.as_str()) != Some(&record.parent_id.as_deref())
-        })
-    {
-        return Err("会话或父子关系已变化，请刷新后重新确认。".into());
-    }
-    if records.iter().filter(|record| affected.contains(record.id.as_str()))
-        .any(|record| record.last_activity_ms >= cutoff_ms)
-    {
-        return Err("会话的最后活动时间已更新，不再早于确认门槛，请刷新后重新确认。".into());
-    }
-    let active = active_session_ids(client, service)?;
-    if active.iter().any(|id| affected.contains(id.as_str())) {
-        return Err("会话或子会话仍在运行，请在 OpenCode 中结束后刷新并重新确认。".into());
-    }
-    Ok(())
-}
-
-fn delete_age(
-    client: &Client,
-    service: &Service,
-    session_ids: &[String],
-    cutoff_ms: i64,
-    expected_records: &[OpenCodeAgeDeletionRecord],
-) -> Result<OpenCodeDeletionResult, String> {
-    let mut remaining = expected_records.to_vec();
-    let mut items = Vec::new();
-    for (index, session_id) in session_ids.iter().enumerate() {
-        let validation = check_age_deletion(client, service, &session_ids[index..], cutoff_ms, &remaining);
-        if index == 0 {
-            if let Err(message) = validation {
-                return Ok(OpenCodeDeletionResult {
-                    preflight_error: Some(format!("未删除任何会话：{message}")),
-                    items: Vec::new(),
-                });
-            }
-        } else if let Err(message) = validation {
-            items.push(OpenCodeDeletionItem { id: session_id.clone(), status: OpenCodeDeletionStatus::Failed, message: Some(message) });
-            items.extend(session_ids[index + 1..].iter().map(|id| OpenCodeDeletionItem {
-                id: id.clone(), status: OpenCodeDeletionStatus::NotAttempted, message: Some("前一项复核失败，已停止后续删除。".into()),
-            }));
-            break;
-        }
-        match send_session_delete(client, service, session_id) {
-            Ok(()) => {
-                items.push(OpenCodeDeletionItem { id: session_id.clone(), status: OpenCodeDeletionStatus::Deleted, message: None });
-                let mut deleted = std::collections::HashSet::from([session_id.clone()]);
-                loop {
-                    let mut changed = false;
-                    for record in &remaining {
-                        if record.parent_id.as_ref().is_some_and(|parent| deleted.contains(parent)) {
-                            changed |= deleted.insert(record.id.clone());
-                        }
-                    }
-                    if !changed { break; }
-                }
-                remaining.retain(|record| !deleted.contains(&record.id));
-            }
-            Err(message) => {
-                items.push(OpenCodeDeletionItem { id: session_id.clone(), status: OpenCodeDeletionStatus::Failed, message: Some(message) });
-                items.extend(session_ids[index + 1..].iter().map(|id| OpenCodeDeletionItem {
-                    id: id.clone(), status: OpenCodeDeletionStatus::NotAttempted, message: Some("前一项删除失败，已停止后续删除。".into()),
-                }));
-                break;
-            }
-        }
-    }
-    Ok(OpenCodeDeletionResult { preflight_error: None, items })
-}
-
-fn open_code_deletion_plan(
-    records: &[OpenCodeSessionRecord],
-    selected_ids: &[String],
-) -> (Vec<String>, Vec<String>) {
-    let records_by_id = records
-        .iter()
-        .map(|record| (record.id.as_str(), record))
-        .collect::<std::collections::HashMap<_, _>>();
-    let selected = selected_ids
-        .iter()
-        .filter(|id| records_by_id.contains_key(id.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    let selected_set = selected.iter().cloned().collect::<std::collections::HashSet<_>>();
-    let roots = selected
-        .iter()
-        .filter(|id| {
-            let mut visited = std::collections::HashSet::from([id.as_str()]);
-            let mut parent_id = records_by_id.get(id.as_str()).and_then(|record| record.parent_id.as_deref());
-            while let Some(parent) = parent_id {
-                if !visited.insert(parent) {
-                    break;
-                }
-                if selected_set.contains(parent) {
-                    return false;
-                }
-                parent_id = records_by_id.get(parent).and_then(|record| record.parent_id.as_deref());
-            }
-            true
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut affected = roots.iter().cloned().collect::<std::collections::HashSet<_>>();
-    loop {
-        let mut changed = false;
-        for record in records {
-            if record.parent_id.as_ref().is_some_and(|parent| affected.contains(parent)) {
-                changed |= affected.insert(record.id.clone());
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    let preflight_ids = records
-        .iter()
-        .filter(|record| affected.contains(&record.id))
-        .map(|record| record.id.clone())
-        .collect();
-    (roots, preflight_ids)
-}
-
-fn unique_valid_session_ids(session_ids: &[String]) -> Result<Vec<String>, String> {
-    let mut seen = std::collections::HashSet::new();
-    let unique = session_ids
-        .iter()
-        .filter(|session_id| seen.insert((*session_id).clone()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if unique.iter().any(|id| !valid_session_id(id)) {
-        return Err("OpenCode 会话标识无效，请刷新后重试。".into());
-    }
-    Ok(unique)
-}
-
-fn delete_many(
-    client: &Client,
-    service: &Service,
-    session_ids: &[String],
-    preflight_session_ids: &[String],
-) -> Result<OpenCodeDeletionResult, String> {
-    for session_id in preflight_session_ids {
-        if let Err(message) = check_session_delete(client, service, session_id) {
-            return Ok(OpenCodeDeletionResult {
-                preflight_error: Some(format!(
-                    "未删除任何会话。「{session_id}」预检失败：{message}"
-                )),
-                items: Vec::new(),
-            });
-        }
-    }
-
-    let mut items = Vec::with_capacity(session_ids.len());
-    for (index, session_id) in session_ids.iter().enumerate() {
-        match delete_session(client, service, session_id) {
-            Ok(()) => items.push(OpenCodeDeletionItem {
-                id: session_id.clone(),
-                status: OpenCodeDeletionStatus::Deleted,
-                message: None,
-            }),
-            Err(message) => {
-                items.push(OpenCodeDeletionItem {
-                    id: session_id.clone(),
-                    status: OpenCodeDeletionStatus::Failed,
-                    message: Some(message.clone()),
-                });
-                items.extend(session_ids[index + 1..].iter().map(|id| OpenCodeDeletionItem {
-                    id: id.clone(),
-                    status: OpenCodeDeletionStatus::NotAttempted,
-                    message: Some("前一项删除失败，已停止后续删除。".into()),
-                }));
-                return Ok(OpenCodeDeletionResult {
-                    preflight_error: None,
-                    items,
-                });
-            }
-        }
-    }
-    Ok(OpenCodeDeletionResult {
-        preflight_error: None,
-        items,
-    })
 }
 
 fn delete_session(client: &Client, service: &Service, session_id: &str) -> Result<(), String> {
@@ -620,6 +317,12 @@ impl ScanError {
         match error {
             ApiError::Unavailable(message) => Self::Unavailable(message),
             ApiError::Failed(message) => Self::Failed(format!("{action}：{message}")),
+        }
+    }
+
+    fn message(self) -> String {
+        match self {
+            Self::Unavailable(message) | Self::Failed(message) => message,
         }
     }
 }
@@ -813,6 +516,30 @@ fn client() -> Result<Client, String> {
         .map_err(|_| "无法建立 OpenCode 本地连接。".into())
 }
 
+pub(crate) fn discover() -> Result<Option<Service>, String> {
+    discover_service().map_err(|error| error.message())
+}
+
+pub(crate) fn read_records(service: &Service) -> Result<Vec<OpenCodeSessionRecord>, String> {
+    scan_service(service).map_err(ScanError::message)
+}
+
+pub(crate) fn running_ids(service: &Service) -> Result<Vec<String>, String> {
+    active_session_ids(&client()?, service)
+}
+
+pub(crate) fn check_deletable(service: &Service, session_id: &str) -> Result<(), String> {
+    check_session_delete(&client()?, service, session_id)
+}
+
+pub(crate) fn delete_checked(service: &Service, session_id: &str) -> Result<(), String> {
+    delete_session(&client()?, service, session_id)
+}
+
+pub(crate) fn send_delete(service: &Service, session_id: &str) -> Result<(), String> {
+    send_session_delete(&client()?, service, session_id)
+}
+
 fn service_url(service: &Service, path: &str) -> Result<Url, String> {
     service
         .url
@@ -878,7 +605,7 @@ fn response_json<T: for<'de> Deserialize<'de>>(response: Response) -> Result<T, 
         .map_err(|_| ApiError::Failed("OpenCode 服务响应格式无效。".into()))
 }
 
-fn valid_session_id(value: &str) -> bool {
+pub(crate) fn valid_session_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 256
         && value
@@ -976,103 +703,10 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    fn age_record(id: &str, parent_id: Option<&str>) -> OpenCodeAgeDeletionRecord {
-        OpenCodeAgeDeletionRecord { id: id.into(), parent_id: parent_id.map(String::from) }
-    }
-
     fn age_page(records: &[(&str, Option<&str>, i64)]) -> String {
         serde_json::json!({ "data": records.iter().map(|(id, parent, updated)| serde_json::json!({
             "id": id, "parentID": parent, "title": id, "time": { "updated": updated }, "location": { "directory": "/fixture" }
         })).collect::<Vec<_>>(), "cursor": {} }).to_string()
-    }
-
-    #[test]
-    fn age_deletion_rejects_missing_changed_or_expanded_cascades_without_delete() {
-        for records in [
-            vec![("ses_parent", None, 1)],
-            vec![("ses_parent", None, 1), ("ses_child", None, 1)],
-            vec![("ses_parent", None, 1), ("ses_child", Some("ses_parent"), 1), ("ses_new", Some("ses_parent"), 1)],
-            vec![("ses_parent", None, 1), ("ses_child", Some("ses_parent"), 100)],
-        ] {
-            let (url, server) = mock_server(vec![(200, age_page(&records))]);
-            let service = Service { url, password: None, version: "2.1.1".into(), pid: 1 };
-            let result = delete_age(&client().unwrap(), &service, &["ses_parent".into()], 100,
-                &[age_record("ses_parent", None), age_record("ses_child", Some("ses_parent"))]).unwrap();
-            assert!(result.preflight_error.is_some());
-            assert!(result.items.is_empty());
-            assert!(server.join().unwrap().iter().all(|request| !request.starts_with("delete ")));
-        }
-    }
-
-    #[test]
-    fn age_deletion_blocks_running_descendants_and_unreadable_activity() {
-        for (status, activity) in [(200, r#"{"data":{"ses_child":{}}}"#), (500, "")] {
-            let (url, server) = mock_server(vec![
-                (200, age_page(&[("ses_parent", None, 1), ("ses_child", Some("ses_parent"), 1)])),
-                (status, activity.into()),
-            ]);
-            let service = Service { url, password: None, version: "2.1.1".into(), pid: 1 };
-            let result = delete_age(&client().unwrap(), &service, &["ses_parent".into()], 100,
-                &[age_record("ses_parent", None), age_record("ses_child", Some("ses_parent"))]).unwrap();
-            assert!(result.preflight_error.is_some());
-            assert!(server.join().unwrap().iter().all(|request| !request.starts_with("delete ")));
-        }
-    }
-
-    #[test]
-    fn age_deletion_only_sends_confirmed_roots_and_stops_when_remaining_branch_changes() {
-        let (url, server) = mock_server(vec![
-            (200, age_page(&[("ses_parent", None, 1), ("ses_child", Some("ses_parent"), 1), ("ses_next", None, 1), ("ses_last", None, 1), ("ses_unconfirmed", None, 1)])),
-            (200, r#"{"data":{}}"#.into()),
-            (204, String::new()),
-            (200, age_page(&[("ses_next", None, 100), ("ses_last", None, 1), ("ses_unconfirmed", None, 1)])),
-        ]);
-        let service = Service { url, password: None, version: "2.1.1".into(), pid: 1 };
-        let result = delete_age(&client().unwrap(), &service, &["ses_parent".into(), "ses_next".into(), "ses_last".into()], 100,
-            &[age_record("ses_parent", None), age_record("ses_child", Some("ses_parent")), age_record("ses_next", None), age_record("ses_last", None)]).unwrap();
-        assert!(result.preflight_error.is_none());
-        assert_eq!(result.items.iter().map(|item| &item.status).collect::<Vec<_>>(), vec![
-            &OpenCodeDeletionStatus::Deleted, &OpenCodeDeletionStatus::Failed, &OpenCodeDeletionStatus::NotAttempted,
-        ]);
-        let requests = server.join().unwrap();
-        assert_eq!(requests.iter().filter(|request| request.starts_with("delete ")).count(), 1);
-        assert!(requests[2].starts_with("delete /api/session/ses_parent "));
-    }
-
-    #[test]
-    fn age_deletion_reports_success_and_never_adds_new_old_records() {
-        let (url, server) = mock_server(vec![
-            (200, age_page(&[("ses_old_child", Some("ses_recent_parent"), 99), ("ses_next", None, 1), ("ses_recent_parent", None, 101), ("ses_unconfirmed", None, 1)])),
-            (200, r#"{"data":{}}"#.into()),
-            (204, String::new()),
-            (200, age_page(&[("ses_next", None, 1), ("ses_recent_parent", None, 101), ("ses_unconfirmed", None, 1)])),
-            (200, r#"{"data":{}}"#.into()),
-            (204, String::new()),
-        ]);
-        let service = Service { url, password: None, version: "2.1.1".into(), pid: 1 };
-        let result = delete_age(&client().unwrap(), &service, &["ses_old_child".into(), "ses_next".into()], 100,
-            &[age_record("ses_old_child", Some("ses_recent_parent")), age_record("ses_next", None)]).unwrap();
-        assert_eq!(result.items.len(), 2);
-        assert!(result.items.iter().all(|item| item.status == OpenCodeDeletionStatus::Deleted));
-        let requests = server.join().unwrap();
-        assert_eq!(requests.len(), 6);
-        assert!(requests[2].starts_with("delete /api/session/ses_old_child "));
-        assert!(requests[5].starts_with("delete /api/session/ses_next "));
-    }
-
-    #[test]
-    fn age_deletion_stops_after_first_delete_failure() {
-        let (url, server) = mock_server(vec![
-            (200, age_page(&[("ses_first", None, 1), ("ses_next", None, 1)])),
-            (200, r#"{"data":{}}"#.into()),
-            (500, String::new()),
-        ]);
-        let service = Service { url, password: None, version: "2.1.1".into(), pid: 1 };
-        let result = delete_age(&client().unwrap(), &service, &["ses_first".into(), "ses_next".into()], 100,
-            &[age_record("ses_first", None), age_record("ses_next", None)]).unwrap();
-        assert_eq!(result.items[0].status, OpenCodeDeletionStatus::Failed);
-        assert_eq!(result.items[1].status, OpenCodeDeletionStatus::NotAttempted);
-        assert_eq!(server.join().unwrap().iter().filter(|request| request.starts_with("delete ")).count(), 1);
     }
 
     #[test]
@@ -1122,122 +756,6 @@ mod tests {
         assert!(valid_session_id("ses_0123456789abcdef"));
         assert!(!valid_session_id("../session"));
         assert!(!valid_session_id("bad session"));
-    }
-
-    #[test]
-    fn backend_deletion_plan_collapses_selected_ancestors_and_includes_new_descendants() {
-        let records = vec![
-            OpenCodeSessionRecord {
-                id: "ses_parent".into(), title: "Parent".into(), last_activity_ms: 1,
-                working_directory: "/work".into(), archived: false, parent_id: None, parent_title: None,
-            },
-            OpenCodeSessionRecord {
-                id: "ses_child".into(), title: "Child".into(), last_activity_ms: 2,
-                working_directory: "/work".into(), archived: false, parent_id: Some("ses_parent".into()), parent_title: Some("Parent".into()),
-            },
-            OpenCodeSessionRecord {
-                id: "ses_new_child".into(), title: "New child".into(), last_activity_ms: 3,
-                working_directory: "/work".into(), archived: false, parent_id: Some("ses_child".into()), parent_title: Some("Child".into()),
-            },
-        ];
-
-        let (roots, preflight_ids) = open_code_deletion_plan(
-            &records,
-            &["ses_child".into(), "ses_parent".into()],
-        );
-
-        assert_eq!(roots, vec!["ses_parent".to_string()]);
-        assert_eq!(preflight_ids, vec![
-            "ses_parent".to_string(),
-            "ses_child".to_string(),
-            "ses_new_child".to_string(),
-        ]);
-    }
-
-    #[test]
-    fn batch_deletion_rejects_a_missing_selected_target_before_preflight_or_delete() {
-        let (url, server) = mock_server(vec![(
-            200,
-            r#"{"data":[{"id":"ses_parent","title":"Parent","time":{"created":1,"updated":10},"location":{"directory":"/work"}}],"cursor":{}}"#,
-        )]);
-        let service = Service {
-            url,
-            password: None,
-            version: "2.0.32".into(),
-            pid: 1,
-        };
-        let result = delete_selected(
-            &client().unwrap(),
-            &service,
-            &["ses_parent".into(), "ses_missing_child".into()],
-        )
-        .unwrap();
-        let requests = server.join().unwrap();
-
-        let error = result.preflight_error.unwrap();
-        assert!(error.contains("ses_missing_child"));
-        assert!(error.contains("已不存在"));
-        assert!(error.contains("未删除任何会话"));
-        assert!(result.items.is_empty());
-        assert_eq!(requests.len(), 1);
-        assert!(requests[0].starts_with("get /api/session?"));
-    }
-
-    #[test]
-    fn batch_deletion_preflights_all_cascade_targets_before_any_delete() {
-        let (url, server) = mock_server(vec![
-            (200, r#"{"data":{"id":"ses_parent","title":"Parent","parentID":null,"time":{"created":1,"updated":10},"location":{"directory":"/work"}}}"#),
-            (200, r#"{"data":{}}"#),
-            (200, r#"{"data":{"id":"ses_child","title":"Child","parentID":"ses_parent","time":{"created":1,"updated":10},"location":{"directory":"/work"}}}"#),
-            (200, r#"{"data":{"ses_child":{}}}"#),
-        ]);
-        let service = Service { url, password: None, version: "2.0.32".into(), pid: 1 };
-
-        let result = delete_many(
-            &client().unwrap(),
-            &service,
-            &["ses_parent".into()],
-            &["ses_parent".into(), "ses_child".into()],
-        ).unwrap();
-        let requests = server.join().unwrap();
-
-        assert!(result.preflight_error.as_deref().unwrap().contains("未删除任何会话"));
-        assert!(result.items.is_empty());
-        assert_eq!(requests.len(), 4);
-        assert!(requests.iter().all(|request| !request.starts_with("delete ")));
-    }
-
-    #[test]
-    fn batch_deletion_stops_after_first_delete_failure_and_marks_rest_unattempted() {
-        let (url, server) = mock_server(vec![
-            (200, r#"{"data":{"id":"ses_first","title":"First","parentID":null,"time":{"created":1,"updated":10},"location":{"directory":"/work"}}}"#),
-            (200, r#"{"data":{}}"#),
-            (200, r#"{"data":{"id":"ses_second","title":"Second","parentID":null,"time":{"created":1,"updated":10},"location":{"directory":"/work"}}}"#),
-            (200, r#"{"data":{}}"#),
-            (200, r#"{"data":{"id":"ses_third","title":"Third","parentID":null,"time":{"created":1,"updated":10},"location":{"directory":"/work"}}}"#),
-            (200, r#"{"data":{}}"#),
-            (200, r#"{"data":{"id":"ses_first","title":"First","parentID":null,"time":{"created":1,"updated":10},"location":{"directory":"/work"}}}"#),
-            (200, r#"{"data":{}}"#),
-            (204, ""),
-            (200, r#"{"data":{"id":"ses_second","title":"Second","parentID":null,"time":{"created":1,"updated":10},"location":{"directory":"/work"}}}"#),
-            (200, r#"{"data":{}}"#),
-            (409, ""),
-        ]);
-        let service = Service { url, password: None, version: "2.0.32".into(), pid: 1 };
-        let result = delete_many(
-            &client().unwrap(),
-            &service,
-            &["ses_first".into(), "ses_second".into(), "ses_third".into()],
-            &["ses_first".into(), "ses_second".into(), "ses_third".into()],
-        ).unwrap();
-        let requests = server.join().unwrap();
-
-        assert_eq!(result.items.iter().map(|item| &item.status).collect::<Vec<_>>(), vec![
-            &OpenCodeDeletionStatus::Deleted,
-            &OpenCodeDeletionStatus::Failed,
-            &OpenCodeDeletionStatus::NotAttempted,
-        ]);
-        assert_eq!(requests.iter().filter(|request| request.starts_with("delete ")).count(), 2);
     }
 
     #[test]
