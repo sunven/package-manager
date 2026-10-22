@@ -2,7 +2,7 @@ use crate::disk_usage::disk_usage;
 use crate::types::DiskUsageStatus;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::Url;
 
 #[derive(Debug, Serialize)]
@@ -30,6 +30,8 @@ pub(crate) struct VscodeWorkspace {
     pub storage_path: String,
     pub kind: WorkspaceKind,
     pub project_status: ProjectStatus,
+    pub removable: bool,
+    pub removal_block_reason: Option<String>,
     pub message: Option<String>,
     pub usage: WorkspaceUsage,
 }
@@ -65,13 +67,17 @@ struct WorkspaceMetadata {
 }
 
 pub(crate) fn scan_default() -> Result<VscodeStorageScan, String> {
+    scan_storage(&default_storage_root()?)
+}
+
+pub(crate) fn default_storage_root() -> Result<PathBuf, String> {
     if !cfg!(target_os = "macos") {
         return Err("VS Code 占用目前只支持 macOS 的默认数据目录".to_string());
     }
     let home = std::env::var_os("HOME")
         .filter(|value| Path::new(value).is_absolute())
         .ok_or_else(|| "无法确定当前用户的主目录".to_string())?;
-    scan_storage(&Path::new(&home).join("Library/Application Support/Code/User/workspaceStorage"))
+    Ok(Path::new(&home).join("Library/Application Support/Code/User/workspaceStorage"))
 }
 
 fn scan_storage(root: &Path) -> Result<VscodeStorageScan, String> {
@@ -115,6 +121,8 @@ fn scan_storage(root: &Path) -> Result<VscodeStorageScan, String> {
             storage_path: path.to_string_lossy().into_owned(),
             kind: WorkspaceKind::Unknown,
             project_status: ProjectStatus::Unknown,
+            removable: false,
+            removal_block_reason: None,
             message: None,
             usage: WorkspaceUsage {
                 bytes: None,
@@ -125,6 +133,9 @@ fn scan_storage(root: &Path) -> Result<VscodeStorageScan, String> {
         match metadata {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
                 identify_workspace(&path, &mut workspace);
+                workspace.removal_block_reason =
+                    removal_block_reason(&workspace.project_status).map(str::to_string);
+                workspace.removable = workspace.removal_block_reason.is_none();
                 let usage = disk_usage(&path);
                 workspace.usage = WorkspaceUsage {
                     bytes: usage.bytes,
@@ -133,9 +144,12 @@ fn scan_storage(root: &Path) -> Result<VscodeStorageScan, String> {
                 };
             }
             Ok(_) => {
+                workspace.removal_block_reason =
+                    Some("不是普通存储目录，未跟随符号链接".to_string());
                 workspace.usage.message = Some("不是普通存储目录，未跟随符号链接".to_string());
             }
             Err(error) => {
+                workspace.removal_block_reason = Some("无法读取存储目录，保留记录".to_string());
                 workspace.usage.message = Some(format!("无法读取存储目录：{error}"));
             }
         }
@@ -147,6 +161,36 @@ fn scan_storage(root: &Path) -> Result<VscodeStorageScan, String> {
     scan.workspaces
         .sort_by(|left, right| left.id.cmp(&right.id));
     Ok(scan)
+}
+
+fn removal_block_reason(status: &ProjectStatus) -> Option<&'static str> {
+    match status {
+        ProjectStatus::Missing | ProjectStatus::Unknown => None,
+        ProjectStatus::Available => Some("项目路径存在，保留工作区存储"),
+        ProjectStatus::Remote => Some("远程工作区记录不可移除"),
+        ProjectStatus::Unavailable => Some("无法确认项目路径状态，保留记录"),
+    }
+}
+
+pub(crate) fn inspect_project_status(path: &Path) -> ProjectStatus {
+    let mut workspace = VscodeWorkspace {
+        id: String::new(),
+        name: String::new(),
+        project_path: None,
+        storage_path: path.to_string_lossy().into_owned(),
+        kind: WorkspaceKind::Unknown,
+        project_status: ProjectStatus::Unknown,
+        removable: false,
+        removal_block_reason: None,
+        message: None,
+        usage: WorkspaceUsage {
+            bytes: None,
+            complete: false,
+            message: None,
+        },
+    };
+    identify_workspace(path, &mut workspace);
+    workspace.project_status
 }
 
 fn identify_workspace(path: &Path, workspace: &mut VscodeWorkspace) {
@@ -274,6 +318,11 @@ mod tests {
                 Some(project.as_path())
             );
             assert_eq!(workspace.project_status, ProjectStatus::Available);
+            assert!(!workspace.removable);
+            assert_eq!(
+                workspace.removal_block_reason.as_deref(),
+                Some("项目路径存在，保留工作区存储")
+            );
             assert!(workspace.usage.complete);
             assert!(workspace.usage.bytes.unwrap() > 0);
         }
@@ -323,6 +372,11 @@ mod tests {
             .iter()
             .filter(|row| row.project_status == ProjectStatus::Unknown)
             .all(|row| row.message.is_some() && row.name == row.id));
+        assert!(scan.workspaces.iter().all(|row| row.removable));
+        assert!(scan
+            .workspaces
+            .iter()
+            .all(|row| row.removal_block_reason.is_none()));
     }
 
     #[test]
@@ -355,7 +409,66 @@ mod tests {
         assert_eq!(row.project_status, ProjectStatus::Remote);
         assert_eq!(row.project_path.as_deref(), Some(remote));
         assert_eq!(row.name, "project");
+        assert!(!row.removable);
+        assert_eq!(
+            row.removal_block_reason.as_deref(),
+            Some("远程工作区记录不可移除")
+        );
         assert!(row.usage.complete);
+        assert!(scan
+            .workspaces
+            .iter()
+            .filter(|row| row.kind == WorkspaceKind::Workspace)
+            .all(|row| !row.removable));
+    }
+
+    #[test]
+    fn blocks_removal_for_available_remote_and_unavailable_projects() {
+        let fixture = Fixture::new();
+        let available = fixture.0.join("available");
+        fs::create_dir(&available).unwrap();
+        fixture.workspace(
+            "available",
+            Some(json!({ "folder": Url::from_directory_path(&available).unwrap().as_str() })),
+        );
+        fixture.workspace(
+            "remote",
+            Some(json!({ "folder": "vscode-remote://ssh-remote+test-host/home/project" })),
+        );
+        let blocker = fixture.0.join("blocker");
+        fs::write(&blocker, b"not a directory").unwrap();
+        let unavailable = blocker.join("project");
+        fixture.workspace(
+            "unavailable",
+            Some(json!({ "folder": Url::from_file_path(&unavailable).unwrap().as_str() })),
+        );
+
+        let scan = scan_storage(&fixture.storage()).unwrap();
+        let row = |id: &str| scan.workspaces.iter().find(|row| row.id == id).unwrap();
+
+        let available_row = row("available");
+        assert_eq!(available_row.project_status, ProjectStatus::Available);
+        assert!(!available_row.removable);
+        assert_eq!(
+            available_row.removal_block_reason.as_deref(),
+            Some("项目路径存在，保留工作区存储")
+        );
+
+        let remote_row = row("remote");
+        assert_eq!(remote_row.project_status, ProjectStatus::Remote);
+        assert!(!remote_row.removable);
+        assert_eq!(
+            remote_row.removal_block_reason.as_deref(),
+            Some("远程工作区记录不可移除")
+        );
+
+        let unavailable_row = row("unavailable");
+        assert_eq!(unavailable_row.project_status, ProjectStatus::Unavailable);
+        assert!(!unavailable_row.removable);
+        assert_eq!(
+            unavailable_row.removal_block_reason.as_deref(),
+            Some("无法确认项目路径状态，保留记录")
+        );
     }
 
     #[test]
@@ -394,6 +507,8 @@ mod tests {
             Some(fs::metadata(state).unwrap().blocks() * 512)
         );
         assert!(original.usage.complete);
+        assert!(original.removable);
+        assert!(original.removal_block_reason.is_none());
         let linked = scan
             .workspaces
             .iter()
@@ -401,6 +516,11 @@ mod tests {
             .unwrap();
         assert_eq!(linked.usage.bytes, None);
         assert!(!linked.usage.complete);
+        assert!(!linked.removable);
+        assert_eq!(
+            linked.removal_block_reason.as_deref(),
+            Some("不是普通存储目录，未跟随符号链接")
+        );
         assert_eq!(scan.status, VscodeScanStatus::Partial);
     }
 
@@ -426,6 +546,8 @@ mod tests {
         assert_eq!(scan.status, VscodeScanStatus::Partial);
         assert!(!scan.workspaces[0].usage.complete);
         assert!(scan.workspaces[0].usage.bytes.unwrap() > 0);
+        assert!(scan.workspaces[0].removable);
+        assert!(scan.workspaces[0].removal_block_reason.is_none());
         assert!(scan.workspaces[0]
             .usage
             .message

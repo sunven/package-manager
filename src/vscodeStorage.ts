@@ -5,6 +5,8 @@ export interface VscodeWorkspace {
   storagePath: string;
   kind: "Folder" | "Workspace" | "Unknown";
   projectStatus: "Available" | "Missing" | "Remote" | "Unknown" | "Unavailable";
+  removable: boolean;
+  removalBlockReason: string | null;
   message: string | null;
   usage: {
     bytes: number | null;
@@ -18,6 +20,45 @@ export interface VscodeStorageScan {
   status: "Ready" | "Partial" | "Missing";
   workspaces: VscodeWorkspace[];
   message: string | null;
+}
+
+export type VscodeEditorStatus = "Stopped" | "Running" | "Unknown";
+
+export type VscodeStorageRemovalStatus = "Moved" | "Skipped" | "Failed";
+
+export type VscodeStorageRemovalReason =
+  | "NoLongerRecord"
+  | "ProjectAvailable"
+  | "ProjectRemote"
+  | "ProjectUnavailable"
+  | "NotRegularDirectory"
+  | "TargetUnreadable"
+  | "EditorStarted"
+  | "TrashFailed";
+
+export interface VscodeStorageRemovalItem {
+  id: string;
+  status: VscodeStorageRemovalStatus;
+  reason: VscodeStorageRemovalReason | null;
+  message: string | null;
+}
+
+export interface VscodeStorageRemovalResult {
+  moved: number;
+  failed: number;
+  skipped: number;
+  items: VscodeStorageRemovalItem[];
+  operationError: string | null;
+  message: string | null;
+}
+
+export type VscodeStorageRemovalProgress =
+  | { phase: "preparing" }
+  | { phase: "started"; total: number }
+  | { phase: "advanced"; processed: number; total: number; moved: number; skipped: number; failed: number };
+
+export interface VscodeRemovalTarget {
+  workspaces: VscodeWorkspace[];
 }
 
 export function filterVscodeWorkspaces(workspaces: VscodeWorkspace[], query: string) {

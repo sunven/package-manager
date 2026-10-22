@@ -217,11 +217,8 @@ export function App() {
           />
         ) : activeView === "vscode" ? (
           <VscodeStoragePage
-            error={vscodeStorage.error}
             homeDirectory={state.homeDirectory}
-            onRefresh={() => void vscodeStorage.refresh()}
-            scan={vscodeStorage.scan}
-            scanning={vscodeStorage.scanning}
+            workflow={vscodeStorage}
           />
         ) : activeView === "cleanup" ? (
           <ProjectCleanupPage

@@ -1,6 +1,6 @@
 # VS Code 工作区存储占用
 
-状态：已实现并验证。
+状态：已实现并验证。首版为只读观察；后续版本增加工作区存储移除，见 [.scratch/vscode-workspace-storage-removal/PRD.md](../vscode-workspace-storage-removal/PRD.md)。
 
 ## 目标
 

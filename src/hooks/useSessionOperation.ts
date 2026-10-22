@@ -41,6 +41,7 @@ export type SessionOperationOutcome<Target, Result> = {
 export interface SessionOperationOptions<Source extends string> {
   active: boolean;
   scopes: readonly Source[];
+  readOnActivate?: boolean;
 }
 
 export interface SessionOperation<Source extends string, Scan, Target, Result, Progress = void> {
@@ -64,7 +65,7 @@ function scanningPatch<Source extends string>(
 
 export function useSessionOperation<Source extends string, Scan, Target, Result, Progress = void>(
   adapter: SessionOperationAdapter<Source, Scan, Target, Result, Progress>,
-  { active, scopes: initialScopes }: SessionOperationOptions<Source>,
+  { active, scopes: initialScopes, readOnActivate = true }: SessionOperationOptions<Source>,
 ): SessionOperation<Source, Scan, Target, Result, Progress> {
   const [scans, setScans] = useState<Partial<Record<Source, Scan>>>({});
   const [scanning, setScanning] = useState<Partial<Record<Source, boolean>>>({});
@@ -133,8 +134,8 @@ export function useSessionOperation<Source extends string, Scan, Target, Result,
   }, [read]);
 
   useEffect(() => {
-    if (active) void refresh(initialScopes);
-  }, [active, initialScopes, refresh]);
+    if (active && readOnActivate) void refresh(initialScopes);
+  }, [active, initialScopes, readOnActivate, refresh]);
 
   function begin(target: Target) {
     if (pending.current) return;

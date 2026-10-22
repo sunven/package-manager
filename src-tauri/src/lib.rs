@@ -23,6 +23,7 @@ mod scan_diagnostics;
 mod session_records;
 mod skill_installation_copy;
 mod types;
+mod vscode_removal;
 mod vscode_storage;
 
 use crate::command::{run_command, run_command_owned};
@@ -439,6 +440,27 @@ async fn scan_vscode_storage() -> Result<vscode_storage::VscodeStorageScan, Stri
 }
 
 #[tauri::command]
+async fn get_vscode_editor_status() -> vscode_removal::VscodeEditorStatus {
+    tauri::async_runtime::spawn_blocking(vscode_removal::detect_editor_status)
+        .await
+        .unwrap_or(vscode_removal::VscodeEditorStatus::Unknown)
+}
+
+#[tauri::command]
+async fn remove_vscode_workspace_storage(
+    ids: Vec<String>,
+    on_progress: tauri::ipc::Channel<vscode_removal::VscodeStorageRemovalProgress>,
+) -> Result<vscode_removal::VscodeStorageRemovalResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        vscode_removal::remove_selected_default(&ids, &mut |progress| {
+            let _ = on_progress.send(progress);
+        })
+    })
+    .await
+    .map_err(|error| format!("VS Code 工作区存储移除失败：{error}"))?
+}
+
+#[tauri::command]
 fn get_project_cleanup_settings(
     state: tauri::State<'_, ProjectCleanupState>,
 ) -> Result<ProjectCleanupSettings, String> {
@@ -748,6 +770,8 @@ pub fn run() {
             prepare_opencode_deletion,
             commit_opencode_deletion,
             scan_vscode_storage,
+            get_vscode_editor_status,
+            remove_vscode_workspace_storage,
             get_project_cleanup_settings,
             choose_project_cleanup_root,
             select_project_cleanup_preset,
