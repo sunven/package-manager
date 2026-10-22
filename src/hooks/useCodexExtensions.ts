@@ -1,9 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { CodexMarketplace, CodexMarketplaceRequest, CodexMarketplaceResult, CodexMarketplaceScan } from "../codexMarketplaces";
 import type { CodexPlugin, CodexPluginChangeRequest, CodexPluginChangeResult, CodexPluginLifecycleRequest, CodexPluginScan } from "../codexPlugins";
 import type { CodexHook, CodexHookChangeRequest, CodexHookChangeResult, CodexHookDefinitions, CodexHookScan, HookDefinitionPreview, HookDefinitionRequest } from "../codexHooks";
 import { errorToString } from "../utils/format";
+import {
+  useNativeInventory,
+  withoutSnapshot,
+  type NativeInventoryAdapter,
+} from "./useNativeInventory";
 
 type MarketplaceIntent = { kind: "marketplace" } & Omit<CodexMarketplaceRequest, "snapshotId">;
 type PluginIntent = { kind: "plugin" } & (Omit<CodexPluginChangeRequest, "snapshotId"> | Omit<CodexPluginLifecycleRequest, "snapshotId">);
@@ -34,11 +39,6 @@ export type CodexExtensions = {
   refresh: () => Promise<void>;
 };
 
-function withoutSnapshot<T extends { snapshotId: string | null }>(scan: T) {
-  const { snapshotId: _, ...view } = scan;
-  return view;
-}
-
 function revoke<T extends NativeScan>(scan: T): T {
   return { ...scan, snapshotId: null, ...("hooks" in scan && scan.definitions
     ? { definitions: { ...scan.definitions, snapshotId: null } } : {}) };
@@ -53,58 +53,19 @@ function retained<T extends NativeScan>(previous: T | null, next: T): T {
   });
 }
 
-function useInventory<T extends NativeScan, R>(command: string, visible: boolean, autoRead: boolean) {
-  const [state, setState] = useState({ scan: null as T | null, current: false, revision: 0, scanning: false, error: null as string | null, result: null as R | null });
-  const native = useRef<T | null>(null);
-  const epoch = useRef(0);
-  const attempted = useRef(-1);
-  const revision = useRef(0);
-  const running = useRef<Promise<void> | null>(null);
-  const isVisible = useRef(visible);
-  isVisible.current = visible;
-
-  const invalidate = useCallback(() => {
-    epoch.current += 1;
-    const nextRevision = ++revision.current;
-    setState((previous) => ({ ...previous, current: false, revision: nextRevision }));
-  }, []);
-  const setResult = useCallback((result: R | null) => setState((previous) => ({ ...previous, result })), []);
-  const read = useCallback(async () => {
-    if (running.current) return running.current;
-    const nextRevision = ++revision.current;
-    setState((previous) => ({ ...previous, scanning: true, current: false, error: null, revision: nextRevision }));
-    const task = (async () => {
-      do {
-        const observed = epoch.current;
-        attempted.current = observed;
-        let next: T | null = null;
-        let error: string | null = null;
-        try {
-          next = retained(native.current, await invoke<T>(command));
-          if (next.status !== "Ready") error = next.message ?? "清单读取失败，请重新读取。";
-        } catch (caught) {
-          error = errorToString(caught);
-          next = native.current ? revoke(native.current) : null;
-        }
-        if (observed !== epoch.current) continue;
-        native.current = next;
-        const readRevision = ++revision.current;
-        setState((previous) => ({ ...previous, scan: next, current: !error && next?.status === "Ready", error, revision: readRevision }));
-        break;
-      } while (isVisible.current);
-    })();
-    running.current = task;
-    try { await task; } finally {
-      running.current = null;
-      setState((previous) => ({ ...previous, scanning: false }));
-    }
-  }, [command]);
-
-  useEffect(() => {
-    if (visible && autoRead && attempted.current !== epoch.current) void read();
-  }, [visible, autoRead, state.revision, read]);
-  return { view: { ...state, scan: state.scan ? withoutSnapshot(state.scan) : null }, native, revision, running, needsRead: () => attempted.current !== epoch.current, read, invalidate, setResult };
+function codexAdapter<Scan extends NativeScan>(): NativeInventoryAdapter<Scan> {
+  return {
+    retain: (previous, next) => retained(previous, next),
+    revoke: (scan) => revoke(scan),
+    invalidate: (scan) => revoke(scan),
+    ready: (scan) => scan.status === "Ready",
+    message: (scan) => scan.message ?? "清单读取失败，请重新读取。",
+  };
 }
+
+const marketplaceAdapter = codexAdapter<CodexMarketplaceScan>();
+const pluginAdapter = codexAdapter<CodexPluginScan>();
+const hookAdapter = codexAdapter<CodexHookScan>();
 
 export function useCodexExtensions(active: boolean, tab: string): CodexExtensions {
   const [operation, setOperation] = useState<CodexOperation | null>(null);
@@ -112,9 +73,24 @@ export function useCodexExtensions(active: boolean, tab: string): CodexExtension
   const sequence = useRef(0);
   const visible = useRef({ marketplaces: false, plugins: false, hooks: false });
   visible.current = { marketplaces: active && tab === "marketplaces", plugins: active && tab === "marketplaces", hooks: active && tab === "hooks" };
-  const marketplaces = useInventory<CodexMarketplaceScan, CodexMarketplaceResult>("scan_codex_marketplaces", visible.current.marketplaces, !operation);
-  const plugins = useInventory<CodexPluginScan, CodexPluginChangeResult>("scan_codex_plugins", visible.current.plugins, !operation);
-  const hooks = useInventory<CodexHookScan, CodexHookChangeResult>("scan_codex_hooks", visible.current.hooks, !operation);
+  const marketplaces = useNativeInventory<CodexMarketplaceScan, CodexMarketplaceResult>({
+    command: "scan_codex_marketplaces",
+    visible: visible.current.marketplaces,
+    autoRead: !operation,
+    adapter: marketplaceAdapter,
+  });
+  const plugins = useNativeInventory<CodexPluginScan, CodexPluginChangeResult>({
+    command: "scan_codex_plugins",
+    visible: visible.current.plugins,
+    autoRead: !operation,
+    adapter: pluginAdapter,
+  });
+  const hooks = useNativeInventory<CodexHookScan, CodexHookChangeResult>({
+    command: "scan_codex_hooks",
+    visible: visible.current.hooks,
+    autoRead: !operation,
+    adapter: hookAdapter,
+  });
   const inventories = { marketplaces, plugins, hooks };
 
   async function readVisible(force: boolean) {
