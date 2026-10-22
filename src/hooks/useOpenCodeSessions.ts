@@ -1,20 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  openCodeAgeDeletionPlan,
-  openCodeDeletionPlan,
+  type OpenCodeDeletionPlan,
   type OpenCodeDeletionResult,
   type OpenCodeSessionScan,
 } from "../sessionRecords";
 import { errorToString } from "../utils/format";
 import { useSessionOperation, type SessionOperationAdapter, type SessionRead } from "./useSessionOperation";
 
-type PendingDeletion = { kind: "one" | "selected"; plan: ReturnType<typeof openCodeDeletionPlan> }
-  | { kind: "age"; days: 7 | 30; cutoffMs: number; plan: ReturnType<typeof openCodeDeletionPlan> };
-
 const OPENCODE_SCOPES = ["opencode"] as const;
 
-const adapter: SessionOperationAdapter<"opencode", OpenCodeSessionScan, PendingDeletion, OpenCodeDeletionResult> = {
+const adapter: SessionOperationAdapter<"opencode", OpenCodeSessionScan, OpenCodeDeletionPlan, OpenCodeDeletionResult> = {
   read: async (_scopes, previous): Promise<SessionRead<"opencode", OpenCodeSessionScan>> => {
     try {
       const next = await invoke<OpenCodeSessionScan>("scan_opencode_sessions");
@@ -35,29 +31,8 @@ const adapter: SessionOperationAdapter<"opencode", OpenCodeSessionScan, PendingD
     }
   },
   scopesFor: () => ["opencode"],
-  execute: async (target): Promise<OpenCodeDeletionResult> => {
-    if (target.kind === "one") {
-      const sessionId = target.plan.selected[0].id;
-      await invoke("delete_opencode_session", { sessionId });
-      return { preflightError: null, items: [{ id: sessionId, status: "deleted", message: null }] };
-    }
-    if (target.kind === "age") {
-      return invoke<OpenCodeDeletionResult>("delete_opencode_sessions_older_than", {
-        sessionIds: target.plan.roots.map((record) => record.id),
-        cutoffMs: target.cutoffMs,
-        expectedRecords: target.plan.affectedRecords.map(({ id, parentId }) => ({ id, parentId })),
-      });
-    }
-    // The backend preflights every explicit target, then deduplicates the DELETE
-    // requests by the ancestry it reads at execution time.
-    return invoke<OpenCodeDeletionResult>("delete_opencode_sessions", {
-      sessionIds: target.plan.selected.map((record) => record.id),
-    });
-  },
-  completedIds: (target, result) => {
-    const deleted = result.items.filter((item) => item.status === "deleted").map((item) => item.id);
-    return openCodeDeletionPlan(target.plan.affectedRecords, deleted).affectedRecords.map((record) => record.id);
-  },
+  execute: (target) => invoke<OpenCodeDeletionResult>("commit_opencode_deletion", { planId: target.planId }),
+  completedIds: (_target, result) => result.completedIds,
   removeCompleted: (scans, _target, completedIds) => {
     const scan = scans.opencode;
     return scan
@@ -67,9 +42,16 @@ const adapter: SessionOperationAdapter<"opencode", OpenCodeSessionScan, PendingD
   shouldRefresh: (target, result) => target.kind === "age" || !result?.preflightError,
 };
 
+type PrepareIntent =
+  | { kind: "one" | "selected"; sessionIds: string[] }
+  | { kind: "age"; days: 7 | 30 };
+
 export function useOpenCodeSessions(active: boolean) {
-  const { scans, scanning, error, operation, outcome, refresh, begin, cancel, confirm } =
+  const { scans, scanning, error, operation, outcome, refresh: refreshScans, begin, cancel, confirm } =
     useSessionOperation(adapter, { active, scopes: OPENCODE_SCOPES });
+  const [preparing, setPreparing] = useState(false);
+  const [prepareError, setPrepareError] = useState<string | null>(null);
+  const preparingRef = useRef(false);
   const scan = scans.opencode ?? null;
 
   const openSession = useCallback(async (sessionId: string) => {
@@ -81,23 +63,38 @@ export function useOpenCodeSessions(active: boolean) {
     }
   }, []);
 
-  function request(kind: "one" | "selected", ids: string[]) {
-    if (operation || scan?.status !== "ready") return;
-    const plan = openCodeDeletionPlan(scan.records.map((record) => ({ ...record })), ids);
-    if (!plan.selected.length || (kind === "one" && plan.selected.length !== 1)) return;
-    begin({ kind, plan });
+  useEffect(() => {
+    setPrepareError(null);
+  }, [scan]);
+
+  async function prepare(intent: PrepareIntent) {
+    if (preparingRef.current || operation || scan?.status !== "ready") return;
+    if (intent.kind === "age" && (scanning.opencode || scan.activeSessionIds === null)) return;
+    preparingRef.current = true;
+    setPreparing(true);
+    setPrepareError(null);
+    try {
+      const plan = await invoke<OpenCodeDeletionPlan>("prepare_opencode_deletion", { request: intent });
+      begin(plan);
+    } catch (caught) {
+      setPrepareError(errorToString(caught));
+    } finally {
+      preparingRef.current = false;
+      setPreparing(false);
+    }
   }
 
-  function requestAge(days: 7 | 30, nowMs: number = Date.now()) {
-    if (operation || scanning.opencode || scan?.status !== "ready") return;
-    const target = openCodeAgeDeletionPlan(
-      scan.records.map((record) => ({ ...record })),
-      scan.activeSessionIds,
-      days,
-      nowMs,
-    );
-    if (!target) return;
-    begin({ kind: "age", ...target });
+  function request(kind: "one" | "selected", ids: string[]) {
+    return prepare({ kind, sessionIds: ids });
+  }
+
+  function requestAge(days: 7 | 30) {
+    return prepare({ kind: "age", days });
+  }
+
+  async function refresh() {
+    setPrepareError(null);
+    await refreshScans(OPENCODE_SCOPES);
   }
 
   const publicOutcome = outcome ? {
@@ -111,8 +108,10 @@ export function useOpenCodeSessions(active: boolean) {
   return {
     scan,
     scanning: scanning.opencode ?? false,
+    preparing,
+    prepareError,
     error,
-    refresh: () => refresh(OPENCODE_SCOPES),
+    refresh,
     openSession,
     operation,
     outcome: publicOutcome,

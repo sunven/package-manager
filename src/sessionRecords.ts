@@ -55,6 +55,19 @@ export type OpenCodeDeletionItem = {
 export type OpenCodeDeletionResult = {
   preflightError: string | null;
   items: OpenCodeDeletionItem[];
+  completedIds: string[];
+};
+
+export type OpenCodeDeletionKind = "one" | "selected" | "age";
+
+export type OpenCodeDeletionPlan = {
+  planId: string;
+  kind: OpenCodeDeletionKind;
+  days: 7 | 30 | null;
+  cutoffMs: number | null;
+  selected: OpenCodeSessionRecord[];
+  roots: OpenCodeSessionRecord[];
+  affected: OpenCodeSessionRecord[];
 };
 
 export type OpenCodeSessionFilter = { query: string; archived: "all" | "active" | "archived" };
@@ -69,58 +82,6 @@ export function filterOpenCodeSessions(records: OpenCodeSessionRecord[], filter:
     .sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title));
 }
 
-export function openCodeSessionDescendantCount(records: OpenCodeSessionRecord[], sessionId: string) {
-  const children = new Map<string, string[]>();
-  for (const record of records) {
-    if (!record.parentId) continue;
-    children.set(record.parentId, [...(children.get(record.parentId) ?? []), record.id]);
-  }
-
-  const visited = new Set([sessionId]);
-  const pending = [...(children.get(sessionId) ?? [])];
-  while (pending.length) {
-    const id = pending.pop()!;
-    if (visited.has(id)) continue;
-    visited.add(id);
-    pending.push(...(children.get(id) ?? []));
-  }
-  return visited.size - 1;
-}
-
-export function openCodeDeletionPlan(records: OpenCodeSessionRecord[], selectedIds: readonly string[]) {
-  const selectedSet = new Set(selectedIds);
-  const selected = records.filter((record) => selectedSet.has(record.id));
-  const selectedRecords = new Map(selected.map((record) => [record.id, record]));
-  const recordsById = new Map(records.map((record) => [record.id, record]));
-  const roots = selected.filter((record) => {
-    const visited = new Set<string>([record.id]);
-    let parentId = record.parentId;
-    while (parentId && !visited.has(parentId)) {
-      if (selectedRecords.has(parentId)) return false;
-      visited.add(parentId);
-      parentId = recordsById.get(parentId)?.parentId ?? null;
-    }
-    return true;
-  });
-  const safeRoots = roots.length ? roots : selected.slice(0, 1);
-  const affectedIds = new Set(safeRoots.map((record) => record.id));
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const record of records) {
-      if (record.parentId && affectedIds.has(record.parentId) && !affectedIds.has(record.id)) {
-        affectedIds.add(record.id);
-        changed = true;
-      }
-    }
-  }
-  return {
-    selected,
-    roots: safeRoots,
-    affectedRecords: records.filter((record) => affectedIds.has(record.id)),
-  };
-}
-
 export function groupOpenCodeSessions(records: OpenCodeSessionRecord[]) {
   const groups = new Map<string, { key: string; label: string; records: OpenCodeSessionRecord[] }>();
   for (const record of [...records].sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title))) {
@@ -130,25 +91,6 @@ export function groupOpenCodeSessions(records: OpenCodeSessionRecord[]) {
     groups.set(key, group);
   }
   return [...groups.values()].sort((left, right) => right.key.localeCompare(left.key));
-}
-
-export function openCodeAgeDeletionPlan(records: OpenCodeSessionRecord[], activeSessionIds: readonly string[] | null, days: 7 | 30, nowMs: number) {
-  if (activeSessionIds === null) return null;
-  const cutoffMs = nowMs - days * DAY_MS;
-  const byId = new Map(records.map((record) => [record.id, record]));
-  const active = new Set(activeSessionIds);
-  const blocked = new Set<string>();
-  for (const record of records) {
-    if (Number.isFinite(record.lastActivityMs) && record.lastActivityMs < cutoffMs && !active.has(record.id)) continue;
-    let current: OpenCodeSessionRecord | undefined = record;
-    while (current && !blocked.has(current.id)) {
-      blocked.add(current.id);
-      current = current.parentId ? byId.get(current.parentId) : undefined;
-    }
-  }
-  const plan = openCodeDeletionPlan(records, records.filter((record) => !blocked.has(record.id)).map((record) => record.id));
-  if (!plan.roots.length) return null;
-  return { days, cutoffMs, plan };
 }
 
 export type SessionRemovalResult = {

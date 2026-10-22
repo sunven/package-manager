@@ -2,7 +2,12 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpenCodeSessionRecord, OpenCodeSessionScan } from "../sessionRecords";
+import type {
+  OpenCodeDeletionPlan,
+  OpenCodeDeletionResult,
+  OpenCodeSessionRecord,
+  OpenCodeSessionScan,
+} from "../sessionRecords";
 import { useOpenCodeSessions } from "./useOpenCodeSessions";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -22,8 +27,39 @@ const initial: OpenCodeSessionScan = {
   records: [record("parent"), record("child", "parent"), record("failed"), record("unattempted")],
 };
 
-async function setup() {
-  mockedInvoke.mockResolvedValueOnce(initial);
+function plan(overrides: Partial<OpenCodeDeletionPlan> = {}): OpenCodeDeletionPlan {
+  const selected = overrides.selected ?? [initial.records[0]];
+  const roots = overrides.roots ?? selected;
+  const affected = overrides.affected ?? initial.records.slice(0, 2);
+  return {
+    planId: "plan-1",
+    kind: "one",
+    days: null,
+    cutoffMs: null,
+    selected,
+    roots,
+    affected,
+    ...overrides,
+  };
+}
+
+function result(overrides: Partial<OpenCodeDeletionResult> = {}): OpenCodeDeletionResult {
+  return {
+    preflightError: null,
+    items: [{ id: "parent", status: "deleted", message: null }],
+    completedIds: ["parent", "child"],
+    ...overrides,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((yes) => { resolve = yes; });
+  return { promise, resolve };
+}
+
+async function setup(scan: OpenCodeSessionScan = initial) {
+  mockedInvoke.mockResolvedValueOnce(scan);
   const hook = renderHook(() => useOpenCodeSessions(false));
   await act(async () => { await hook.result.current.refresh(); });
   mockedInvoke.mockClear();
@@ -31,58 +67,55 @@ async function setup() {
 }
 
 describe("OpenCode sessions adapter", () => {
-  it("retains previous records when the scan is not ready or the read throws", async () => {
-    const { result } = await setup();
-    mockedInvoke.mockResolvedValueOnce({ ...initial, status: "unavailable", records: [], message: "service stopped" });
-    await act(async () => { await result.current.refresh(); });
-    expect(result.current.scan?.status).toBe("unavailable");
-    expect(result.current.scan?.records).toEqual(initial.records);
-    expect(result.current.error).toBeNull();
-
-    mockedInvoke.mockRejectedValueOnce(new Error("cannot read"));
-    await act(async () => { await result.current.refresh(); });
-    expect(result.current.error).toBe("cannot read");
-    expect(result.current.scan?.status).toBe("failed");
-    expect(result.current.scan?.records).toEqual(initial.records);
+  it("prepares a single deletion, commits the plan once, and clears the confirmed cascade", async () => {
+    const { result: view } = await setup();
+    mockedInvoke.mockResolvedValueOnce(plan());
+    await act(async () => { await view.current.request("one", ["parent"]); });
+    expect(mockedInvoke).toHaveBeenCalledWith("prepare_opencode_deletion", {
+      request: { kind: "one", sessionIds: ["parent"] },
+    });
+    expect(view.current.operation?.target.planId).toBe("plan-1");
+    mockedInvoke.mockResolvedValueOnce(result()).mockResolvedValueOnce({ ...initial, records: initial.records.slice(2) });
+    await act(async () => { await view.current.confirm(view.current.operation!.id); });
+    expect(mockedInvoke).toHaveBeenCalledWith("commit_opencode_deletion", { planId: "plan-1" });
+    expect(view.current.outcome?.completedIds).toEqual(["parent", "child"]);
+    expect(view.current.scan?.records.map(({ id }) => id)).toEqual(["failed", "unattempted"]);
+    expect(view.current.operation).toBeNull();
   });
 
-  it("submits the single deletion command and clears the confirmed cascade", async () => {
-    const { result } = await setup();
-    act(() => result.current.request("one", ["parent"]));
-    mockedInvoke.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ ...initial, records: initial.records.slice(2) });
-    await act(async () => { await result.current.confirm(result.current.operation!.id); });
-    expect(mockedInvoke).toHaveBeenCalledWith("delete_opencode_session", { sessionId: "parent" });
-    expect(result.current.outcome?.completedIds).toEqual(["parent", "child"]);
-    expect(result.current.scan?.records.map(({ id }) => id)).toEqual(["failed", "unattempted"]);
-    expect(result.current.outcome?.result?.items[0].status).toBe("deleted");
-  });
-
-  it("submits the selected deletion command and skips refresh after a preflight cancellation", async () => {
-    const { result } = await setup();
-    act(() => result.current.request("selected", ["parent", "child"]));
-    mockedInvoke.mockResolvedValueOnce({ preflightError: "missing child", items: [] });
-    await act(async () => { await result.current.confirm(result.current.operation!.id); });
-    expect(mockedInvoke).toHaveBeenCalledExactlyOnceWith("delete_opencode_sessions", { sessionIds: ["parent", "child"] });
-    expect(result.current.outcome).toMatchObject({
+  it("prepares a selected deletion and skips refresh after a preflight cancellation", async () => {
+    const { result: view } = await setup();
+    mockedInvoke.mockResolvedValueOnce(plan({ kind: "selected", selected: initial.records.slice(0, 2) }));
+    await act(async () => { await view.current.request("selected", ["parent", "child"]); });
+    mockedInvoke.mockResolvedValueOnce({
+      preflightError: "missing child",
+      items: [],
+      completedIds: [],
+    });
+    await act(async () => { await view.current.confirm(view.current.operation!.id); });
+    expect(mockedInvoke).toHaveBeenCalledWith("commit_opencode_deletion", { planId: "plan-1" });
+    expect(view.current.outcome).toMatchObject({
       result: { preflightError: "missing child" },
       completedIds: [],
       refresh: { status: "notRequested" },
     });
-    expect(result.current.operation).toBeNull();
+    expect(view.current.operation).toBeNull();
   });
 
-  it("submits the age deletion command and refreshes after a preflight rejection", async () => {
-    const { result } = await setup();
-    const nowMs = 50 * 24 * 60 * 60 * 1000;
-    act(() => result.current.requestAge(30, nowMs));
-    mockedInvoke.mockResolvedValueOnce({ preflightError: "changed", items: [] }).mockResolvedValueOnce(initial);
-    await act(async () => { await result.current.confirm(result.current.operation!.id); });
-    expect(mockedInvoke).toHaveBeenCalledWith("delete_opencode_sessions_older_than", {
-      sessionIds: ["parent", "failed", "unattempted"],
-      cutoffMs: nowMs - 30 * 24 * 60 * 60 * 1000,
-      expectedRecords: initial.records.map(({ id, parentId }) => ({ id, parentId })),
+  it("prepares age deletion with the backend cutoff and refreshes after a rejection", async () => {
+    const { result: view } = await setup();
+    mockedInvoke.mockResolvedValueOnce(plan({ kind: "age", days: 30, cutoffMs: 12345 }));
+    await act(async () => { await view.current.requestAge(30); });
+    expect(mockedInvoke).toHaveBeenCalledWith("prepare_opencode_deletion", {
+      request: { kind: "age", days: 30 },
     });
-    expect(result.current.outcome).toMatchObject({
+    mockedInvoke.mockResolvedValueOnce({
+      preflightError: "changed",
+      items: [],
+      completedIds: [],
+    }).mockResolvedValueOnce(initial);
+    await act(async () => { await view.current.confirm(view.current.operation!.id); });
+    expect(view.current.outcome).toMatchObject({
       result: { preflightError: "changed" },
       completedIds: [],
       refresh: { status: "ready" },
@@ -90,63 +123,89 @@ describe("OpenCode sessions adapter", () => {
   });
 
   it("maps execution uncertainty to an error and refreshes", async () => {
-    const { result } = await setup();
-    act(() => result.current.request("one", ["parent"]));
+    const { result: view } = await setup();
+    mockedInvoke.mockResolvedValueOnce(plan());
+    await act(async () => { await view.current.request("one", ["parent"]); });
     mockedInvoke.mockRejectedValueOnce(new Error("response lost")).mockResolvedValueOnce(initial);
-    await act(async () => { await result.current.confirm(result.current.operation!.id); });
-    expect(result.current.outcome).toMatchObject({
+    await act(async () => { await view.current.confirm(view.current.operation!.id); });
+    expect(view.current.outcome).toMatchObject({
       error: "response lost",
       result: null,
       completedIds: [],
       refresh: { status: "ready" },
     });
-    expect(mockedInvoke.mock.calls.map(([name]) => name)).toEqual(["delete_opencode_session", "scan_opencode_sessions"]);
+    expect(mockedInvoke.mock.calls.map(([name]) => name)).toEqual([
+      "prepare_opencode_deletion",
+      "commit_opencode_deletion",
+      "scan_opencode_sessions",
+    ]);
   });
 
-  it("does not form an age target without readable activity or after cancellation", async () => {
-    const { result } = await setup();
-    act(() => result.current.requestAge(7, 50 * 24 * 60 * 60 * 1000));
-    const id = result.current.operation!.id;
-    act(() => result.current.cancel(id));
-    await act(async () => { await result.current.confirm(id); });
+  it("shows a prepare error without opening a dialog", async () => {
+    const { result: view } = await setup();
+    mockedInvoke.mockRejectedValueOnce(new Error("没有符合 30 天条件的 OpenCode 会话。"));
+    await act(async () => { await view.current.requestAge(30); });
+    expect(view.current.prepareError).toBe("没有符合 30 天条件的 OpenCode 会话。");
+    expect(view.current.operation).toBeNull();
+    expect(mockedInvoke.mock.calls.map(([name]) => name)).toEqual(["prepare_opencode_deletion"]);
+  });
+
+  it("exposes preparing while the backend plan is pending", async () => {
+    const { result: view } = await setup();
+    const pending = deferred<OpenCodeDeletionPlan>();
+    mockedInvoke.mockReturnValueOnce(pending.promise);
+    let request!: Promise<void>;
+    act(() => { request = view.current.requestAge(30); });
+    expect(view.current.preparing).toBe(true);
+    await act(async () => {
+      pending.resolve(plan({ kind: "age", days: 30, cutoffMs: 12345 }));
+      await request;
+    });
+    expect(view.current.preparing).toBe(false);
+    expect(view.current.operation?.target.planId).toBe("plan-1");
+  });
+
+  it("does not prepare age deletion without readable activity or after cancellation", async () => {
+    const { result: view } = await setup({ ...initial, activeSessionIds: null, activityMessage: "unreadable" });
+    await act(async () => { await view.current.requestAge(7); });
+    expect(view.current.operation).toBeNull();
     expect(mockedInvoke).not.toHaveBeenCalled();
 
-    mockedInvoke.mockResolvedValueOnce({ ...initial, activeSessionIds: null, activityMessage: "unreadable" });
-    await act(async () => { await result.current.refresh(); });
-    act(() => result.current.requestAge(7, 50 * 24 * 60 * 60 * 1000));
-    expect(result.current.operation).toBeNull();
+    mockedInvoke.mockResolvedValueOnce(plan());
+    await act(async () => { await view.current.request("one", ["parent"]); });
+    const id = view.current.operation!.id;
+    act(() => view.current.cancel(id));
+    await act(async () => { await view.current.confirm(id); });
+    expect(mockedInvoke).not.toHaveBeenCalledWith("commit_opencode_deletion", expect.anything());
+    expect(view.current.operation).toBeNull();
   });
 
-  it("clears only confirmed roots and their cascade even when the follow-up read fails", async () => {
-    const { result } = await setup();
-    const partial = {
+  it("keeps only the backend's completed ids after partial execution", async () => {
+    const { result: view } = await setup();
+    mockedInvoke.mockResolvedValueOnce(plan({ kind: "selected", selected: initial.records.slice(0, 2) }));
+    await act(async () => { await view.current.request("selected", ["parent", "child"]); });
+    mockedInvoke.mockResolvedValueOnce({
       preflightError: null,
       items: [
         { id: "parent", status: "deleted", message: null },
         { id: "failed", status: "failed", message: "conflict" },
         { id: "unattempted", status: "notAttempted", message: "stopped" },
       ],
-    };
-    act(() => result.current.request("selected", initial.records.map(({ id }) => id)));
-    mockedInvoke.mockResolvedValueOnce(partial).mockResolvedValueOnce({
-      status: "unavailable",
-      records: [],
-      message: "service stopped",
-    });
-    await act(async () => { await result.current.confirm(result.current.operation!.id); });
-    expect(result.current.outcome).toMatchObject({
-      result: partial,
+      completedIds: ["parent", "child"],
+    }).mockResolvedValueOnce({ status: "unavailable", records: [], message: "service stopped" });
+    await act(async () => { await view.current.confirm(view.current.operation!.id); });
+    expect(view.current.outcome).toMatchObject({
       completedIds: ["parent", "child"],
       refresh: { status: "failed", message: "service stopped" },
     });
-    expect(result.current.scan?.records.map(({ id }) => id)).toEqual(["failed", "unattempted"]);
+    expect(view.current.scan?.records.map(({ id }) => id)).toEqual(["failed", "unattempted"]);
   });
 
   it("opens a session and returns the command error", async () => {
-    const { result } = await setup();
+    const { result: view } = await setup();
     mockedInvoke.mockResolvedValueOnce(undefined);
-    await expect(result.current.openSession("parent")).resolves.toBeNull();
+    await expect(view.current.openSession("parent")).resolves.toBeNull();
     mockedInvoke.mockRejectedValueOnce(new Error("gone"));
-    await expect(result.current.openSession("parent")).resolves.toBe("gone");
+    await expect(view.current.openSession("parent")).resolves.toBe("gone");
   });
 });
