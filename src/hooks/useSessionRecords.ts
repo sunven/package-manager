@@ -1,130 +1,133 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { SessionRecord, SessionRecordScan, SessionRefresh, SessionRemovalResult, SessionSourceId, SessionSourceScan } from "../sessionRecords";
+import type {
+  SessionRecord,
+  SessionRecordScan,
+  SessionRemovalResult,
+  SessionSourceId,
+  SessionSourceScan,
+} from "../sessionRecords";
 import { errorToString } from "../utils/format";
+import { useSessionOperation, type SessionOperationAdapter, type SessionRead } from "./useSessionOperation";
 
 type PendingRemoval =
   | { kind: "one"; source: SessionSourceId; id: string; title: string }
   | { kind: "age"; source: SessionSourceId; label: string; days: 7 | 30; count: number }
   | { kind: "selected"; source: SessionSourceId; label: string; records: SessionRecord[] };
 
-type Operation = { id: number; phase: "confirming" | "executing" | "refreshing"; target: PendingRemoval };
-type RemovalOutcome = { source: SessionSourceId; result: SessionRemovalResult; completedIds: string[]; refresh: SessionRefresh };
-const idleScanning: Record<SessionSourceId, boolean> = { codex: false, claude: false };
-
-export function useSessionRecords(active: boolean) {
-  const [scan, setScan] = useState<SessionRecordScan | null>(null);
-  const [scanningSources, setScanningSources] = useState(idleScanning);
-  const [error, setError] = useState<string | null>(null);
-  const [operation, setOperation] = useState<Operation | null>(null);
-  const [outcome, setOutcome] = useState<RemovalOutcome | null>(null);
-  const pending = useRef<Operation | null>(null);
-  const operationId = useRef(0);
-  const epoch = useRef(0);
-  const sourceEpoch = useRef<Record<SessionSourceId, number>>({ codex: 0, claude: 0 });
-
-  const read = useCallback(async (source?: SessionSourceId) => {
-    const ticket = ++epoch.current;
-    const sources: SessionSourceId[] = source ? [source] : ["codex", "claude"];
-    for (const key of sources) sourceEpoch.current[key] = ticket;
-    setScanningSources((current) => ({ ...current, ...(source ? { [source]: true } : { codex: true, claude: true }) }));
-    setError(null);
-    setOutcome((current) => current && sources.includes(current.source) ? { ...current, refresh: { status: "refreshing", message: null } } : current);
-
-    function publish(key: SessionSourceId, next: SessionSourceScan | null, failure?: string) {
-      if (sourceEpoch.current[key] !== ticket) return;
-      setScan((current) => {
-        if (sourceEpoch.current[key] !== ticket) return current;
-        const previous = current?.[key] ?? emptySource();
-        const value = next?.status === "Failed"
-          ? { ...next, records: previous.records }
-          : next ?? { ...previous, status: "Failed" as const, message: failure! };
-        return { codex: current?.codex ?? emptySource(), claude: current?.claude ?? emptySource(), [key]: value };
-      });
-      const failed = !next || next.status === "Failed" || next.status === "Partial";
-      setOutcome((current) => current?.source === key && sourceEpoch.current[key] === ticket ? {
-        ...current,
-        refresh: { status: failed ? "failed" : "ready", message: failed ? failure ?? next?.message ?? "会话记录未能完整读取。" : null },
-      } : current);
-    }
-
-    try {
-      if (source) publish(source, await invoke<SessionSourceScan>("scan_session_source", { source }));
-      else {
-        const next = await invoke<SessionRecordScan>("scan_session_records");
-        for (const key of sources) publish(key, next[key]);
-      }
-    } catch (caught) {
-      const message = errorToString(caught);
-      if (!source && sources.every((key) => sourceEpoch.current[key] === ticket)) setError(message);
-      for (const key of sources) publish(key, null, message);
-    } finally {
-      setScanningSources((current) => {
-        const next = { ...current };
-        for (const key of sources) if (sourceEpoch.current[key] === ticket) next[key] = false;
-        return next;
-      });
-    }
-  }, []);
-
-  const refresh = useCallback(async (source?: SessionSourceId) => {
-    if (pending.current && pending.current.phase !== "confirming") return;
-    await read(source);
-  }, [read]);
-
-  useEffect(() => {
-    if (active) void refresh();
-  }, [active, refresh]);
-
-  function request(target: PendingRemoval) {
-    if (pending.current) return;
-    const snapshot = target.kind === "selected" ? { ...target, records: target.records.map((record) => ({ ...record })) } : { ...target };
-    pending.current = { id: ++operationId.current, phase: "confirming", target: snapshot };
-    setOperation(pending.current);
-    setOutcome(null);
-  }
-
-  function cancel(id: number) {
-    if (pending.current?.id !== id || pending.current.phase !== "confirming") return;
-    pending.current = null;
-    setOperation(null);
-  }
-
-  async function confirm(id: number) {
-    const approval = pending.current;
-    if (!approval || approval.id !== id || approval.phase !== "confirming") return;
-    const target = approval.target;
-    pending.current = { ...approval, phase: "executing" };
-    setOperation(pending.current);
-    // Reads started before this removal cannot restore its old inventory.
-    sourceEpoch.current[target.source] = ++epoch.current;
-    setScanningSources((current) => ({ ...current, [target.source]: false }));
-    let result: SessionRemovalResult;
-    try {
-      result = target.kind === "one"
-        ? await invoke<SessionRemovalResult>("remove_session_record", { source: target.source, id: target.id })
-        : target.kind === "age"
-          ? await invoke<SessionRemovalResult>("remove_session_records_older_than", { source: target.source, days: target.days })
-          : await invoke<SessionRemovalResult>("remove_session_records", { source: target.source, ids: target.records.map((record) => record.id) });
-    } catch (caught) {
-      result = { moved: 0, failed: 0, skipped: 0, items: [], operationError: errorToString(caught), message: null };
-    }
-    const completedIds = result.items.filter((item) => item.status === "Moved").map((item) => item.id);
-    setScan((current) => current && {
-      ...current,
-      [target.source]: { ...current[target.source], records: current[target.source].records.filter((record) => !completedIds.includes(record.id)) },
-    });
-    setOutcome({ source: target.source, result, completedIds, refresh: { status: "refreshing", message: null } });
-    pending.current = { ...approval, phase: "refreshing" };
-    setOperation(pending.current);
-    await read(target.source);
-    pending.current = null;
-    setOperation(null);
-  }
-
-  return { scan, scanningSources, error, refresh, operation, outcome, request, confirm, cancel };
-}
+const SESSION_SCOPES = ["codex", "claude"] as const;
 
 function emptySource(): SessionSourceScan {
   return { directory: "", status: "Missing", records: [], message: null };
+}
+
+function retained(previous: SessionSourceScan | undefined, next: SessionSourceScan): SessionSourceScan {
+  return next.status === "Failed" ? { ...next, records: previous?.records ?? [] } : next;
+}
+
+function failureOf(scan: SessionSourceScan) {
+  return scan.status === "Failed" || scan.status === "Partial"
+    ? scan.message ?? "会话记录未能完整读取。"
+    : undefined;
+}
+
+function abortedResult(message: string): SessionRemovalResult {
+  return { moved: 0, failed: 0, skipped: 0, items: [], operationError: message, message: null };
+}
+
+const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, PendingRemoval, SessionRemovalResult> = {
+  read: async (scopes, previous): Promise<SessionRead<SessionSourceId, SessionSourceScan>> => {
+    if (scopes.length === 1) {
+      const source = scopes[0];
+      try {
+        const next = await invoke<SessionSourceScan>("scan_session_source", { source });
+        const scan = retained(previous[source], next);
+        const failure = failureOf(scan);
+        return {
+          scans: { [source]: scan },
+          failures: failure ? { [source]: failure } : {},
+          globalError: null,
+        };
+      } catch (caught) {
+        const message = errorToString(caught);
+        return {
+          scans: { [source]: { ...(previous[source] ?? emptySource()), status: "Failed", message } },
+          failures: { [source]: message },
+          globalError: null,
+        };
+      }
+    }
+
+    try {
+      const next = await invoke<SessionRecordScan>("scan_session_records");
+      const scans: Partial<Record<SessionSourceId, SessionSourceScan>> = {};
+      const failures: Partial<Record<SessionSourceId, string>> = {};
+      for (const source of scopes) {
+        const scan = retained(previous[source], next[source]);
+        scans[source] = scan;
+        const failure = failureOf(scan);
+        if (failure) failures[source] = failure;
+      }
+      return { scans, failures, globalError: null };
+    } catch (caught) {
+      const message = errorToString(caught);
+      const scans: Partial<Record<SessionSourceId, SessionSourceScan>> = {};
+      const failures: Partial<Record<SessionSourceId, string>> = {};
+      for (const source of scopes) {
+        scans[source] = { ...(previous[source] ?? emptySource()), status: "Failed", message };
+        failures[source] = message;
+      }
+      return { scans, failures, globalError: message };
+    }
+  },
+  scopesFor: (target) => [target.source],
+  execute: (target) => {
+    if (target.kind === "one") {
+      return invoke<SessionRemovalResult>("remove_session_record", { source: target.source, id: target.id });
+    }
+    if (target.kind === "age") {
+      return invoke<SessionRemovalResult>("remove_session_records_older_than", { source: target.source, days: target.days });
+    }
+    return invoke<SessionRemovalResult>("remove_session_records", {
+      source: target.source,
+      ids: target.records.map((record) => record.id),
+    });
+  },
+  completedIds: (_target, result) => result.items
+    .filter((item) => item.status === "Moved")
+    .map((item) => item.id),
+  removeCompleted: (scans, target, completedIds) => {
+    const scan = scans[target.source];
+    return scan
+      ? { ...scans, [target.source]: { ...scan, records: scan.records.filter((record) => !completedIds.includes(record.id)) } }
+      : scans;
+  },
+  shouldRefresh: () => true,
+};
+
+export function useSessionRecords(active: boolean) {
+  const { scans, scanning, error, operation, outcome, refresh, begin, cancel, confirm } =
+    useSessionOperation(adapter, { active, scopes: SESSION_SCOPES });
+
+  const scan: SessionRecordScan | null = scans.codex || scans.claude
+    ? { codex: scans.codex ?? emptySource(), claude: scans.claude ?? emptySource() }
+    : null;
+  const scanningSources = { codex: scanning.codex ?? false, claude: scanning.claude ?? false };
+  const publicOutcome = outcome ? {
+    source: outcome.target.source,
+    result: outcome.result ?? (outcome.error ? abortedResult(outcome.error) : null),
+    completedIds: outcome.completedIds,
+    refresh: outcome.refresh,
+  } : null;
+
+  return {
+    scan,
+    scanningSources,
+    error,
+    refresh: (source?: SessionSourceId) => refresh(source ? [source] : SESSION_SCOPES),
+    operation,
+    outcome: publicOutcome,
+    request: (target: PendingRemoval) => begin(target),
+    confirm,
+    cancel,
+  };
 }

@@ -2,7 +2,12 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionRecordScan, SessionSourceScan } from "../sessionRecords";
+import type {
+  SessionRecord,
+  SessionRecordScan,
+  SessionRemovalResult,
+  SessionSourceScan,
+} from "../sessionRecords";
 import { useSessionRecords } from "./useSessionRecords";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -10,148 +15,131 @@ const mockedInvoke = vi.mocked(invoke);
 beforeEach(() => vi.resetAllMocks());
 afterEach(cleanup);
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: Error) => void;
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
-  return { promise, resolve, reject };
+function record(id: string): SessionRecord {
+  return { id, title: id, lastActivityMs: 1, bytes: 10, inUse: false, workingDirectory: null };
 }
 
-function source(title: string): SessionSourceScan {
-  return { directory: "/sessions", status: "Ready", message: null, records: [
-    { id: "record", title, lastActivityMs: 1, bytes: 10, inUse: false, workingDirectory: null },
-  ] };
+function source(title: string, overrides: Partial<SessionSourceScan> = {}): SessionSourceScan {
+  return { directory: "/sessions", status: "Ready", message: null, records: [record(title)], ...overrides };
 }
 
 const initial: SessionRecordScan = { codex: source("initial"), claude: source("claude") };
+const removal: SessionRemovalResult = {
+  moved: 1,
+  failed: 0,
+  skipped: 0,
+  items: [{ id: "record", status: "Moved", reason: null, message: null }],
+  operationError: null,
+  message: null,
+};
 
-describe("Session Record reading", () => {
-  it.each(["older first", "newer first", "older fails"])("keeps the latest full scan after a source refresh: %s", async (order) => {
-    const older = deferred<SessionSourceScan>();
-    const newer = deferred<SessionRecordScan>();
-    mockedInvoke.mockResolvedValueOnce(initial).mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
-    const { result } = renderHook(() => useSessionRecords(false));
-    await act(async () => { await result.current.refresh(); });
-    let olderRead!: Promise<unknown>;
-    let newerRead!: Promise<unknown>;
-    act(() => {
-      olderRead = result.current.refresh("codex");
-      newerRead = result.current.refresh();
-    });
-    if (order === "older first") {
-      await act(async () => { older.resolve(source("old")); await olderRead; });
-      expect(result.current.scanningSources.codex).toBe(true);
-    }
-    await act(async () => { newer.resolve({ ...initial, codex: source("new") }); await newerRead; });
-    if (order !== "older first") {
-      await act(async () => {
-        if (order === "older fails") older.reject(new Error("stale failure"));
-        else older.resolve(source("old"));
-        await olderRead;
-      });
-    }
-    expect(result.current.scan?.codex).toEqual(source("new"));
-    expect(result.current.scanningSources).toEqual({ codex: false, claude: false });
-  });
-
-  it("shows a source read failure even before the first successful scan", async () => {
-    mockedInvoke.mockRejectedValue(new Error("cannot read"));
+describe("Session records adapter", () => {
+  it("reads one source and maps its failure without a global error", async () => {
+    mockedInvoke.mockResolvedValueOnce(source("codex-new"));
     const { result } = renderHook(() => useSessionRecords(false));
     await act(async () => { await result.current.refresh("codex"); });
-    expect(result.current.scan?.codex.status).toBe("Failed");
-    expect(result.current.scan?.codex.message).toBe("cannot read");
-  });
-});
+    expect(mockedInvoke).toHaveBeenCalledWith("scan_session_source", { source: "codex" });
+    expect(result.current.scan?.codex.records[0].title).toBe("codex-new");
+    expect(result.current.scan?.claude.status).toBe("Missing");
+    expect(result.current.error).toBeNull();
 
-describe("Session Record Removal", () => {
-  it("freezes the selected records, ignores cancelled confirmations and submits each confirmation once", async () => {
-    mockedInvoke.mockResolvedValue(initial.codex);
-    const { result } = renderHook(() => useSessionRecords(false));
-    const records = initial.codex.records.map((record) => ({ ...record }));
-    act(() => result.current.request({ kind: "selected", source: "codex", label: "Codex", records }));
-    const cancelled = result.current.operation!.id;
-    act(() => result.current.cancel(cancelled));
-    await act(async () => { await result.current.confirm(cancelled); });
-    expect(mockedInvoke).not.toHaveBeenCalled();
-
-    act(() => result.current.request({ kind: "selected", source: "codex", label: "Codex", records }));
-    const id = result.current.operation!.id;
-    records[0].id = "changed";
-    records[0].title = "changed";
-    expect(result.current.operation!.target).toMatchObject({ records: [{ id: "record", title: "initial" }] });
-    const removal = deferred<unknown>();
-    mockedInvoke.mockReturnValueOnce(removal.promise);
-    let completion!: Promise<void>;
-    act(() => {
-      completion = result.current.confirm(id);
-      void result.current.confirm(id);
-      result.current.cancel(id);
-      result.current.request({ kind: "one", source: "claude", id: "other", title: "Other" });
-    });
-    expect(result.current.operation?.phase).toBe("executing");
-    expect(mockedInvoke).toHaveBeenCalledExactlyOnceWith("remove_session_records", { source: "codex", ids: ["record"] });
-    await act(async () => {
-      removal.resolve({ moved: 0, failed: 0, skipped: 1, items: [], operationError: null, message: null });
-      await completion;
-    });
-    expect(result.current.operation).toBeNull();
-    expect(mockedInvoke.mock.calls.map(([command]) => command)).toEqual(["remove_session_records", "scan_session_source"]);
+    mockedInvoke.mockRejectedValueOnce(new Error("cannot read"));
+    await act(async () => { await result.current.refresh("claude"); });
+    expect(result.current.scan?.claude).toMatchObject({ status: "Failed", message: "cannot read" });
+    expect(result.current.error).toBeNull();
   });
 
-  it("keeps the removal result through a failed refresh and retries only the read", async () => {
-    const moved = { moved: 1, failed: 0, skipped: 0, items: [{ id: "record", status: "Moved", reason: null, message: null }], operationError: null, message: null };
-    const reread = deferred<SessionSourceScan>();
-    mockedInvoke.mockResolvedValueOnce(initial).mockResolvedValueOnce(moved).mockReturnValueOnce(reread.promise);
-    const { result, rerender } = renderHook(({ active }) => useSessionRecords(active), { initialProps: { active: false } });
-    await act(async () => { await result.current.refresh(); });
-    act(() => result.current.request({ kind: "one", source: "codex", id: "record", title: "Record" }));
-    const id = result.current.operation!.id;
-    let completion!: Promise<void>;
-    await act(async () => { completion = result.current.confirm(id); });
-    expect(result.current.outcome?.result).toEqual(moved);
-    expect(result.current.scan?.codex.records).toEqual([]);
-    expect(result.current.operation?.phase).toBe("refreshing");
-    await act(async () => { await result.current.confirm(id); await result.current.refresh(); });
-    rerender({ active: true });
-    expect(mockedInvoke).toHaveBeenCalledTimes(3);
-    await act(async () => { reread.reject(new Error("read failed")); await completion; });
-    expect(result.current.operation).toBeNull();
-    expect(result.current.outcome).toMatchObject({ result: moved, completedIds: ["record"], refresh: { status: "failed", message: "read failed" } });
-    mockedInvoke.mockResolvedValueOnce({ ...initial.codex, records: [] });
-    await act(async () => { await result.current.refresh("codex"); });
-    expect(result.current.outcome?.refresh.status).toBe("ready");
-    expect(result.current.outcome?.result).toEqual(moved);
-    expect(mockedInvoke.mock.calls.filter(([command]) => command === "remove_session_record")).toHaveLength(1);
-  });
-
-  it("invalidates reads already running when removal starts", async () => {
-    const oldRead = deferred<SessionSourceScan>();
-    const removal = deferred<unknown>();
-    mockedInvoke.mockResolvedValueOnce(initial).mockReturnValueOnce(oldRead.promise).mockReturnValueOnce(removal.promise).mockResolvedValueOnce({ ...initial.codex, records: [] });
+  it("retains previous records for a failed source and surfaces a global failure", async () => {
+    mockedInvoke.mockResolvedValueOnce(initial);
     const { result } = renderHook(() => useSessionRecords(false));
     await act(async () => { await result.current.refresh(); });
-    let reading!: Promise<void>;
-    act(() => { reading = result.current.refresh("codex"); result.current.request({ kind: "age", source: "codex", label: "Codex", days: 7, count: 1 }); });
-    let completion!: Promise<void>;
-    act(() => { completion = result.current.confirm(result.current.operation!.id); });
-    await act(async () => { oldRead.resolve(source("stale")); await reading; });
+    mockedInvoke.mockResolvedValueOnce({
+      codex: source("ignored", { status: "Failed", records: [], message: "source failed" }),
+      claude: source("claude-new"),
+    });
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.scan?.codex).toMatchObject({ status: "Failed", message: "source failed" });
     expect(result.current.scan?.codex.records[0].title).toBe("initial");
-    await act(async () => {
-      removal.resolve({ moved: 1, failed: 0, skipped: 0, items: [{ id: "record", status: "Moved" }], operationError: null, message: null });
-      await completion;
-    });
-    expect(mockedInvoke).toHaveBeenCalledWith("remove_session_records_older_than", { source: "codex", days: 7 });
-    expect(result.current.scan?.codex.records).toEqual([]);
+    expect(result.current.scan?.claude.records[0].title).toBe("claude-new");
+    expect(result.current.error).toBeNull();
+
+    mockedInvoke.mockRejectedValueOnce(new Error("full failure"));
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.error).toBe("full failure");
+    expect(result.current.scan?.codex).toMatchObject({ status: "Failed", message: "full failure" });
+    expect(result.current.scan?.codex.records[0].title).toBe("initial");
   });
 
-  it("preserves execution errors and reports incomplete reconciliation separately", async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error("cannot inspect open files")).mockResolvedValueOnce({ ...initial.codex, status: "Partial", message: "some records unreadable" });
+  const removals: { target: Parameters<ReturnType<typeof useSessionRecords>["request"]>[0]; command: string; args: unknown }[] = [
+    {
+      target: { kind: "one", source: "codex", id: "record", title: "Record" },
+      command: "remove_session_record",
+      args: { source: "codex", id: "record" },
+    },
+    {
+      target: { kind: "age", source: "codex", label: "Codex", days: 7, count: 1 },
+      command: "remove_session_records_older_than",
+      args: { source: "codex", days: 7 },
+    },
+    {
+      target: { kind: "selected", source: "codex", label: "Codex", records: [record("record")] },
+      command: "remove_session_records",
+      args: { source: "codex", ids: ["record"] },
+    },
+  ];
+
+  it.each(removals)("submits $command with the frozen policy payload", async ({ target, command, args }) => {
+    mockedInvoke.mockImplementation(async (name) => {
+      if (name === command) return removal;
+      if (name === "scan_session_source") return { ...source("after"), records: [] };
+      throw new Error(`Unexpected command ${name}`);
+    });
+    const { result } = renderHook(() => useSessionRecords(false));
+    act(() => result.current.request(target));
+    await act(async () => { await result.current.confirm(result.current.operation!.id); });
+    expect(mockedInvoke).toHaveBeenCalledWith(command, args);
+    expect(mockedInvoke.mock.calls.filter(([name]) => name === command)).toHaveLength(1);
+    expect(result.current.outcome?.result).toEqual(removal);
+    expect(result.current.outcome?.completedIds).toEqual(["record"]);
+    expect(result.current.outcome?.refresh.status).toBe("ready");
+    expect(result.current.operation).toBeNull();
+  });
+
+  it("removes only confirmed Moved records from the target source", async () => {
+    mockedInvoke.mockResolvedValueOnce(initial);
+    const { result } = renderHook(() => useSessionRecords(false));
+    await act(async () => { await result.current.refresh(); });
+    mockedInvoke.mockResolvedValueOnce(removal).mockResolvedValueOnce({ ...source("after"), records: [] });
+    act(() => result.current.request({ kind: "one", source: "codex", id: "record", title: "Record" }));
+    await act(async () => { await result.current.confirm(result.current.operation!.id); });
+    expect(result.current.scan?.codex.records).toEqual([]);
+    expect(result.current.scan?.claude.records[0].title).toBe("claude");
+    expect(result.current.outcome?.completedIds).toEqual(["record"]);
+    expect(mockedInvoke).toHaveBeenCalledWith("scan_session_source", { source: "codex" });
+  });
+
+  it("maps a failed execution to an aborted result and failed reconciliation", async () => {
+    mockedInvoke.mockImplementation(async (name) => {
+      if (name === "remove_session_record") throw new Error("cannot inspect open files");
+      if (name === "scan_session_source") {
+        return { ...source("after"), status: "Partial", message: "some records unreadable" };
+      }
+      throw new Error(`Unexpected command ${name}`);
+    });
     const { result } = renderHook(() => useSessionRecords(false));
     act(() => result.current.request({ kind: "one", source: "codex", id: "record", title: "Record" }));
     await act(async () => { await result.current.confirm(result.current.operation!.id); });
     expect(result.current.outcome).toMatchObject({
-      result: { moved: 0, failed: 0, skipped: 0, operationError: "cannot inspect open files" },
-      completedIds: [], refresh: { status: "failed", message: "some records unreadable" },
+      result: {
+        moved: 0,
+        failed: 0,
+        skipped: 0,
+        items: [],
+        operationError: "cannot inspect open files",
+        message: null,
+      },
+      completedIds: [],
+      refresh: { status: "failed", message: "some records unreadable" },
     });
   });
 });
