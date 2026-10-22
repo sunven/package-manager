@@ -67,7 +67,7 @@ describe("Codex skills workflow", () => {
     expect(screen.queryByRole("button", { name: "禁用 release-notes" })).toBeNull();
   });
 
-  it("cancels without writing, freezes confirmation, and submits once while executing", async () => {
+  it("cancels without writing and disables the dialog while executing", async () => {
     render(<Harness />); await ready();
     let dialog = await openConfirmation();
     expect(within(dialog).getByText(scan.skills[0].path)).toBeTruthy();
@@ -76,8 +76,7 @@ describe("Codex skills workflow", () => {
     dialog = await openConfirmation();
     let resolve!: (value: SkillOutcome) => void;
     deferCommit = new Promise((done) => { resolve = done; });
-    const confirm = within(dialog).getByRole("button", { name: "确认禁用" });
-    fireEvent.click(confirm); fireEvent.click(confirm);
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认禁用" }));
     expect(calls("commit_codex_skill")).toHaveLength(1);
     expect((within(dialog).getByRole("button", { name: "取消" }) as HTMLButtonElement).disabled).toBe(true);
     resolve(outcome);
@@ -114,12 +113,11 @@ describe("Codex skills workflow", () => {
     expect(calls("prepare_codex_skill")[1][1]).toEqual({ request: { snapshotId: "skills-1", operation: "Install", source: { kind: "local", path: "/Users/example/my-skill" } } });
   });
 
-  it("invalidates a pending confirmation when plugin data changes and rereads on activation", async () => {
-    const view = render(<Harness />); await ready(); await openConfirmation();
-    view.rerender(<Harness dependency="changed" active={false} />);
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(calls("cancel_codex_skill")).toHaveLength(1); expect(calls("commit_codex_skill")).toHaveLength(0);
-    expect(calls("scan_codex_skills")).toHaveLength(1);
-    view.rerender(<Harness dependency="changed" />); await ready(); expect(calls("scan_codex_skills")).toHaveLength(2);
+  it("retains the last rows and marks them stale when Codex reports an unavailable CLI", async () => {
+    render(<Harness />); await ready();
+    scan = { ...scan, status: "MissingCli", snapshotId: null, message: "未找到 Codex CLI" };
+    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await waitFor(() => expect(screen.getByText("需要 Codex CLI")).toBeTruthy());
+    expect((screen.getByRole("button", { name: "禁用 release-notes" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

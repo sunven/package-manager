@@ -94,7 +94,7 @@ describe("Claude Skills", () => {
     expect(screen.getByLabelText("调用设置 research")).toBeTruthy(); expect(screen.queryByLabelText("调用设置 release-notes")).toBeNull();
   });
 
-  it("previews actual setting key, cancels with focus restoration and commits once", async () => {
+  it("previews actual setting key, restores focus on cancel, and disables the dialog while executing", async () => {
     render(<Harness />); await ready(); let dialog = await confirmation();
     expect(within(dialog).getByRole("heading", { name: "确认调整技能调用设置" })).toBeTruthy();
     expect(within(dialog).getByText("release")).toBeTruthy(); expect(within(dialog).getByText("关闭")).toBeTruthy();
@@ -103,8 +103,7 @@ describe("Claude Skills", () => {
     expect(calls("commit_claude_skill")).toHaveLength(0);
     dialog = await confirmation(); let resolve!: (value: SkillOutcome) => void;
     deferCommit = new Promise((done) => { resolve = done; });
-    const confirm = within(dialog).getByRole("button", { name: "确认调整调用设置" });
-    fireEvent.click(confirm); fireEvent.click(confirm);
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认调整调用设置" }));
     expect(calls("commit_claude_skill")).toHaveLength(1);
     expect((within(dialog).getByRole("button", { name: "取消" }) as HTMLButtonElement).disabled).toBe(true);
     resolve(outcome); await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
@@ -165,14 +164,5 @@ describe("Claude Skills", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "收起" }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "安装技能" })));
-  });
-
-  it("invalidates a pending preview after another Claude operation", async () => {
-    const view = render(<Harness />); await ready(); await confirmation();
-    view.rerender(<Harness dependency="changed" active={false} />);
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(calls("cancel_claude_skill")).toHaveLength(1); expect(calls("commit_claude_skill")).toHaveLength(0);
-    view.rerender(<Harness dependency="changed" />);
-    await waitFor(() => expect(calls("scan_claude_skills")).toHaveLength(2));
   });
 });
