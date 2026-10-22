@@ -110,6 +110,23 @@ export type SessionRemovalItem = {
   message: string | null;
 };
 
+export type SessionRemovalProgress =
+  | { phase: "preparing" }
+  | { phase: "started"; total: number }
+  | { phase: "advanced"; processed: number; total: number; moved: number; skipped: number; failed: number };
+
+export function removalProgressText(progress: SessionRemovalProgress) {
+  if (progress.phase === "preparing") return "正在检查可移除记录…";
+  if (progress.phase === "started") return `正在移入废纸篓 0/${progress.total}`;
+  return `正在移入废纸篓 ${progress.processed}/${progress.total}`;
+}
+
+export function removalProgressBreakdown(progress: SessionRemovalProgress) {
+  return progress.phase === "advanced"
+    ? `已移入 ${progress.moved} · 跳过 ${progress.skipped} · 失败 ${progress.failed}`
+    : null;
+}
+
 export const removalReasonLabels: Record<SessionRemovalReason, string> = {
   InUse: "使用中，留在原处",
   NoLongerRecord: "已不再是可移除的会话记录",

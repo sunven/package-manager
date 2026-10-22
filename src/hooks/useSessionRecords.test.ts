@@ -5,12 +5,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   SessionRecord,
   SessionRecordScan,
+  SessionRemovalProgress,
   SessionRemovalResult,
   SessionSourceScan,
 } from "../sessionRecords";
 import { useSessionRecords } from "./useSessionRecords";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+  Channel: class<T> {
+    onmessage: (message: T) => void;
+    constructor(onmessage: (message: T) => void = () => {}) {
+      this.onmessage = onmessage;
+    }
+  },
+}));
 const mockedInvoke = vi.mocked(invoke);
 beforeEach(() => vi.resetAllMocks());
 afterEach(cleanup);
@@ -79,12 +88,12 @@ describe("Session records adapter", () => {
     {
       target: { kind: "age", source: "codex", label: "Codex", days: 7, count: 1 },
       command: "remove_session_records_older_than",
-      args: { source: "codex", days: 7 },
+      args: { source: "codex", days: 7, onProgress: expect.anything() },
     },
     {
       target: { kind: "selected", source: "codex", label: "Codex", records: [record("record")] },
       command: "remove_session_records",
-      args: { source: "codex", ids: ["record"] },
+      args: { source: "codex", ids: ["record"], onProgress: expect.anything() },
     },
   ];
 
@@ -116,6 +125,36 @@ describe("Session records adapter", () => {
     expect(result.current.scan?.claude.records[0].title).toBe("claude");
     expect(result.current.outcome?.completedIds).toEqual(["record"]);
     expect(mockedInvoke).toHaveBeenCalledWith("scan_session_source", { source: "codex" });
+  });
+
+  it("forwards batch progress from the channel into the operation", async () => {
+    let finish!: (value: SessionRemovalResult) => void;
+    let report!: (progress: SessionRemovalProgress) => void;
+    mockedInvoke.mockImplementation((name, args) => {
+      if (name === "remove_session_records_older_than") {
+        report = (args as { onProgress: { onmessage: typeof report } }).onProgress.onmessage;
+        return new Promise<SessionRemovalResult>((resolve) => { finish = resolve; });
+      }
+      if (name === "scan_session_source") return Promise.resolve({ ...source("after"), records: [] });
+      throw new Error(`Unexpected command ${name}`);
+    });
+    const { result } = renderHook(() => useSessionRecords(false));
+    act(() => result.current.request({ kind: "age", source: "codex", label: "Codex", days: 7, count: 2 }));
+    let completion!: Promise<void>;
+    act(() => { completion = result.current.confirm(result.current.operation!.id); });
+    act(() => report({ phase: "preparing" }));
+    expect(result.current.operation?.progress).toEqual({ phase: "preparing" });
+    act(() => report({ phase: "started", total: 2 }));
+    act(() => report({ phase: "advanced", processed: 1, total: 2, moved: 1, skipped: 0, failed: 0 }));
+    expect(result.current.operation).toMatchObject({
+      phase: "executing",
+      progress: { phase: "advanced", processed: 1, total: 2, moved: 1 },
+    });
+    await act(async () => {
+      finish(removal);
+      await completion;
+    });
+    expect(result.current.operation).toBeNull();
   });
 
   it("maps a failed execution to an aborted result and failed reconciliation", async () => {

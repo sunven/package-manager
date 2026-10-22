@@ -337,10 +337,15 @@ async fn change_codex_plugin(
 async fn remove_session_records_older_than(
     source: session_records::SessionSourceKind,
     days: u64,
+    on_progress: tauri::ipc::Channel<session_records::SessionRemovalProgress>,
 ) -> Result<session_records::SessionRemovalResult, String> {
-    tauri::async_runtime::spawn_blocking(move || session_records::remove_older_default(source, days))
-        .await
-        .map_err(|error| format!("会话记录移除失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        session_records::remove_older_default(source, days, &mut |progress| {
+            let _ = on_progress.send(progress);
+        })
+    })
+    .await
+    .map_err(|error| format!("会话记录移除失败：{error}"))?
 }
 
 #[tauri::command]
@@ -357,10 +362,15 @@ async fn remove_session_record(
 async fn remove_session_records(
     source: session_records::SessionSourceKind,
     ids: Vec<String>,
+    on_progress: tauri::ipc::Channel<session_records::SessionRemovalProgress>,
 ) -> Result<session_records::SessionRemovalResult, String> {
-    tauri::async_runtime::spawn_blocking(move || session_records::remove_selected_default(source, &ids))
-        .await
-        .map_err(|error| format!("会话记录移除失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        session_records::remove_selected_default(source, &ids, &mut |progress| {
+            let _ = on_progress.send(progress);
+        })
+    })
+    .await
+    .map_err(|error| format!("会话记录移除失败：{error}"))?
 }
 
 #[tauri::command]

@@ -12,11 +12,20 @@ import type {
   OpenCodeSessionRecord,
   OpenCodeSessionScan,
   SessionRecordScan,
+  SessionRemovalProgress,
   SessionRemovalResult,
   SessionSourceId,
 } from "../sessionRecords";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+  Channel: class<T> {
+    onmessage: (message: T) => void;
+    constructor(onmessage: (message: T) => void = () => {}) {
+      this.onmessage = onmessage;
+    }
+  },
+}));
 const mockedInvoke = vi.mocked(invoke);
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
@@ -455,6 +464,37 @@ describe("session selection boundaries", () => {
     expect(within(dialog).getByText(/清空废纸篓前可恢复记录/)).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "移入废纸篓" }));
     await waitFor(() => expect(age).toHaveBeenCalledWith("codex", 7));
+  });
+
+  it("shows batch removal progress inside the confirmation dialog", async () => {
+    let finish!: (value: SessionRemovalResult) => void;
+    const onRemoveSelected = vi.fn().mockImplementation(() =>
+      new Promise<SessionRemovalResult>((resolve) => { finish = resolve; }));
+    await setup({ onRemoveSelected });
+    fireEvent.click(screen.getByRole("checkbox", { name: "选择 Alpha project" }));
+    fireEvent.click(screen.getByRole("button", { name: "移入废纸篓 1 条" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "移入废纸篓" }));
+    await waitFor(() => expect(onRemoveSelected).toHaveBeenCalledTimes(1));
+
+    const call = mockedInvoke.mock.calls.find(([name]) => name === "remove_session_records");
+    expect(call).toBeTruthy();
+    const report = (call![1] as { onProgress: { onmessage: (progress: SessionRemovalProgress) => void } })
+      .onProgress.onmessage;
+    const dialog = screen.getByRole("alertdialog");
+
+    act(() => report({ phase: "preparing" }));
+    expect(within(dialog).getByText("正在检查可移除记录…")).toBeTruthy();
+    expect(within(dialog).queryByRole("progressbar")).toBeNull();
+
+    act(() => report({ phase: "started", total: 1 }));
+    act(() => report({ phase: "advanced", processed: 1, total: 1, moved: 1, skipped: 0, failed: 0 }));
+    expect(within(dialog).getByText("正在移入废纸篓 1/1")).toBeTruthy();
+    expect(within(dialog).getByRole("progressbar", { name: "会话记录移除进度" }).getAttribute("aria-valuenow"))
+      .toBe("1");
+    expect(within(dialog).getByText("已移入 1 · 跳过 0 · 失败 0")).toBeTruthy();
+
+    await act(async () => { finish(removalResult()); });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 
   it("reports a rejected operation without inventing a failed record", async () => {

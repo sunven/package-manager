@@ -194,6 +194,20 @@ enum SessionRemovalReason {
     TrashFailed,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", tag = "phase")]
+pub(crate) enum SessionRemovalProgress {
+    Preparing,
+    Started { total: usize },
+    Advanced {
+        processed: usize,
+        total: usize,
+        moved: u32,
+        skipped: u32,
+        failed: u32,
+    },
+}
+
 impl SessionRemovalResult {
     fn aborted(message: String) -> Self {
         Self {
@@ -251,10 +265,12 @@ pub(crate) fn remove_default(
 pub(crate) fn remove_older_default(
     source: SessionSourceKind,
     days: u64,
+    report: &mut dyn FnMut(SessionRemovalProgress),
 ) -> Result<SessionRemovalResult, String> {
     if days != 7 && days != 30 {
         return Err("只支持移除 7 天前或 30 天前的会话记录".to_string());
     }
+    report(SessionRemovalProgress::Preparing);
     let directory = match source {
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
@@ -280,6 +296,7 @@ pub(crate) fn remove_older_default(
         &|path| open_paths.contains(path),
         format,
         &mut move_path_to_trash,
+        report,
     ))
 }
 
@@ -290,6 +307,7 @@ pub(crate) fn remove_older_than(
     is_open: &dyn Fn(&Path) -> bool,
     format: RecordFormat,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
+    report: &mut dyn FnMut(SessionRemovalProgress),
 ) -> SessionRemovalResult {
     let cutoff = now_ms.saturating_sub(i64::try_from(days).unwrap_or(0).saturating_mul(86_400_000));
     let scan = match list_records(directory, is_open, format) {
@@ -298,86 +316,108 @@ pub(crate) fn remove_older_than(
             return SessionRemovalResult::aborted(message);
         }
     };
+    let candidates: Vec<SessionRecord> = scan
+        .records
+        .into_iter()
+        .filter(|record| record.last_activity_ms.is_some_and(|last_ms| last_ms < cutoff))
+        .collect();
+    let total = candidates.len();
+    report(SessionRemovalProgress::Started { total });
     let mut result = SessionRemovalResult::default();
-    for record in scan.records {
-        let Some(listed_ms) = record.last_activity_ms else {
-            continue;
-        };
-        if listed_ms >= cutoff {
-            continue;
-        }
-        if record.in_use {
-            result.record(
-                &record.id,
-                SessionRemovalStatus::Skipped,
-                Some(SessionRemovalReason::InUse),
-                None,
-            );
-            continue;
-        }
-        let path = match session_record_file(directory, &record.id) {
-            Ok(path) => path,
-            Err(message) => {
-                result.record(
-                    &record.id,
-                    SessionRemovalStatus::Skipped,
-                    Some(SessionRemovalReason::NoLongerRecord),
-                    Some(message),
-                );
-                continue;
-            }
-        };
-        if is_open(&path) {
-            result.record(
-                &record.id,
-                SessionRemovalStatus::Skipped,
-                Some(SessionRemovalReason::InUse),
-                None,
-            );
-            continue;
-        }
-        let parsed = match format {
-            RecordFormat::Codex => parse_session_file(&path),
-            RecordFormat::Claude => parse_claude_file(&path),
-        };
-        let Some(latest_ms) = parsed.last_activity_ms else {
-            result.record(
-                &record.id,
-                SessionRemovalStatus::Skipped,
-                Some(SessionRemovalReason::ActivityUnknown),
-                None,
-            );
-            continue;
-        };
-        if latest_ms >= cutoff {
-            result.record(
-                &record.id,
-                SessionRemovalStatus::Skipped,
-                Some(SessionRemovalReason::ActivityChanged),
-                None,
-            );
-            continue;
-        }
-        match trash(&path) {
-            Ok(()) => result.record(&record.id, SessionRemovalStatus::Moved, None, None),
-            Err(message) => result.record(
-                &record.id,
-                SessionRemovalStatus::Failed,
-                Some(SessionRemovalReason::TrashFailed),
-                Some(message),
-            ),
-        }
+    for (index, record) in candidates.into_iter().enumerate() {
+        remove_older_record(directory, &record, cutoff, is_open, format, trash, &mut result);
+        report(SessionRemovalProgress::Advanced {
+            processed: index + 1,
+            total,
+            moved: result.moved,
+            skipped: result.skipped,
+            failed: result.failed,
+        });
     }
     result
+}
+
+fn remove_older_record(
+    directory: &Path,
+    record: &SessionRecord,
+    cutoff: i64,
+    is_open: &dyn Fn(&Path) -> bool,
+    format: RecordFormat,
+    trash: &mut dyn FnMut(&Path) -> Result<(), String>,
+    result: &mut SessionRemovalResult,
+) {
+    if record.in_use {
+        result.record(
+            &record.id,
+            SessionRemovalStatus::Skipped,
+            Some(SessionRemovalReason::InUse),
+            None,
+        );
+        return;
+    }
+    let path = match session_record_file(directory, &record.id) {
+        Ok(path) => path,
+        Err(message) => {
+            result.record(
+                &record.id,
+                SessionRemovalStatus::Skipped,
+                Some(SessionRemovalReason::NoLongerRecord),
+                Some(message),
+            );
+            return;
+        }
+    };
+    if is_open(&path) {
+        result.record(
+            &record.id,
+            SessionRemovalStatus::Skipped,
+            Some(SessionRemovalReason::InUse),
+            None,
+        );
+        return;
+    }
+    let parsed = match format {
+        RecordFormat::Codex => parse_session_file(&path),
+        RecordFormat::Claude => parse_claude_file(&path),
+    };
+    let Some(latest_ms) = parsed.last_activity_ms else {
+        result.record(
+            &record.id,
+            SessionRemovalStatus::Skipped,
+            Some(SessionRemovalReason::ActivityUnknown),
+            None,
+        );
+        return;
+    };
+    if latest_ms >= cutoff {
+        result.record(
+            &record.id,
+            SessionRemovalStatus::Skipped,
+            Some(SessionRemovalReason::ActivityChanged),
+            None,
+        );
+        return;
+    }
+    match trash(&path) {
+        Ok(()) => result.record(&record.id, SessionRemovalStatus::Moved, None, None),
+        Err(message) => result.record(
+            &record.id,
+            SessionRemovalStatus::Failed,
+            Some(SessionRemovalReason::TrashFailed),
+            Some(message),
+        ),
+    }
 }
 
 pub(crate) fn remove_selected_default(
     source: SessionSourceKind,
     ids: &[String],
+    report: &mut dyn FnMut(SessionRemovalProgress),
 ) -> Result<SessionRemovalResult, String> {
     if ids.is_empty() {
         return Ok(SessionRemovalResult::default());
     }
+    report(SessionRemovalProgress::Preparing);
     let directory = match source {
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
@@ -393,6 +433,7 @@ pub(crate) fn remove_selected_default(
         ids,
         &|path| open_paths.contains(path),
         &mut move_path_to_trash,
+        report,
     ))
 }
 
@@ -401,17 +442,30 @@ pub(crate) fn remove_selected(
     ids: &[String],
     is_open: &dyn Fn(&Path) -> bool,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
+    report: &mut dyn FnMut(SessionRemovalProgress),
 ) -> SessionRemovalResult {
     let mut seen = HashSet::new();
-    let mut result = SessionRemovalResult::default();
+    let mut unique = Vec::new();
     for id in ids {
-        if !seen.insert(id.as_str()) {
-            continue;
+        if seen.insert(id.as_str()) {
+            unique.push(id.as_str());
         }
+    }
+    let total = unique.len();
+    report(SessionRemovalProgress::Started { total });
+    let mut result = SessionRemovalResult::default();
+    for (index, id) in unique.into_iter().enumerate() {
         let next = remove_one(directory, id, is_open, trash);
         for item in next.items {
             result.record(&item.id, item.status, item.reason, item.message);
         }
+        report(SessionRemovalProgress::Advanced {
+            processed: index + 1,
+            total,
+            moved: result.moved,
+            skipped: result.skipped,
+            failed: result.failed,
+        });
     }
     result
 }
@@ -1380,10 +1434,15 @@ mod tests {
 
     #[test]
     fn empty_selected_removal_does_not_touch_a_source() {
-        let result = remove_selected_default(SessionSourceKind::Codex, &[]).unwrap();
+        let mut events = Vec::new();
+        let result = remove_selected_default(SessionSourceKind::Codex, &[], &mut |progress| {
+            events.push(progress)
+        })
+        .unwrap();
         assert_eq!(result.moved, 0);
         assert_eq!(result.failed, 0);
         assert!(result.message.is_none());
+        assert!(events.is_empty());
     }
 
     #[test]
@@ -1420,6 +1479,7 @@ mod tests {
                 let name = path.file_name().unwrap();
                 fs::rename(path, trash_dir.join(name)).map_err(|error| error.to_string())
             },
+            &mut |_| {},
         );
 
         assert_eq!(result.moved, 2);
@@ -1459,6 +1519,7 @@ mod tests {
                 let name = path.file_name().unwrap();
                 fs::rename(path, trash_dir.join(name)).map_err(|error| error.to_string())
             },
+            &mut |_| {},
         );
 
         assert_eq!(result.moved, 2);
@@ -1472,13 +1533,113 @@ mod tests {
     }
 
     #[test]
+    fn removal_progress_serializes_with_a_phase_tag() {
+        assert_eq!(
+            serde_json::to_value(SessionRemovalProgress::Preparing).unwrap(),
+            serde_json::json!({ "phase": "preparing" })
+        );
+        assert_eq!(
+            serde_json::to_value(SessionRemovalProgress::Started { total: 3 }).unwrap(),
+            serde_json::json!({ "phase": "started", "total": 3 })
+        );
+        assert_eq!(
+            serde_json::to_value(SessionRemovalProgress::Advanced {
+                processed: 2,
+                total: 3,
+                moved: 1,
+                skipped: 1,
+                failed: 0,
+            })
+            .unwrap(),
+            serde_json::json!({
+                "phase": "advanced",
+                "processed": 2,
+                "total": 3,
+                "moved": 1,
+                "skipped": 1,
+                "failed": 0,
+            })
+        );
+    }
+
+    #[test]
+    fn selected_removal_reports_started_and_each_unique_record() {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions();
+        for name in ["a.jsonl", "b.jsonl"] {
+            fs::write(sessions.join(name), b"{}\n").unwrap();
+        }
+        let mut events = Vec::new();
+        let result = remove_selected(
+            &sessions,
+            &[
+                "a.jsonl".to_string(),
+                "a.jsonl".to_string(),
+                "b.jsonl".to_string(),
+            ],
+            &|_| false,
+            &mut |_| Ok(()),
+            &mut |progress| events.push(progress),
+        );
+
+        assert_eq!(result.moved, 2);
+        assert_eq!(events.first(), Some(&SessionRemovalProgress::Started { total: 2 }));
+        assert_eq!(
+            events.last(),
+            Some(&SessionRemovalProgress::Advanced {
+                processed: 2,
+                total: 2,
+                moved: 2,
+                skipped: 0,
+                failed: 0,
+            })
+        );
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
+    fn age_removal_reports_candidate_progress() {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions();
+        let now = parse_rfc3339_millis("1970-01-15T00:00:00Z").unwrap();
+        write_codex(&sessions.join("old.jsonl"), "1970-01-01T00:00:00Z");
+        write_codex(&sessions.join("busy.jsonl"), "1970-01-01T00:00:00Z");
+        write_codex(&sessions.join("recent.jsonl"), "1970-01-14T00:00:00Z");
+        let mut events = Vec::new();
+        let result = remove_older_than(
+            &sessions,
+            7,
+            now,
+            &|path| path.ends_with("busy.jsonl"),
+            RecordFormat::Codex,
+            &mut |_| Ok(()),
+            &mut |progress| events.push(progress),
+        );
+
+        assert_eq!(result.moved, 1);
+        assert_eq!(result.skipped, 1);
+        assert_eq!(events.first(), Some(&SessionRemovalProgress::Started { total: 2 }));
+        assert_eq!(
+            events.last(),
+            Some(&SessionRemovalProgress::Advanced {
+                processed: 2,
+                total: 2,
+                moved: 1,
+                skipped: 1,
+                failed: 0,
+            })
+        );
+        assert_eq!(events.len(), 3);
+    }
+
+    #[test]
     fn source_failure_is_not_counted_as_a_failed_record() {
         let fixture = Fixture::new();
         let file = fixture.0.join("not-a-directory");
         fs::write(&file, "").unwrap();
         let result = remove_older_than(&file, 7, 0, &|_| false, RecordFormat::Codex, &mut |_| {
             panic!("must not remove")
-        });
+        }, &mut |_| {});
         assert!(result.operation_error.is_some());
         assert_eq!(result.moved + result.failed + result.skipped, 0);
         assert!(result.items.is_empty());
@@ -1528,6 +1689,7 @@ mod tests {
                 let name = path.file_name().unwrap();
                 fs::rename(path, trash_dir.join(name)).map_err(|error| error.to_string())
             },
+            &mut |_| {},
         );
 
         assert!(seen_refreshed);

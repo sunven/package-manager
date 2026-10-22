@@ -7,6 +7,8 @@ import {
   groupSessionRecords,
   recordsOlderThan,
   removableSessionRecords,
+  removalProgressBreakdown,
+  removalProgressText,
   removalResultText,
   selectedRemovalConfirmText,
   selectedRemovalRequest,
@@ -134,6 +136,16 @@ describe("session record grouping", () => {
   it("names the record in the single-removal confirmation and reports both counts", () => {
     expect(singleRemovalConfirmText("修一下登录")).toBe("将「修一下登录」移入废纸篓？");
     expect(removalResultText({ moved: 1, failed: 0, skipped: 0, operationError: null })).toBe("移入废纸篓 1 条，跳过 0 条，失败 0 条");
+  });
+
+  it("describes batch removal progress and its outcome breakdown", () => {
+    expect(removalProgressText({ phase: "preparing" })).toBe("正在检查可移除记录…");
+    expect(removalProgressText({ phase: "started", total: 3 })).toBe("正在移入废纸篓 0/3");
+    expect(removalProgressText({ phase: "advanced", processed: 2, total: 3, moved: 1, skipped: 1, failed: 0 }))
+      .toBe("正在移入废纸篓 2/3");
+    expect(removalProgressBreakdown({ phase: "advanced", processed: 2, total: 3, moved: 1, skipped: 1, failed: 0 }))
+      .toBe("已移入 1 · 跳过 1 · 失败 0");
+    expect(removalProgressBreakdown({ phase: "preparing" })).toBeNull();
   });
 
   it("selects one source's records older than 7 or 30 periods of 24 hours", () => {

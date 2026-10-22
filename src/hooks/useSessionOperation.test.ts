@@ -12,6 +12,7 @@ type Source = "a" | "b";
 type TestScan = { directory: string; rows: string[] };
 type TestTarget = { source: Source; id: string; note?: string };
 type TestResult = { completed: string[] };
+type TestProgress = { processed: number };
 
 const SCOPES = ["a", "b"] as const;
 
@@ -20,15 +21,17 @@ let executeImpl: (target: TestTarget) => Promise<TestResult>;
 let shouldRefreshImpl: (target: TestTarget, result: TestResult | null) => boolean;
 let readCalls: (readonly Source[])[];
 let executeCalls: TestTarget[];
+let progressReporter: ((progress: TestProgress) => void) | null;
 
-const adapter: SessionOperationAdapter<Source, TestScan, TestTarget, TestResult> = {
+const adapter: SessionOperationAdapter<Source, TestScan, TestTarget, TestResult, TestProgress> = {
   read: (scopes, previous) => {
     readCalls.push(scopes);
     return readImpl(scopes, previous);
   },
   scopesFor: (target) => [target.source],
-  execute: (target) => {
+  execute: (target, report) => {
     executeCalls.push(target);
+    progressReporter = report;
     return executeImpl(target);
   },
   completedIds: (_target, result) => result.completed,
@@ -78,6 +81,7 @@ async function ready(result: ReturnType<typeof renderOperation>["result"]) {
 beforeEach(() => {
   readCalls = [];
   executeCalls = [];
+  progressReporter = null;
   readImpl = async (scopes) => readResult(scopes);
   executeImpl = async () => ({ completed: [] });
   shouldRefreshImpl = () => true;
@@ -163,6 +167,26 @@ describe("Session operation lifecycle", () => {
     expect(result.current.operation).toBeNull();
     expect(result.current.outcome?.refresh.status).toBe("ready");
     expect(executeCalls).toHaveLength(1);
+  });
+
+  it("publishes progress while executing and ignores reports after execution ends", async () => {
+    const execution = deferred<TestResult>();
+    executeImpl = () => execution.promise;
+    const { result } = renderOperation();
+    await ready(result);
+    act(() => result.current.begin({ source: "a", id: "one" }));
+    let completion!: Promise<void>;
+    act(() => { completion = result.current.confirm(result.current.operation!.id); });
+    expect(result.current.operation).toMatchObject({ phase: "executing", progress: null });
+    act(() => progressReporter?.({ processed: 1 }));
+    expect(result.current.operation).toMatchObject({ phase: "executing", progress: { processed: 1 } });
+    await act(async () => {
+      execution.resolve({ completed: [] });
+      await completion;
+    });
+    act(() => progressReporter?.({ processed: 2 }));
+    expect(result.current.operation).toBeNull();
+    expect(result.current.outcome?.result).toEqual({ completed: [] });
   });
 
   it("maps an execution error and still refreshes the target source", async () => {

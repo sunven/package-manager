@@ -8,10 +8,10 @@ export type SessionRead<Source extends string, Scan> = {
   globalError: string | null;
 };
 
-export interface SessionOperationAdapter<Source extends string, Scan, Target, Result> {
+export interface SessionOperationAdapter<Source extends string, Scan, Target, Result, Progress = void> {
   read(scopes: readonly Source[], previous: Partial<Record<Source, Scan>>): Promise<SessionRead<Source, Scan>>;
   scopesFor(target: Target): readonly Source[];
-  execute(target: Target): Promise<Result>;
+  execute(target: Target, report: (progress: Progress) => void): Promise<Result>;
   completedIds(target: Target, result: Result): readonly string[];
   removeCompleted(
     scans: Partial<Record<Source, Scan>>,
@@ -23,10 +23,11 @@ export interface SessionOperationAdapter<Source extends string, Scan, Target, Re
 
 export type SessionOperationPhase = "confirming" | "executing" | "refreshing";
 
-export type SessionOperationState<Target> = {
+export type SessionOperationState<Target, Progress = void> = {
   id: number;
   phase: SessionOperationPhase;
   target: Target;
+  progress: Progress | null;
 };
 
 export type SessionOperationOutcome<Target, Result> = {
@@ -42,11 +43,11 @@ export interface SessionOperationOptions<Source extends string> {
   scopes: readonly Source[];
 }
 
-export interface SessionOperation<Source extends string, Scan, Target, Result> {
+export interface SessionOperation<Source extends string, Scan, Target, Result, Progress = void> {
   scans: Partial<Record<Source, Scan>>;
   scanning: Partial<Record<Source, boolean>>;
   error: string | null;
-  operation: SessionOperationState<Target> | null;
+  operation: SessionOperationState<Target, Progress> | null;
   outcome: SessionOperationOutcome<Target, Result> | null;
   refresh(scopes: readonly Source[]): Promise<void>;
   begin(target: Target): void;
@@ -61,17 +62,17 @@ function scanningPatch<Source extends string>(
   return Object.fromEntries(scopes.map((scope) => [scope, value])) as Partial<Record<Source, boolean>>;
 }
 
-export function useSessionOperation<Source extends string, Scan, Target, Result>(
-  adapter: SessionOperationAdapter<Source, Scan, Target, Result>,
+export function useSessionOperation<Source extends string, Scan, Target, Result, Progress = void>(
+  adapter: SessionOperationAdapter<Source, Scan, Target, Result, Progress>,
   { active, scopes: initialScopes }: SessionOperationOptions<Source>,
-): SessionOperation<Source, Scan, Target, Result> {
+): SessionOperation<Source, Scan, Target, Result, Progress> {
   const [scans, setScans] = useState<Partial<Record<Source, Scan>>>({});
   const [scanning, setScanning] = useState<Partial<Record<Source, boolean>>>({});
   const [error, setError] = useState<string | null>(null);
-  const [operation, setOperation] = useState<SessionOperationState<Target> | null>(null);
+  const [operation, setOperation] = useState<SessionOperationState<Target, Progress> | null>(null);
   const [outcome, setOutcome] = useState<SessionOperationOutcome<Target, Result> | null>(null);
   const scansRef = useRef<Partial<Record<Source, Scan>>>({});
-  const pending = useRef<SessionOperationState<Target> | null>(null);
+  const pending = useRef<SessionOperationState<Target, Progress> | null>(null);
   const tickets = useRef<Partial<Record<Source, number>>>({});
   const epoch = useRef(0);
   const sequence = useRef(0);
@@ -137,10 +138,11 @@ export function useSessionOperation<Source extends string, Scan, Target, Result>
 
   function begin(target: Target) {
     if (pending.current) return;
-    const next: SessionOperationState<Target> = {
+    const next: SessionOperationState<Target, Progress> = {
       id: ++sequence.current,
       phase: "confirming",
       target: structuredClone(target),
+      progress: null,
     };
     pending.current = next;
     setOperation(next);
@@ -157,8 +159,15 @@ export function useSessionOperation<Source extends string, Scan, Target, Result>
     const approval = pending.current;
     if (!approval || approval.id !== id || approval.phase !== "confirming") return;
     const target = approval.target;
-    pending.current = { ...approval, phase: "executing" };
+    pending.current = { ...approval, phase: "executing", progress: null };
     setOperation(pending.current);
+    const report = (progress: Progress) => {
+      const current = pending.current;
+      if (!current || current.phase !== "executing") return;
+      const next = { ...current, progress };
+      pending.current = next;
+      setOperation(next);
+    };
 
     const scopes = adapter.scopesFor(target);
     const ticket = ++epoch.current;
@@ -168,7 +177,7 @@ export function useSessionOperation<Source extends string, Scan, Target, Result>
     let result: Result | null = null;
     let failure: string | null = null;
     try {
-      result = await adapter.execute(target);
+      result = await adapter.execute(target, report);
     } catch (caught) {
       failure = errorToString(caught);
     }

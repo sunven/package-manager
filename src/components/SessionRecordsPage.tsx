@@ -24,6 +24,8 @@ import {
   bulkRemovalRequest,
   formatSessionActivity,
   removableSessionRecords,
+  removalProgressBreakdown,
+  removalProgressText,
   removalResultText,
   removalReasonLabels,
   filterSessionRecords,
@@ -81,6 +83,15 @@ export function SessionRecordsPage({
   } = openCode;
   const pending = records.operation?.phase !== "refreshing" ? records.operation?.target ?? null : null;
   const removing = records.operation !== null && records.operation.phase !== "confirming";
+  const removalProgress = records.operation?.phase === "executing" ? records.operation.progress : null;
+  const showRemovalProgress = removalProgress !== null && (removalProgress.phase === "preparing" || removalProgress.total > 0);
+  const removalProgressValue = removalProgress && removalProgress.phase !== "preparing"
+    ? removalProgress.phase === "started" ? 0 : removalProgress.processed
+    : 0;
+  const removalProgressPercent = removalProgress && removalProgress.phase !== "preparing" && removalProgress.total > 0
+    ? (removalProgressValue / removalProgress.total) * 100
+    : 0;
+  const removalProgressDetail = removalProgress ? removalProgressBreakdown(removalProgress) : null;
   const result = records.outcome?.result;
   const resultSource = records.outcome?.source === "codex" ? "Codex" : "Claude";
   const removalSource = records.outcome?.source;
@@ -177,6 +188,29 @@ export function SessionRecordsPage({
                 ))}
               </ul>
             </>
+          ) : null}
+          {showRemovalProgress && removalProgress ? (
+            <div className="shrink-0 space-y-2">
+              <p className="text-sm text-foreground/80">{removalProgressText(removalProgress)}</p>
+              {removalProgress.phase !== "preparing" ? (
+                <div
+                  aria-label="会话记录移除进度"
+                  aria-valuemax={removalProgress.total}
+                  aria-valuemin={0}
+                  aria-valuenow={removalProgressValue}
+                  className="h-2 overflow-hidden rounded-full bg-muted"
+                  role="progressbar"
+                >
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-150"
+                    style={{ width: `${removalProgressPercent}%` }}
+                  />
+                </div>
+              ) : null}
+              {removalProgressDetail ? (
+                <p className="text-xs text-foreground/70">{removalProgressDetail}</p>
+              ) : null}
+            </div>
           ) : null}
           <p className="shrink-0 text-sm text-foreground/80">清空废纸篓前可恢复记录；移入废纸篓不代表磁盘空间立即释放。</p>
           <AlertDialogFooter className="shrink-0">

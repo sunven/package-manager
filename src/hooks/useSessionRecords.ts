@@ -1,7 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   SessionRecord,
   SessionRecordScan,
+  SessionRemovalProgress,
   SessionRemovalResult,
   SessionSourceId,
   SessionSourceScan,
@@ -34,7 +35,7 @@ function abortedResult(message: string): SessionRemovalResult {
   return { moved: 0, failed: 0, skipped: 0, items: [], operationError: message, message: null };
 }
 
-const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, PendingRemoval, SessionRemovalResult> = {
+const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, PendingRemoval, SessionRemovalResult, SessionRemovalProgress> = {
   read: async (scopes, previous): Promise<SessionRead<SessionSourceId, SessionSourceScan>> => {
     if (scopes.length === 1) {
       const source = scopes[0];
@@ -80,16 +81,22 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
     }
   },
   scopesFor: (target) => [target.source],
-  execute: (target) => {
+  execute: (target, report) => {
     if (target.kind === "one") {
       return invoke<SessionRemovalResult>("remove_session_record", { source: target.source, id: target.id });
     }
+    const onProgress = new Channel<SessionRemovalProgress>(report);
     if (target.kind === "age") {
-      return invoke<SessionRemovalResult>("remove_session_records_older_than", { source: target.source, days: target.days });
+      return invoke<SessionRemovalResult>("remove_session_records_older_than", {
+        source: target.source,
+        days: target.days,
+        onProgress,
+      });
     }
     return invoke<SessionRemovalResult>("remove_session_records", {
       source: target.source,
       ids: target.records.map((record) => record.id),
+      onProgress,
     });
   },
   completedIds: (_target, result) => result.items
