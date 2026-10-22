@@ -1,7 +1,7 @@
 import { Input } from "../../components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { ArrowClockwise as RefreshCw, ArrowSquareOut, Trash } from "@phosphor-icons/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,6 +31,7 @@ import {
   filterOpenCodeSessions,
   groupOpenCodeSessions,
   type OpenCodeSessionFilter,
+  type OpenCodeSessionRecord,
   type OpenCodeSessionScan,
   type SessionUsageFilter,
   selectedRemovalConfirmText,
@@ -46,6 +47,7 @@ import {
 } from "../sessionRecords";
 import type { useSessionRecords } from "../hooks/useSessionRecords";
 import type { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
+import { useSessionSelection } from "../hooks/useSessionSelection";
 import { EmptyState, Panel, StatCard } from "./ui";
 
 const sources = [
@@ -53,7 +55,8 @@ const sources = [
   { key: "claude" as const, label: "Claude", empty: "没有 Claude 会话记录", fallback: "~/.claude/projects" },
 ];
 
-const emptySelection: Record<SessionSourceId, string[]> = { codex: [], claude: [] };
+const selectableSession = (record: SessionRecord) => !record.inUse;
+const selectableOpenCode = () => true;
 
 export function SessionRecordsPage({
   records,
@@ -80,6 +83,7 @@ export function SessionRecordsPage({
   const removing = records.operation !== null && records.operation.phase !== "confirming";
   const result = records.outcome?.result;
   const resultSource = records.outcome?.source === "codex" ? "Codex" : "Claude";
+  const removalSource = records.outcome?.source;
   const pendingOpenCodeDelete = openCode.operation?.phase !== "refreshing" ? openCode.operation?.target ?? null : null;
   const deletingOpenCodeId = openCode.operation && openCode.operation.phase !== "confirming"
     ? openCode.operation.target.roots[0]?.id ?? null
@@ -91,27 +95,22 @@ export function SessionRecordsPage({
   const [activeSource, setActiveSource] = useState<SessionSourceId | "opencode">(initialSource);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const selectionTrigger = useRef<HTMLButtonElement | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Record<SessionSourceId, string[]>>(emptySelection);
-  const [openCodeSelectedIds, setOpenCodeSelectedIds] = useState<string[]>([]);
-  const replaceOpenCodeSelection = useCallback((ids: string[]) => setOpenCodeSelectedIds(ids), []);
-  const completedRemovalIds = records.outcome?.completedIds;
-  const completedRemovalSource = records.outcome?.source;
-  const completedDeletionIds = openCode.outcome?.completedIds;
-  useEffect(() => {
-    if (!completedRemovalIds || !completedRemovalSource) return;
-    setSelectedIds((current) => ({ ...current, [completedRemovalSource]: current[completedRemovalSource].filter((id) => !completedRemovalIds.includes(id)) }));
-  }, [completedRemovalIds, completedRemovalSource]);
-  useEffect(() => {
-    if (completedDeletionIds) setOpenCodeSelectedIds((current) => current.filter((id) => !completedDeletionIds.includes(id)));
-  }, [completedDeletionIds]);
-
-  useEffect(() => {
-    if (!scan) return;
-    setSelectedIds((current) => ({
-      codex: selectedRemovalRequest(scan.codex.records, current.codex)?.ids ?? [],
-      claude: selectedRemovalRequest(scan.claude.records, current.claude)?.ids ?? [],
-    }));
-  }, [scan]);
+  const completedSessionIds = records.outcome?.completedIds ?? null;
+  const codexSelection = useSessionSelection({
+    records: scan?.codex.records ?? null,
+    isSelectable: selectableSession,
+    completedIds: records.outcome?.source === "codex" ? completedSessionIds : null,
+  });
+  const claudeSelection = useSessionSelection({
+    records: scan?.claude.records ?? null,
+    isSelectable: selectableSession,
+    completedIds: records.outcome?.source === "claude" ? completedSessionIds : null,
+  });
+  const openCodeSelection = useSessionSelection({
+    records: openCode.scan?.records ?? null,
+    isSelectable: selectableOpenCode,
+    completedIds: openCode.outcome?.completedIds ?? null,
+  });
 
   return (
     <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || openCodeScanning}>
@@ -293,7 +292,7 @@ export function SessionRecordsPage({
           <AlertDescription className="flex flex-col gap-2">
             {result.operationError ? <p>{result.operationError}。请刷新会话记录，核对后再试。</p> : <p>以上为实际移除结果，可能与确认时的条数不同。清空废纸篓前可恢复记录，磁盘空间不会立即释放。</p>}
             {result.message ? <p>{result.message}</p> : null}
-            {records.outcome ? <RefreshNotice value={records.outcome.refresh} onRetry={() => void records.refresh(completedRemovalSource)} /> : null}
+            {records.outcome ? <RefreshNotice value={records.outcome.refresh} onRetry={() => void records.refresh(removalSource)} /> : null}
             {result.items.length ? <details><summary className="cursor-pointer">查看逐条结果（{result.items.length}）</summary><ul className="mt-2 flex max-h-64 flex-col gap-2 overflow-auto">
               {result.items.map((item) => <li key={item.id} className="break-all"><strong>{item.id}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
             </ul></details> : null}
@@ -322,6 +321,7 @@ export function SessionRecordsPage({
         {sources.map((source) => {
           const data = scan?.[source.key];
           const view = sections?.[source.key];
+          const selection = source.key === "codex" ? codexSelection : claudeSelection;
           return (
             <TabsContent className="min-w-0" key={source.key} value={source.key}>
               <SourceSection
@@ -333,15 +333,13 @@ export function SessionRecordsPage({
                 filter={filters[source.key]}
                 onFilterChange={(patch) => {
                   setFilters((current) => ({ ...current, [source.key]: { ...current[source.key], ...patch } }));
-                  setSelectedIds((current) => ({ ...current, [source.key]: [] }));
+                  selection.clear();
                 }}
                 fallbackPath={source.fallback}
                 homeDirectory={homeDirectory}
                 label={source.label}
                 nowMs={nowMs ?? Date.now()}
-                onClearSelection={() => {
-                  setSelectedIds((current) => ({ ...current, [source.key]: [] }));
-                }}
+                onClearSelection={() => selection.clear()}
                 onRequestAgeRemoval={(days, count) => {
                   records.request({ kind: "age", source: source.key, label: source.label, days, count });
                 }}
@@ -352,37 +350,15 @@ export function SessionRecordsPage({
                   selectionTrigger.current = trigger;
                   records.request({ kind: "selected", source: source.key, label: source.label, records: selectedRecords });
                 }}
-                onSelectAll={() => {
-                  setSelectedIds((current) => ({
-                    ...current,
-                    [source.key]: removableSessionRecords(filterSessionRecords(data?.records ?? [], filters[source.key])).map((record) => record.id),
-                  }));
-                }}
-                onSetGroupSelected={(records, selected) => {
-                  const groupIds = removableSessionRecords(records).map((record) => record.id);
-                  setSelectedIds((current) => {
-                    const next = new Set(current[source.key]);
-                    for (const id of groupIds) {
-                      if (selected) next.add(id);
-                      else next.delete(id);
-                    }
-                    return { ...current, [source.key]: [...next] };
-                  });
-                }}
-                onSetRecordSelected={(id, selected) => {
-                  setSelectedIds((current) => {
-                    const next = new Set(current[source.key]);
-                    if (selected) next.add(id);
-                    else next.delete(id);
-                    return { ...current, [source.key]: [...next] };
-                  });
-                }}
+                onSelectAll={() => selection.selectAll(filterSessionRecords(data?.records ?? [], filters[source.key]))}
+                onSetGroupSelected={(records, selected) => selection.selectGroup(records, selected)}
+                onSetRecordSelected={(id, selected) => selection.toggle(id, selected)}
                 onRefresh={() => onRefresh(source.key)}
                 onSortChange={(next) => setSorts((current) => ({ ...current, [source.key]: next }))}
                 onToggle={(groupKey) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: !current[`${source.key}:${groupKey}`] }))}
                 removing={removing}
                 scanning={scanningSources[source.key]}
-                selectedIds={selectedIds[source.key]}
+                selectedIds={selection.selectedIds}
                 sort={sorts[source.key]}
                 source={data ?? null}
                 sourceKey={source.key}
@@ -401,17 +377,11 @@ export function SessionRecordsPage({
             onOpen={openCode.openSession}
             onRequestDelete={(id) => { void openCode.request("one", [id]); }}
             onRequestAgeDelete={(days) => { void openCode.requestAge(days); }}
-            onDeleteSelected={() => { void openCode.request("selected", openCodeSelectedIds); }}
-            onClearSelection={() => setOpenCodeSelectedIds([])}
-            onSelectAll={(ids) => setOpenCodeSelectedIds(ids)}
-            onSetSelected={(id, selected) => setOpenCodeSelectedIds((current) => {
-              const next = new Set(current);
-              if (selected) next.add(id);
-              else next.delete(id);
-              return [...next];
-            })}
-            onReplaceSelection={replaceOpenCodeSelection}
-            selectedIds={openCodeSelectedIds}
+            onDeleteSelected={() => { void openCode.request("selected", openCodeSelection.selectedIds); }}
+            onClearSelection={() => openCodeSelection.clear()}
+            onSelectAll={(records) => openCodeSelection.selectAll(records)}
+            onSetSelected={(id, selected) => openCodeSelection.toggle(id, selected)}
+            selectedIds={openCodeSelection.selectedIds}
             onRefresh={openCode.refresh}
             scan={openCodeScan}
             scanning={openCodeScanning}
@@ -445,7 +415,6 @@ function OpenCodeSection({
   onClearSelection,
   onSelectAll,
   onSetSelected,
-  onReplaceSelection,
   selectedIds,
   deletingId,
   homeDirectory,
@@ -461,9 +430,8 @@ function OpenCodeSection({
   onRequestAgeDelete: (days: 7 | 30) => void;
   onDeleteSelected: () => void;
   onClearSelection: () => void;
-  onSelectAll: (ids: string[]) => void;
+  onSelectAll: (records: OpenCodeSessionRecord[]) => void;
   onSetSelected: (id: string, selected: boolean) => void;
-  onReplaceSelection: (ids: string[]) => void;
   selectedIds: readonly string[];
   deletingId: string | null;
   homeDirectory: string | null;
@@ -472,17 +440,10 @@ function OpenCodeSection({
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const allRecords = useMemo(() => filterOpenCodeSessions(scan?.records ?? [], { query: "", archived: "all" }), [scan]);
   const records = useMemo(() => filterOpenCodeSessions(scan?.records ?? [], filter), [scan, filter]);
   const groups = useMemo(() => groupOpenCodeSessions(records), [records]);
   const selectedSet = new Set(selectedIds);
   const selectedRecords = records.filter((record) => selectedSet.has(record.id));
-  useEffect(() => {
-    const available = new Set(allRecords.map((record) => record.id));
-    if (selectedIds.some((id) => !available.has(id))) {
-      onReplaceSelection(selectedIds.filter((id) => available.has(id)));
-    }
-  }, [allRecords, onReplaceSelection, selectedIds]);
 
   return (
     <Panel className="overflow-hidden">
@@ -521,7 +482,7 @@ function OpenCodeSection({
       {scan?.status === "ready" && records.length === 0 ? <p className="p-6 text-sm text-muted-foreground">{scan.records.length ? "没有匹配的会话，请调整搜索词或归档筛选" : "没有 OpenCode 会话记录"}</p> : null}
       {records.length ? (
         <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
-          <Button disabled={deletingId !== null || scanning || preparing || scan?.status !== "ready" || selectedRecords.length === records.length} onClick={() => onSelectAll([...new Set([...selectedIds, ...records.map((record) => record.id)])])} size="sm" type="button" variant="outline">
+          <Button disabled={deletingId !== null || scanning || preparing || scan?.status !== "ready" || selectedRecords.length === records.length} onClick={() => onSelectAll(records)} size="sm" type="button" variant="outline">
             全选当前结果
           </Button>
           <Button disabled={deletingId !== null || scanning || preparing || selectedRecords.length === 0} onClick={onClearSelection} size="sm" type="button" variant="outline">
