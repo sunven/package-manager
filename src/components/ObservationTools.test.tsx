@@ -54,7 +54,7 @@ describe("observation panels", () => {
     const onCopy = vi.fn(), onOpenManager = vi.fn();
     const current = state();
     current.environment = { capturedAt: 1, pathEntries: [], commands: [{ program: "node", managers: ["Npm"], selectedPath: "/a/node", status: "aliases", candidates: [{ pathIndex: 0, path: "/a/node", target: "/real/node", status: "executable", message: null }, { pathIndex: 1, path: "/b/node", target: null, status: "unreadable", message: "permission denied" }] }] };
-    render(<EnvironmentPanel state={current} onCopy={onCopy} onOpenManager={onOpenManager} />);
+    render(<EnvironmentPanel state={current} enabledManagers={["Npm"]} managerSnapshots={{}} scanStates={{}} ledgerRecords={{}} onCopy={onCopy} onOpenManager={onOpenManager} />);
     expect(screen.getByText("多个路径指向同一文件")).toBeTruthy();
     await userEvent.click(screen.getByText("node"));
     expect(screen.getByText("permission denied")).toBeTruthy();

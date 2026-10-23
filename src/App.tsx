@@ -432,7 +432,15 @@ export function App() {
         ) : activeView === "health" ? (
           <Tabs value={overviewTab} onValueChange={setOverviewTab}>
             <TabsList aria-label="总览视图"><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="environment">环境诊断</TabsTrigger><TabsTrigger value="coverage">观察覆盖度</TabsTrigger></TabsList>
-            <TabsContent value="environment"><EnvironmentPanel state={observations} onCopy={(value) => void actions.copyPath(value)} onOpenManager={(manager) => { actions.selectManager(manager); setActiveView("managers"); }} /></TabsContent>
+            <TabsContent value="environment"><EnvironmentPanel
+              state={observations}
+              enabledManagers={state.enabledManagers}
+              managerSnapshots={state.managerSnapshots}
+              scanStates={state.scanStates}
+              ledgerRecords={observationLedger.records}
+              onCopy={(value) => void actions.copyPath(value)}
+              onOpenManager={(manager) => { actions.selectManager(manager); setActiveView("managers"); }}
+            /></TabsContent>
             <TabsContent value="overview">
           <OverviewDashboard
             health={developmentHealth}

@@ -11,6 +11,7 @@ mod codex_plugin_details;
 mod codex_plugins;
 mod codex_skills;
 mod command;
+mod command_location_association;
 mod disk_usage;
 mod environment_inspection;
 mod maintenance_history;
@@ -1164,6 +1165,15 @@ async fn inspect_environment(managers: Vec<ManagerId>) -> Result<environment_ins
 }
 
 #[tauri::command]
+async fn associate_command_locations(
+    request: command_location_association::Request,
+) -> Result<command_location_association::Association, String> {
+    tauri::async_runtime::spawn_blocking(move || command_location_association::associate(request))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn load_observation_ledger(state: tauri::State<'_, observation_ledger::ObservationLedgerState>) -> Result<observation_ledger::LedgerLoad, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || state.load()).await.map_err(|e| e.to_string())
@@ -1367,6 +1377,7 @@ pub fn run() {
             open_project_cleanup_root,
             open_project_data_path,
             inspect_environment,
+            associate_command_locations,
             load_observation_ledger,
             record_observation,
             load_observation_scopes,
