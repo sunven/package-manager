@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SkillIntent, SkillOutcome, SkillPreview, SkillScan } from "../claudeSkills";
+import { claudeObservationFacts, recordObservationFacts } from "../observationFacts";
+import { recordObservation } from "../observationLedger";
 import { useSkillInventory, type SkillInventoryAdapter } from "./useSkillInventory";
 
 const adapter: SkillInventoryAdapter<SkillScan, SkillIntent, SkillPreview, SkillOutcome> = {
@@ -14,7 +16,23 @@ const adapter: SkillInventoryAdapter<SkillScan, SkillIntent, SkillPreview, Skill
 };
 
 export function useClaudeSkills(active: boolean, dependency: string, externalBusy = false, onMutation?: () => void) {
-  return useSkillInventory(adapter, { active, dependency, externalBusy, onMutation });
+  return useSkillInventory(adapter, {
+    active,
+    dependency,
+    externalBusy,
+    onMutation,
+    observe: (scan, error, at) => recordObservationFacts(
+      "claude:skills",
+      claudeObservationFacts("skills", { scan, current: !error && scan !== null, scanning: false, error }),
+      at,
+    ),
+    observeInvalidation: (at, reason) => recordObservation({
+      kind: "invalidate",
+      itemId: "claude:skills",
+      at,
+      reason: reason ?? "来源已失效",
+    }),
+  });
 }
 
 export type ClaudeSkills = ReturnType<typeof useClaudeSkills>;

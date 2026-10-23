@@ -2,6 +2,7 @@ import type { ManagerId } from "./types";
 
 export interface EnvironmentInspection {
   capturedAt: number;
+  scopeKey?: string;
   pathEntries: { original: string; path: string; issue: string | null }[];
   commands: {
     program: string;

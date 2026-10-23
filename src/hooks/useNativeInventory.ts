@@ -43,12 +43,20 @@ export function useNativeInventory<Scan extends NativeInventoryScan, Result = un
   visible,
   autoRead,
   adapter,
+  observe,
+  observeInvalidation,
 }: {
   command: string;
   visible: boolean;
   autoRead: boolean;
   adapter: NativeInventoryAdapter<Scan>;
+  observe?: (scan: Scan | null, error: string | null, at: number) => void;
+  observeInvalidation?: (at: number, reason: string | null) => void;
 }) {
+  const observeRef = useRef(observe);
+  observeRef.current = observe;
+  const observeInvalidationRef = useRef(observeInvalidation);
+  observeInvalidationRef.current = observeInvalidation;
   const [state, setState] = useState<InventoryState<Scan, Result>>({
     scan: null,
     current: false,
@@ -66,6 +74,7 @@ export function useNativeInventory<Scan extends NativeInventoryScan, Result = un
   isVisible.current = visible;
 
   const invalidate = useCallback((reason?: string) => {
+    if (native.current) observeInvalidationRef.current?.(Date.now(), reason ?? null);
     epoch.current += 1;
     const nextRevision = ++revision.current;
     native.current = native.current ? adapter.invalidate(native.current, reason) : null;
@@ -113,6 +122,7 @@ export function useNativeInventory<Scan extends NativeInventoryScan, Result = un
           error,
           revision: readRevision,
         }));
+        observeRef.current?.(next, error, Date.now());
         scanned = next;
         break;
       } while (isVisible.current);

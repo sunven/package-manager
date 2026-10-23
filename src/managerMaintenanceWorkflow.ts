@@ -3,6 +3,8 @@ import { managerOrder } from "./constants";
 import { cleanupCopyFor, cleanupPreviewDetails, cleanupReady, cleanupReclaimable, type CleanupSpaceInfo } from "./cleanupCopy";
 import { createManagerScanQueue } from "./managerScanQueue";
 import { scanProblems, type ManagerScanState } from "./managerScanning";
+import { managerObservationFacts, recordObservationFacts } from "./observationFacts";
+import { managerObservationId } from "./observationItems";
 import { applyPipOutdatedPreview, cacheCleanupFailureMessage, cacheCleanupPartialMessage, cacheCleanupStepSummary, type MaintenanceRequest } from "./state";
 import type { CacheCleanupRun, DiskUsage, HomebrewCleanupPreview, MaintenanceRunPreview, ManagerId, ManagerScanSnapshot, ManagerSnapshot, PipOutdatedPreview } from "./types";
 import { errorToString, managerLabel, sizeScanError, trimTail } from "./utils/format";
@@ -97,6 +99,20 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
     publish({ scanStates: { ...view.scanStates, [manager]: { phase: "idle", scannedAt: null, error: null, ...view.scanStates[manager], ...patch } } });
   }
 
+  function recordManagerObservation(manager: ManagerId, snapshot: ManagerSnapshot | undefined, state: ManagerScanState) {
+    recordObservationFacts(managerObservationId(manager), managerObservationFacts(snapshot, state));
+  }
+
+  function supplementFailed(snapshot: ManagerSnapshot, kind: "paths" | "homebrew" | "pip") {
+    if (kind === "paths") {
+      return snapshot.paths.some((path) =>
+        ["Error", "PermissionDenied"].includes(path.size.status) || path.size.skipped > 0
+      );
+    }
+    if (kind === "homebrew") return snapshot.homebrew?.cleanup.status === "Failed";
+    return snapshot.pip?.outdatedStatus === "Failed";
+  }
+
   function updateManager(manager: ManagerId, update: (previous: ManagerSnapshot) => ManagerSnapshot) {
     const previous = view.managerSnapshots[manager];
     if (previous) installSnapshot(manager, update(previous));
@@ -183,31 +199,57 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
   function readFull(manager: ManagerId) {
     return schedule(manager, async () => {
       delete attemptArchives[manager];
-      setScanState(manager, { phase: "reading", error: null });
+      setScanState(manager, { phase: "reading", error: null, lastReadFailed: false });
       let draft: SnapshotDraft;
       try {
         const result = await effects.scan(manager);
         publish({ scanDurationMsByManager: { ...view.scanDurationMsByManager, [manager]: result.scanDurationMs } });
         setScanState(manager, { diagnostics: result.diagnostics, failures: result.manager.failures });
-        if (result.manager.status === "Failed" && view.managerSnapshots[manager]) {
+        const failed = result.manager.status === "Failed";
+        if (failed && view.managerSnapshots[manager]) {
           const error = scanProblems(result.manager);
-          setScanState(manager, { error });
+          setScanState(manager, { error, lastReadFailed: true });
+          recordManagerObservation(manager, view.managerSnapshots[manager], {
+            phase: "reading",
+            scannedAt: view.scanStates[manager]?.scannedAt ?? null,
+            lastReadFailed: true,
+            error,
+          });
           draft = snapshotDraft(result.manager, error);
         } else {
           installSnapshot(manager, result.manager);
-          setScanState(manager, { phase: "enriching", scannedAt: Date.now() });
+          setScanState(manager, { phase: "enriching", lastReadFailed: failed });
           const supplements = [hydratePaths(manager)];
           if (manager === "Homebrew" && result.manager.homebrew?.cleanup.status === "Pending") supplements.push(hydrateHomebrew());
           if (manager === "Pip" && result.manager.pip?.outdatedStatus === "Pending") supplements.push(hydratePip());
           await Promise.all(supplements);
           const current = view.managerSnapshots[manager]!;
           const error = scanProblems(current);
-          setScanState(manager, { error, failures: current.failures });
+          const success = ["Ready", "Partial", "Unsupported"].includes(current.status);
+          const scannedAt = success ? Date.now() : view.scanStates[manager]?.scannedAt ?? null;
+          setScanState(manager, {
+            error,
+            failures: current.failures,
+            lastReadFailed: failed,
+            ...(success ? { scannedAt } : {}),
+          });
+          recordManagerObservation(manager, current, {
+            phase: "enriching",
+            scannedAt,
+            lastReadFailed: failed,
+            error,
+          });
           draft = snapshotDraft(current, error);
         }
       } catch (error) {
         const message = errorToString(error);
-        setScanState(manager, { error: message });
+        setScanState(manager, { error: message, lastReadFailed: true });
+        recordManagerObservation(manager, view.managerSnapshots[manager], {
+          phase: "reading",
+          scannedAt: view.scanStates[manager]?.scannedAt ?? null,
+          lastReadFailed: true,
+          error: message,
+        });
         draft = failedSnapshotDraft(manager, message);
       }
       await archive(draft);
@@ -235,7 +277,20 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
       if (kind === "homebrew" && manager === "Homebrew") await hydrateHomebrew();
       if (kind === "pip" && manager === "Pip") await hydratePip();
       const current = view.managerSnapshots[manager]!;
-      setScanState(manager, { error: scanProblems(current), failures: current.failures });
+      const error = scanProblems(current);
+      const unavailable = current.status === "Missing" || current.status === "Failed";
+      if (!unavailable && !supplementFailed(current, kind)) {
+        const scannedAt = Date.now();
+        setScanState(manager, { error, failures: current.failures, scannedAt, lastReadFailed: false });
+        recordManagerObservation(manager, current, {
+          phase: "enriching",
+          scannedAt,
+          lastReadFailed: false,
+          error,
+        });
+      } else {
+        setScanState(manager, { error, failures: current.failures });
+      }
     });
   }
 

@@ -1,5 +1,6 @@
 use crate::types::ManagerId;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,6 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Inspection {
     captured_at: u64,
+    scope_key: String,
     path_entries: Vec<PathEntry>,
     commands: Vec<Resolution>,
 }
@@ -68,18 +70,41 @@ pub(crate) fn inspect(managers: &[ManagerId]) -> Result<Inspection, String> {
         }
     }
     let mut result = inspect_paths(&paths, &cwd, programs.keys().copied());
+    result.scope_key = scope_key(managers);
     for command in &mut result.commands {
         command.managers = programs[command.program.as_str()].clone();
     }
     Ok(result)
 }
 
-fn inspect_paths<'a>(
-    paths: &[PathBuf],
-    cwd: &Path,
-    programs: impl Iterator<Item = &'a str>,
-) -> Inspection {
-    let absolute: Vec<PathBuf> = paths
+pub(crate) fn scope_key(managers: &[ManagerId]) -> String {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    let paths: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect())
+        .unwrap_or_default();
+    scope_key_from(&absolute_paths(&paths, &cwd), managers)
+}
+
+fn scope_key_from(paths: &[PathBuf], managers: &[ManagerId]) -> String {
+    let mut hasher = Sha256::new();
+    for path in paths {
+        hasher.update(path.to_string_lossy().as_bytes());
+        hasher.update([0]);
+    }
+    let mut managers: Vec<String> = managers
+        .iter()
+        .map(|manager| format!("{manager:?}"))
+        .collect();
+    managers.sort();
+    for manager in managers {
+        hasher.update(manager.as_bytes());
+        hasher.update([0]);
+    }
+    format!("environment:{:x}", hasher.finalize())
+}
+
+fn absolute_paths(paths: &[PathBuf], cwd: &Path) -> Vec<PathBuf> {
+    paths
         .iter()
         .map(|p| {
             if p.as_os_str().is_empty() {
@@ -90,7 +115,15 @@ fn inspect_paths<'a>(
                 cwd.join(p)
             }
         })
-        .collect();
+        .collect()
+}
+
+fn inspect_paths<'a>(
+    paths: &[PathBuf],
+    cwd: &Path,
+    programs: impl Iterator<Item = &'a str>,
+) -> Inspection {
+    let absolute = absolute_paths(paths, cwd);
     let path_entries = paths
         .iter()
         .zip(&absolute)
@@ -112,6 +145,7 @@ fn inspect_paths<'a>(
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64,
+        scope_key: String::new(),
         path_entries,
         commands,
     }

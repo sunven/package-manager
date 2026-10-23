@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { EnvironmentInspection } from "../environmentInspection";
 import type { ManagerHistory } from "../managerHistory";
 import type { ManagerId } from "../types";
+import { recordObservation } from "../observationLedger";
 import { errorToString } from "../utils/format";
 
 export function useObservationTools(active: "environment" | "history" | null, managers: ManagerId[], revision: number) {
@@ -27,8 +28,35 @@ export function useObservationTools(active: "environment" | "history" | null, ma
     setEnvironmentBusy(true); setEnvironmentError(null);
     try {
       const next = await invoke<EnvironmentInspection>("inspect_environment", { managers: managerKey.split(",") });
-      if (sequence === envSequence.current) { setEnvironment(next); setEnvironmentKey(managerKey); }
-    } catch (error) { if (sequence === envSequence.current) setEnvironmentError(errorToString(error)); }
+      if (sequence === envSequence.current) {
+        setEnvironment(next);
+        setEnvironmentKey(managerKey);
+        const partial = next.pathEntries.some((entry) => entry.issue)
+          || next.commands.some((command) => command.status === "unknown");
+        recordObservation({
+          kind: "success",
+          itemId: "environment",
+          at: next.capturedAt,
+          scope: next.scopeKey ?? null,
+          scopeLabel: "应用 PATH 与已启用管理器",
+          completeness: partial ? "partial" : "complete",
+          note: partial ? "部分命令无法完整读取" : null,
+        });
+      }
+    } catch (error) {
+      if (sequence === envSequence.current) {
+        const message = errorToString(error);
+        setEnvironmentError(message);
+        recordObservation({
+          kind: "attempt",
+          itemId: "environment",
+          at: Date.now(),
+          outcome: "failed",
+          scope: null,
+          reason: message,
+        });
+      }
+    }
     finally { if (sequence === envSequence.current) setEnvironmentBusy(false); }
   }, [managerKey]);
   const refreshHistory = useCallback(async () => {

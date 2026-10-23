@@ -16,6 +16,7 @@ mod environment_inspection;
 mod maintenance_history;
 mod manager_history;
 mod managers;
+mod observation_ledger;
 mod observed_file;
 mod opencode_deletion;
 mod opencode_sessions;
@@ -1163,6 +1164,23 @@ async fn inspect_environment(managers: Vec<ManagerId>) -> Result<environment_ins
 }
 
 #[tauri::command]
+async fn load_observation_ledger(state: tauri::State<'_, observation_ledger::ObservationLedgerState>) -> Result<observation_ledger::LedgerLoad, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.load()).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn record_observation(event: observation_ledger::ObservationEvent, state: tauri::State<'_, observation_ledger::ObservationLedgerState>) -> Result<observation_ledger::LedgerWrite, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.record(event)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn load_observation_scopes(enabled_managers: Vec<ManagerId>) -> Result<std::collections::BTreeMap<String, Option<observation_ledger::ObservationScope>>, String> {
+    tauri::async_runtime::spawn_blocking(move || observation_ledger::scopes(&enabled_managers)).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn save_manager_snapshot(draft: manager_history::SnapshotDraft, state: tauri::State<'_, manager_history::HistoryState>) -> Result<manager_history::ArchivedSnapshot, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || state.save(draft)).await.map_err(|e| e.to_string())?
@@ -1288,9 +1306,13 @@ pub fn run() {
                 .map_err(|err| format!("Could not resolve app config directory: {err}"))?
                 .join("build-artifacts.json");
             app.manage(ProjectCleanupState::load(settings_path));
-            let history_directory = app.path().app_data_dir()?.join("manager-history");
+            let data_directory = app.path().app_data_dir()?;
+            let history_directory = data_directory.join("manager-history");
             app.manage(manager_history::HistoryState::new(history_directory.clone()));
             app.manage(maintenance_history::MaintenanceHistoryState::new(history_directory));
+            app.manage(observation_ledger::ObservationLedgerState::new(
+                data_directory.join("observation-ledger.json"),
+            ));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1345,6 +1367,9 @@ pub fn run() {
             open_project_cleanup_root,
             open_project_data_path,
             inspect_environment,
+            load_observation_ledger,
+            record_observation,
+            load_observation_scopes,
             save_manager_snapshot,
             list_manager_history,
             list_maintenance_history,

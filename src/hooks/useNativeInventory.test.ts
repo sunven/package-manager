@@ -66,6 +66,30 @@ describe("Native inventory", () => {
     expect(mockedInvoke).toHaveBeenCalledExactlyOnceWith("scan_test");
   });
 
+  it("reports accepted reads, failed reads and invalidations", async () => {
+    const observe = vi.fn();
+    const observeInvalidation = vi.fn();
+    mockedInvoke.mockResolvedValueOnce(scan());
+    const { result } = renderHook(() => useNativeInventory({
+      command: "scan_test",
+      visible: true,
+      autoRead: true,
+      adapter,
+      observe,
+      observeInvalidation,
+    }));
+    await waitFor(() => expect(result.current.view.current).toBe(true));
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({ snapshotId: "snap-1" }), null, expect.any(Number));
+
+    observe.mockClear();
+    mockedInvoke.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => { await result.current.read(); });
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({ rows: ["a"] }), "offline", expect.any(Number));
+
+    act(() => result.current.invalidate("changed"));
+    expect(observeInvalidation).toHaveBeenCalledWith(expect.any(Number), "changed");
+  });
+
   it("retains previous rows and revokes writes when the next scan is not ready", async () => {
     mockedInvoke.mockResolvedValueOnce(scan());
     const { result } = renderInventory();

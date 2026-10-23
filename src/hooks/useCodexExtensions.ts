@@ -4,6 +4,8 @@ import type { CodexMarketplace, CodexMarketplaceRequest, CodexMarketplaceResult,
 import type { CodexPlugin, CodexPluginChangeRequest, CodexPluginChangeResult, CodexPluginLifecycleRequest, CodexPluginScan } from "../codexPlugins";
 import type { CodexHook, CodexHookChangeRequest, CodexHookChangeResult, CodexHookDefinitions, CodexHookScan, HookDefinitionPreview, HookDefinitionRequest } from "../codexHooks";
 import { errorToString } from "../utils/format";
+import { codexObservationFacts, recordObservationFacts } from "../observationFacts";
+import { recordObservation } from "../observationLedger";
 import {
   useNativeInventory,
   withoutSnapshot,
@@ -37,6 +39,9 @@ export type CodexExtensions = {
   confirm: (id?: number) => Promise<Outcome | null>;
   cancel: (id: number) => boolean;
   refresh: () => Promise<void>;
+  readMarketplaces: () => Promise<void>;
+  readPlugins: () => Promise<void>;
+  readHooks: () => Promise<void>;
 };
 
 function revoke<T extends NativeScan>(scan: T): T {
@@ -78,18 +83,51 @@ export function useCodexExtensions(active: boolean, tab: string): CodexExtension
     visible: visible.current.marketplaces,
     autoRead: !operation,
     adapter: marketplaceAdapter,
+    observe: (scan, error, at) => recordObservationFacts(
+      "codex:marketplaces",
+      codexObservationFacts("marketplaces", { scan, current: !error && scan !== null, scanning: false, error }),
+      at,
+    ),
+    observeInvalidation: (at, reason) => recordObservation({
+      kind: "invalidate",
+      itemId: "codex:marketplaces",
+      at,
+      reason: reason ?? "来源已失效",
+    }),
   });
   const plugins = useNativeInventory<CodexPluginScan, CodexPluginChangeResult>({
     command: "scan_codex_plugins",
     visible: visible.current.plugins,
     autoRead: !operation,
     adapter: pluginAdapter,
+    observe: (scan, error, at) => recordObservationFacts(
+      "codex:plugins",
+      codexObservationFacts("plugins", { scan, current: !error && scan !== null, scanning: false, error }),
+      at,
+    ),
+    observeInvalidation: (at, reason) => recordObservation({
+      kind: "invalidate",
+      itemId: "codex:plugins",
+      at,
+      reason: reason ?? "来源已失效",
+    }),
   });
   const hooks = useNativeInventory<CodexHookScan, CodexHookChangeResult>({
     command: "scan_codex_hooks",
     visible: visible.current.hooks,
     autoRead: !operation,
     adapter: hookAdapter,
+    observe: (scan, error, at) => recordObservationFacts(
+      "codex:hooks",
+      codexObservationFacts("hooks", { scan, current: !error && scan !== null, scanning: false, error }),
+      at,
+    ),
+    observeInvalidation: (at, reason) => recordObservation({
+      kind: "invalidate",
+      itemId: "codex:hooks",
+      at,
+      reason: reason ?? "来源已失效",
+    }),
   });
   const inventories = { marketplaces, plugins, hooks };
 
@@ -212,5 +250,8 @@ export function useCodexExtensions(active: boolean, tab: string): CodexExtension
     plugins: plugins.view,
     hooks: { ...hooks.view, scan: scan ? { ...hookView, definitions: definitions ? { ...withoutSnapshot(definitions), current: hooks.view.current && Boolean(definitions.snapshotId), revision: hooks.view.revision } : definitions } as HookScanView : null },
     operation, processing: Boolean(operation && operation.phase !== "confirming"), request, confirm, cancel, refresh,
+    readMarketplaces: async () => { await marketplaces.read(); },
+    readPlugins: async () => { await plugins.read(); },
+    readHooks: async () => { await hooks.read(); },
   };
 }

@@ -6,6 +6,8 @@ import type {
   ProjectDataScan,
 } from "./types";
 import { bumpHistoryRevision } from "./historyRevision";
+import { projectScopeKey } from "./observationFacts";
+import { recordObservation } from "./observationLedger";
 
 export interface ProjectCleanupEffects {
   readSettings(): Promise<ProjectCleanupSettings>;
@@ -172,6 +174,26 @@ export interface ProjectCleanupWorkflow {
     target: "Project" | "Directory",
   ): Promise<WorkflowOutcome<void>>;
   dispose(): void;
+}
+
+function recordProjectObservation(
+  session: ProjectCleanupScanSessionView,
+  phase: "ready" | "stopped",
+) {
+  const errors = session.errors.length;
+  const completeness = phase === "stopped" || session.status === "Partial" ? "partial" : "complete";
+  const note = phase === "stopped"
+    ? errors ? `扫描未完成；${errors} 个目录读取有问题` : "扫描未完成"
+    : errors ? `${errors} 个目录读取有问题` : null;
+  recordObservation({
+    kind: "success",
+    itemId: "project-scan",
+    at: Date.now(),
+    scope: projectScopeKey(session.rootId, session.rootPath, session.maxDepth),
+    scopeLabel: `${session.rootPath} · 深度 ${session.maxDepth}`,
+    completeness,
+    note,
+  });
 }
 
 export function createProjectCleanupWorkflow(
@@ -383,6 +405,7 @@ export function createProjectCleanupWorkflow(
             phase: "ready",
           },
         });
+        recordProjectObservation(session, "ready");
         return {
           kind: "succeeded",
           value: { scanId: session.scanId, finish: "completed" },
@@ -402,6 +425,17 @@ export function createProjectCleanupWorkflow(
             failure,
           },
         });
+        const scope = view.settings.rootId && view.settings.rootPath
+          ? projectScopeKey(view.settings.rootId, view.settings.rootPath, view.settings.maxDepth)
+          : null;
+        recordObservation({
+          kind: "attempt",
+          itemId: "project-scan",
+          at: Date.now(),
+          outcome: "failed",
+          scope,
+          reason: failure.message,
+        });
         return { kind: "failed", failure };
       }
     },
@@ -419,6 +453,7 @@ export function createProjectCleanupWorkflow(
           pendingMeasurements: 0,
         },
       });
+      if (view.scan.session) recordProjectObservation(view.scan.session, "stopped");
       return { kind: "succeeded", value: undefined };
     },
     setSelected: (candidateIds, selected) => {

@@ -22,8 +22,12 @@ let shouldRefreshImpl: (target: TestTarget, result: TestResult | null) => boolea
 let readCalls: (readonly Source[])[];
 let executeCalls: TestTarget[];
 let progressReporter: ((progress: TestProgress) => void) | null;
+let observeCalls: { source: Source; scan: TestScan | null; failure: string | null; at: number; readFailed: boolean }[];
 
 const adapter: SessionOperationAdapter<Source, TestScan, TestTarget, TestResult, TestProgress> = {
+  observe: (source, scan, failure, at, readFailed) => {
+    observeCalls.push({ source, scan, failure, at, readFailed });
+  },
   read: (scopes, previous) => {
     readCalls.push(scopes);
     return readImpl(scopes, previous);
@@ -81,6 +85,7 @@ async function ready(result: ReturnType<typeof renderOperation>["result"]) {
 beforeEach(() => {
   readCalls = [];
   executeCalls = [];
+  observeCalls = [];
   progressReporter = null;
   readImpl = async (scopes) => readResult(scopes);
   executeImpl = async () => ({ completed: [] });
@@ -90,6 +95,21 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Session operation lifecycle", () => {
+  it("reports accepted reads and thrown read failures with the previous scan", async () => {
+    const { result } = renderOperation();
+    await ready(result);
+    expect(observeCalls).toContainEqual(expect.objectContaining({ source: "a", failure: null, readFailed: false }));
+    observeCalls = [];
+    readImpl = async () => { throw new Error("offline"); };
+    await act(async () => { await result.current.refresh(["a"]); });
+    expect(observeCalls).toContainEqual(expect.objectContaining({
+      source: "a",
+      failure: "offline",
+      readFailed: true,
+      scan: expect.objectContaining({ rows: ["initial"] }),
+    }));
+  });
+
   it("lets the newest ticket win per source while overlapping reads finish", async () => {
     const full = deferred<SessionRead<Source, TestScan>>();
     const single = deferred<SessionRead<Source, TestScan>>();

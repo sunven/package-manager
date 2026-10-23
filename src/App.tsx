@@ -1,5 +1,6 @@
 import { GlobalSearch } from "./components/GlobalSearch";
 import { EnvironmentPanel } from "./components/ObservationTools";
+import { ObservationCoveragePage } from "./components/ObservationCoveragePage";
 import { HistoryPage, type HistoryRequest } from "./components/HistoryPage";
 import { useObservationTools } from "./hooks/useObservationTools";
 import { locateSearchTarget, type SearchTarget } from "./globalSearch";
@@ -19,6 +20,22 @@ import { CodexMarketplacesPage } from "./components/CodexMarketplacesPage";
 import { CodexHooksPage } from "./components/CodexHooksPage";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { useVscodeStorage } from "./hooks/useVscodeStorage";
+import { useObservationLedger } from "./hooks/useObservationLedger";
+import { useObservationScopes } from "./hooks/useObservationScopes";
+import { managerOrder } from "./constants";
+import {
+  claudeObservationFacts,
+  codexObservationFacts,
+  environmentObservationFacts,
+  managerObservationFacts,
+  openCodeObservationFacts,
+  projectObservationFacts,
+  sessionObservationFacts,
+  vscodeObservationFacts,
+  type ObservationFactsMap,
+} from "./observationFacts";
+import { buildObservationCoverage, type ObservationCoverageItem } from "./observationCoverage";
+import { managerObservationId } from "./observationItems";
 import { SessionRecordsPage } from "./components/SessionRecordsPage";
 import { VscodeStoragePage } from "./components/VscodeStoragePage";
 import { ProjectCleanupPage } from "./components/ProjectCleanupPage";
@@ -71,6 +88,8 @@ export function App() {
   const vscodeStorage = useVscodeStorage(activeView === "vscode");
   const sessionRecords = useSessionRecords(activeView === "sessions");
   const openCodeSessions = useOpenCodeSessions(activeView === "sessions");
+  const observationLedger = useObservationLedger();
+  const observationScopes = useObservationScopes(state.enabledManagers);
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const { actions, currentManager, scanningManagers, selectedManager } = state;
   const scanning = scanningManagers.has(selectedManager);
@@ -78,6 +97,78 @@ export function App() {
     () => buildDevelopmentHealthSummary(state.enabledManagers, state.managerSnapshots),
     [state.enabledManagers, state.managerSnapshots],
   );
+  const coverageFacts = useMemo<ObservationFactsMap>(() => {
+    const facts: ObservationFactsMap = {};
+    for (const manager of managerOrder) {
+      facts[managerObservationId(manager)] = managerObservationFacts(
+        state.managerSnapshots[manager],
+        state.scanStates[manager],
+      );
+    }
+    facts.environment = environmentObservationFacts(
+      observations.environment,
+      observations.environmentBusy,
+      observations.environmentError,
+    );
+    facts["project-scan"] = projectObservationFacts(projectCleanup.view);
+    facts["vscode-storage"] = vscodeObservationFacts(
+      vscodeStorage.scan,
+      vscodeStorage.scanning,
+      vscodeStorage.error,
+    );
+    facts["session:codex"] = sessionObservationFacts(
+      "codex",
+      sessionRecords.scan?.codex ?? null,
+      sessionRecords.scanningSources.codex,
+      sessionRecords.error,
+    );
+    facts["session:claude"] = sessionObservationFacts(
+      "claude",
+      sessionRecords.scan?.claude ?? null,
+      sessionRecords.scanningSources.claude,
+      sessionRecords.error,
+    );
+    facts["session:opencode"] = openCodeObservationFacts(
+      openCodeSessions.scan,
+      openCodeSessions.scanning,
+      openCodeSessions.error,
+    );
+    facts["codex:marketplaces"] = codexObservationFacts("marketplaces", codex.extensions.marketplaces);
+    facts["codex:plugins"] = codexObservationFacts("plugins", codex.extensions.plugins);
+    facts["codex:hooks"] = codexObservationFacts("hooks", codex.extensions.hooks);
+    facts["codex:skills"] = codexObservationFacts("skills", codex.skills);
+    facts["claude:extensions"] = claudeObservationFacts("extensions", claude.state.extensionsView);
+    facts["claude:hooks"] = claudeObservationFacts("hooks", claude.state.hooksView);
+    facts["claude:skills"] = claudeObservationFacts("skills", claude.skills);
+    return facts;
+  }, [
+    state.managerSnapshots, state.scanStates,
+    observations.environment, observations.environmentBusy, observations.environmentError,
+    projectCleanup.view,
+    vscodeStorage.scan, vscodeStorage.scanning, vscodeStorage.error,
+    sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.error,
+    openCodeSessions.scan, openCodeSessions.scanning, openCodeSessions.error,
+    codex.extensions.marketplaces, codex.extensions.plugins, codex.extensions.hooks, codex.skills,
+    claude.state.extensionsView, claude.state.hooksView, claude.skills,
+  ]);
+  const coverage = useMemo(() => buildObservationCoverage({
+    records: observationLedger.records,
+    facts: coverageFacts,
+    scopes: observationScopes.scopes,
+    enabledManagers: state.enabledManagers,
+  }), [observationLedger.records, coverageFacts, observationScopes.scopes, state.enabledManagers]);
+  const coverageWarnings = useMemo(() => [
+    ...observationLedger.warnings,
+    ...(observationScopes.error ? [`观察范围无法读取：${observationScopes.error}`] : []),
+  ], [observationLedger.warnings, observationScopes.error]);
+  const coverageBusy = state.maintenanceBusy
+    || state.scanningAll
+    || codex.locked
+    || claude.locked
+    || Boolean(vscodeStorage.operation)
+    || Boolean(sessionRecords.operation)
+    || Boolean(openCodeSessions.operation)
+    || Boolean(projectCleanup.view.batch);
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -129,6 +220,81 @@ export function App() {
     actions.selectManager(target.managerId);
     setSearchFocus({ ...target, sequence: ++focusSequence.current });
     setActiveView("managers");
+  }
+
+  function showCoverageItem(item: ObservationCoverageItem) {
+    actions.closePackageActions();
+    switch (item.id) {
+      case "environment":
+        setOverviewTab("environment");
+        return;
+      case "project-scan":
+        setActiveView("cleanup");
+        return;
+      case "vscode-storage":
+        setActiveView("vscode");
+        return;
+      case "session:codex":
+      case "session:claude":
+      case "session:opencode":
+        setActiveView("sessions");
+        return;
+      case "codex:marketplaces":
+      case "codex:plugins":
+        setCodexTab("marketplaces");
+        setActiveView("plugins");
+        return;
+      case "codex:hooks":
+        setCodexTab("hooks");
+        setActiveView("plugins");
+        return;
+      case "codex:skills":
+        setCodexTab("skills");
+        setActiveView("plugins");
+        return;
+      case "claude:extensions":
+        setClaudeTab("marketplaces");
+        setActiveView("claude");
+        return;
+      case "claude:hooks":
+        setClaudeTab("hooks");
+        setActiveView("claude");
+        return;
+      case "claude:skills":
+        setClaudeTab("skills");
+        setActiveView("claude");
+        return;
+      default: {
+        const manager = managerOrder.find((candidate) => managerObservationId(candidate) === item.id);
+        if (manager) {
+          actions.selectManager(manager);
+          setActiveView("managers");
+        }
+      }
+    }
+  }
+
+  function adjustCoverageItem(item: ObservationCoverageItem) {
+    actions.closePackageActions();
+    if (item.group === "managers") setActiveView("settings");
+    if (item.id === "project-scan") setActiveView("cleanup");
+  }
+
+  async function refreshCoverageItem(item: ObservationCoverageItem) {
+    switch (item.id) {
+      case "environment": await observations.refreshEnvironment(); return;
+      case "vscode-storage": await vscodeStorage.refresh(); return;
+      case "session:codex": await sessionRecords.refresh("codex"); return;
+      case "session:claude": await sessionRecords.refresh("claude"); return;
+      case "session:opencode": await openCodeSessions.refresh(); return;
+      case "codex:marketplaces": await codex.extensions.readMarketplaces(); return;
+      case "codex:plugins": await codex.extensions.readPlugins(); return;
+      case "codex:hooks": await codex.extensions.readHooks(); return;
+      case "codex:skills": await codex.skills.refresh(); return;
+      case "claude:extensions": await claude.state.refresh("marketplaces"); return;
+      case "claude:hooks": await claude.state.refresh("hooks"); return;
+      case "claude:skills": await claude.skills.refresh(); return;
+    }
   }
 
   useEffect(() => {
@@ -265,14 +431,13 @@ export function App() {
           />
         ) : activeView === "health" ? (
           <Tabs value={overviewTab} onValueChange={setOverviewTab}>
-            <TabsList aria-label="总览视图"><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="environment">环境诊断</TabsTrigger></TabsList>
+            <TabsList aria-label="总览视图"><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="environment">环境诊断</TabsTrigger><TabsTrigger value="coverage">观察覆盖度</TabsTrigger></TabsList>
             <TabsContent value="environment"><EnvironmentPanel state={observations} onCopy={(value) => void actions.copyPath(value)} onOpenManager={(manager) => { actions.selectManager(manager); setActiveView("managers"); }} /></TabsContent>
             <TabsContent value="overview">
           <OverviewDashboard
             health={developmentHealth}
+            coverage={coverage}
             homeDirectory={state.homeDirectory}
-            managerSnapshots={state.managerSnapshots}
-            scanStates={state.scanStates}
             scanningAll={state.scanningAll}
             maintenanceBusy={state.maintenanceBusy}
             onRefreshAll={() => void actions.refreshEnabled()}
@@ -282,7 +447,19 @@ export function App() {
               setActiveView("managers");
             }}
             onOpenView={setActiveView}
+            onOpenCoverage={() => setOverviewTab("coverage")}
           />
+            </TabsContent>
+            <TabsContent value="coverage">
+              <ObservationCoveragePage
+                coverage={coverage}
+                warnings={coverageWarnings}
+                busy={coverageBusy}
+                onView={showCoverageItem}
+                onRefresh={(item) => { void refreshCoverageItem(item); }}
+                onRefreshManagers={() => void actions.refreshEnabled()}
+                onAdjustScope={adjustCoverageItem}
+              />
             </TabsContent>
           </Tabs>
         ) : (
@@ -294,7 +471,7 @@ export function App() {
             selectedManager={selectedManager}
           >
             <div className="mb-3 mt-2 flex flex-wrap items-center justify-between gap-2" aria-live="polite">
-              <div className="text-xs text-muted-foreground"><p>{scanStateLabel(state.scanStates[selectedManager], currentManager ?? undefined)}{state.scanStates[selectedManager]?.scannedAt ? ` · 数据时间 ${new Date(state.scanStates[selectedManager]!.scannedAt!).toLocaleString()}` : ""}</p><p>{state.scanMeta}</p></div>
+              <div className="text-xs text-muted-foreground"><p>{scanStateLabel(state.scanStates[selectedManager], currentManager ?? undefined)}{state.scanStates[selectedManager]?.scannedAt ? ` · 观察时间 ${new Date(state.scanStates[selectedManager]!.scannedAt!).toLocaleString()}` : ""}</p><p>{state.scanMeta}</p></div>
               <Button variant="outline" type="button" disabled={scanning || state.maintenanceBusy} onClick={() => void actions.refresh()}>刷新当前管理器</Button>
             </div>
             <main className="view-grid min-[1100px]:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.7fr)] min-[1100px]:items-start">

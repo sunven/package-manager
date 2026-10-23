@@ -100,6 +100,30 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Skill inventory lifecycle", () => {
+  it("reports reads and invalidates only when the dependency changes", async () => {
+    const observes: { scan: TestScan | null; error: string | null }[] = [];
+    const invalidations: { at: number; reason: string }[] = [];
+    const { result, rerender } = renderHook(
+      ({ dependency }: { dependency: string }) => useSkillInventory(adapter, {
+        active: true,
+        dependency,
+        observe: (scan, error) => { observes.push({ scan, error }); },
+        observeInvalidation: (at, reason) => { invalidations.push({ at, reason }); },
+      }),
+      { initialProps: { dependency: "initial" } },
+    );
+    await ready(result);
+    expect(observes).toContainEqual(expect.objectContaining({
+      scan: expect.objectContaining({ rows: ["initial"] }),
+      error: null,
+    }));
+    expect(invalidations).toHaveLength(0);
+
+    rerender({ dependency: "next" });
+    expect(invalidations).toHaveLength(1);
+    expect(invalidations[0].reason).toBe("来源依赖已变化");
+  });
+
   it("reads once and exposes the interpreted inventory", async () => {
     const { result } = renderInventory();
     await ready(result);

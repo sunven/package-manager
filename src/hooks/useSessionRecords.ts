@@ -8,6 +8,8 @@ import type {
   SessionSourceScan,
 } from "../sessionRecords";
 import { errorToString } from "../utils/format";
+import { recordObservationFacts, sessionObservationFacts } from "../observationFacts";
+import { sessionObservationId } from "../observationItems";
 import { useSessionOperation, type SessionOperationAdapter, type SessionRead } from "./useSessionOperation";
 
 type PendingRemoval =
@@ -45,6 +47,16 @@ function abortedResult(message: string): SessionRemovalResult {
 }
 
 const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, PendingRemoval, SessionRemovalResult, SessionRemovalProgress> = {
+  observe: (source, scan, failure, at, readFailed) => {
+    const error = readFailed || !scan || scan.status === "Failed"
+      ? failure ?? "会话记录读取失败"
+      : null;
+    recordObservationFacts(
+      sessionObservationId(source),
+      sessionObservationFacts(source, scan, false, error),
+      at,
+    );
+  },
   read: async (scopes, previous): Promise<SessionRead<SessionSourceId, SessionSourceScan>> => {
     if (scopes.length === 1) {
       const source = scopes[0];

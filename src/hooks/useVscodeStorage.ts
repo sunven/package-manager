@@ -11,6 +11,7 @@ import {
   completedVscodeRemovalIds,
   removeVscodeWorkspaces,
 } from "../vscodeRemoval";
+import { recordObservationFacts, vscodeObservationFacts } from "../observationFacts";
 import {
   useSessionOperation,
   type SessionOperationAdapter,
@@ -30,6 +31,13 @@ const adapter: SessionOperationAdapter<
   read: async (): Promise<SessionRead<VscodeScope, VscodeStorageScan>> => {
     const scan = await invoke<VscodeStorageScan>("scan_vscode_storage");
     return { scans: { vscode: scan }, failures: {}, globalError: null };
+  },
+  observe: (_scope, scan, failure, at, readFailed) => {
+    recordObservationFacts(
+      "vscode-storage",
+      vscodeObservationFacts(scan, false, readFailed ? failure ?? "VS Code 工作区存储读取失败" : null),
+      at,
+    );
   },
   scopesFor: () => VSCODE_SCOPES,
   execute: (target, report) => {

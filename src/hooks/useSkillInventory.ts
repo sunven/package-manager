@@ -33,11 +33,13 @@ export interface SkillInventoryAdapter<
   unconfirmed(message: string): Outcome;
 }
 
-export interface SkillInventoryOptions {
+export interface SkillInventoryOptions<Scan = { snapshotId: string | null; directory: string }> {
   active: boolean;
   dependency: string;
   externalBusy?: boolean;
   onMutation?: () => void;
+  observe?: (scan: Scan | null, error: string | null, at: number) => void;
+  observeInvalidation?: (at: number, reason: string) => void;
 }
 
 export interface SkillInventory<Scan, Intent, Preview, Outcome> {
@@ -64,8 +66,13 @@ export function useSkillInventory<
   Outcome,
 >(
   adapter: SkillInventoryAdapter<Scan, Intent, Preview, Outcome>,
-  { active, dependency, externalBusy = false, onMutation }: SkillInventoryOptions,
+  { active, dependency, externalBusy = false, onMutation, observe, observeInvalidation }: SkillInventoryOptions<Scan>,
 ): SkillInventory<Scan, Intent, Preview, Outcome> {
+  const observeRef = useRef(observe);
+  observeRef.current = observe;
+  const observeInvalidationRef = useRef(observeInvalidation);
+  observeInvalidationRef.current = observeInvalidation;
+  const observedDependency = useRef<string | null>(null);
   const [scan, setScan] = useState<Scan | null>(null);
   const [current, setCurrent] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -101,8 +108,13 @@ export function useSkillInventory<
       setScan(interpreted.scan);
       setCurrent(interpreted.usable);
       setError(interpreted.error);
+      observeRef.current?.(interpreted.scan, interpreted.error, Date.now());
     } catch (caught) {
-      if (epoch === generation.current) setError(errorToString(caught));
+      if (epoch === generation.current) {
+        const message = errorToString(caught);
+        setError(message);
+        observeRef.current?.(native.current, message, Date.now());
+      }
     } finally {
       running.current = false;
       setScanning(false);
@@ -112,10 +124,13 @@ export function useSkillInventory<
 
   // Adapters are module-level constants; changing identity is a source change.
   useEffect(() => {
+    const changed = observedDependency.current !== null && observedDependency.current !== dependency;
+    observedDependency.current = dependency;
     generation.current += 1;
     valid.current = false;
     setCurrent(false);
     setRevision((value) => value + 1);
+    if (changed && native.current) observeInvalidationRef.current?.(Date.now(), "来源依赖已变化");
     if (pending.current && typeof pending.current !== "string") {
       const planId = pending.current.planId;
       try { void adapter.cancel(planId).catch(() => undefined); } catch { /* cancellation is best-effort */ }

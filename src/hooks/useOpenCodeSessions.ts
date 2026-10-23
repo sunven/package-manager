@@ -6,11 +6,23 @@ import {
   type OpenCodeSessionScan,
 } from "../sessionRecords";
 import { errorToString } from "../utils/format";
+import { openCodeObservationFacts, recordObservationFacts } from "../observationFacts";
 import { useSessionOperation, type SessionOperationAdapter, type SessionRead } from "./useSessionOperation";
 
 const OPENCODE_SCOPES = ["opencode"] as const;
 
 const adapter: SessionOperationAdapter<"opencode", OpenCodeSessionScan, OpenCodeDeletionPlan, OpenCodeDeletionResult> = {
+  observe: (_source, scan, failure, at, readFailed) => {
+    recordObservationFacts(
+      "session:opencode",
+      openCodeObservationFacts(
+        scan,
+        false,
+        readFailed || scan?.status === "failed" ? failure ?? "OpenCode 会话读取失败" : null,
+      ),
+      at,
+    );
+  },
   read: async (_scopes, previous): Promise<SessionRead<"opencode", OpenCodeSessionScan>> => {
     try {
       const next = await invoke<OpenCodeSessionScan>("scan_opencode_sessions");

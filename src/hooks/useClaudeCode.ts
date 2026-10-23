@@ -9,6 +9,8 @@ import type {
   ClaudeHookScan,
 } from "../claudeCode";
 import { errorToString } from "../utils/format";
+import { claudeObservationFacts, recordObservationFacts } from "../observationFacts";
+import { recordObservation } from "../observationLedger";
 import { useNativeInventory, type NativeInventoryAdapter } from "./useNativeInventory";
 
 const extensionAdapter: NativeInventoryAdapter<ClaudeExtensionScan> = {
@@ -40,12 +42,34 @@ export function useClaudeCode(active: boolean, tab: string, externalBusy = false
     visible: active && tab === "marketplaces",
     autoRead: !externalBusy && !operationBusy,
     adapter: extensionAdapter,
+    observe: (scan, error, at) => recordObservationFacts(
+      "claude:extensions",
+      claudeObservationFacts("extensions", { scan, current: !error && scan !== null, scanning: false, error }),
+      at,
+    ),
+    observeInvalidation: (at, reason) => recordObservation({
+      kind: "invalidate",
+      itemId: "claude:extensions",
+      at,
+      reason: reason ?? "来源已失效",
+    }),
   });
   const hooks = useNativeInventory<ClaudeHookScan, never>({
     command: "scan_claude_hooks",
     visible: active && tab === "hooks",
     autoRead: !externalBusy && !operationBusy,
     adapter: hookAdapter,
+    observe: (scan, error, at) => recordObservationFacts(
+      "claude:hooks",
+      claudeObservationFacts("hooks", { scan, current: !error && scan !== null, scanning: false, error }),
+      at,
+    ),
+    observeInvalidation: (at, reason) => recordObservation({
+      kind: "invalidate",
+      itemId: "claude:hooks",
+      at,
+      reason: reason ?? "来源已失效",
+    }),
   });
 
   const clearExtensionError = extensions.clearError;
@@ -139,6 +163,8 @@ export function useClaudeCode(active: boolean, tab: string, externalBusy = false
   return {
     extensions: extensions.scan,
     hooks: hooks.scan,
+    extensionsView: extensions.view,
+    hooksView: hooks.view,
     busy: operationBusy || externalBusy || extensions.view.scanning || hooks.view.scanning,
     error: extensions.view.error ?? hooks.view.error,
     result,

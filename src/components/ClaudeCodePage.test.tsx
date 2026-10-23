@@ -15,7 +15,10 @@ beforeEach(() => vi.resetAllMocks());
 const mockedInvoke = vi.mocked(invoke);
 const success = { status: "Succeeded" as const, message: "已完成", executed: true };
 function state(): ClaudeWorkflowState {
-  return { revision: 0, invalidate: vi.fn(), extensions: claudeExtensionFixture(), hooks: claudeHookFixture(), busy: false, error: null, result: null,
+  return { revision: 0, invalidate: vi.fn(), extensions: claudeExtensionFixture(), hooks: claudeHookFixture(),
+    extensionsView: { scan: claudeExtensionFixture(), current: true, revision: 0, scanning: false, error: null, result: null },
+    hooksView: { scan: claudeHookFixture(), current: true, revision: 0, scanning: false, error: null, result: null },
+    busy: false, error: null, result: null,
     refresh: vi.fn().mockResolvedValue(claudeHookFixture()), change: vi.fn().mockResolvedValue(success),
     prepareHook: vi.fn().mockResolvedValue({ previewId: "preview-1", source: "/settings.json", before: {}, after: {}, message: "预览完成" }), commitHook: vi.fn().mockResolvedValue(success), cancelHookPreview: vi.fn() };
 }

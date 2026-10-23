@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   createProjectCleanupWorkflow,
 } from "./projectCleanupWorkflow";
+import { getObservationLedgerSnapshot, resetObservationLedgerForTests } from "./observationLedger";
 import { createInMemoryProjectCleanupEffects as effects } from "./projectCleanupInMemoryEffects";
 import type {
   DirectoryMeasurement,
@@ -107,7 +108,53 @@ function cleanupResult(
   };
 }
 
+afterEach(resetObservationLedgerForTests);
+
 describe("Project Cleanup workflow", () => {
+  it("records completed, stopped and failed scans in the observation ledger", async () => {
+    const completed = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      scan: async () => scan([]),
+    }));
+    await completed.initialize();
+    await completed.startScan();
+    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastSuccess).toMatchObject({
+      completeness: "complete",
+      scope: "root-1\n/code\n6",
+    });
+
+    resetObservationLedgerForTests();
+    const measuring = deferred<DirectoryMeasurement>();
+    const stopped = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      scan: async () => scan([pendingCandidate("candidate")]),
+      measure: async () => measuring.promise,
+    }));
+    await stopped.initialize();
+    const running = stopped.startScan();
+    await waitFor(() => stopped.read().scan.phase === "measuring");
+    stopped.requestScanStop();
+    measuring.resolve(measurement(100));
+    await running;
+    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastSuccess).toMatchObject({
+      completeness: "partial",
+      note: "扫描未完成",
+    });
+
+    resetObservationLedgerForTests();
+    const failed = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      scan: async () => { throw new Error("offline"); },
+    }));
+    await failed.initialize();
+    await failed.startScan();
+    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastAttempt).toMatchObject({
+      outcome: "failed",
+      reason: "offline",
+      scope: "root-1\n/code\n6",
+    });
+  });
+
   it("locks settings changes while saving and discards old candidates when switching presets", async () => {
     const saving = deferred<ProjectCleanupSettings>();
     const workflow = createProjectCleanupWorkflow(effects({

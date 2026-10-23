@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SkillIntent, SkillOutcome, SkillPreview, SkillScan } from "../codexSkills";
+import { codexObservationFacts, recordObservationFacts } from "../observationFacts";
+import { recordObservation } from "../observationLedger";
 import { useSkillInventory, type SkillInventoryAdapter } from "./useSkillInventory";
 
 const adapter: SkillInventoryAdapter<SkillScan, SkillIntent, SkillPreview, SkillOutcome> = {
@@ -22,7 +24,22 @@ const adapter: SkillInventoryAdapter<SkillScan, SkillIntent, SkillPreview, Skill
 };
 
 export function useCodexSkills(active: boolean, dependency: string, externalBusy = false) {
-  return useSkillInventory(adapter, { active, dependency, externalBusy });
+  return useSkillInventory(adapter, {
+    active,
+    dependency,
+    externalBusy,
+    observe: (scan, error, at) => recordObservationFacts(
+      "codex:skills",
+      codexObservationFacts("skills", { scan, current: !error && scan !== null, scanning: false, error }),
+      at,
+    ),
+    observeInvalidation: (at, reason) => recordObservation({
+      kind: "invalidate",
+      itemId: "codex:skills",
+      at,
+      reason: reason ?? "来源已失效",
+    }),
+  });
 }
 
 export type CodexSkills = ReturnType<typeof useCodexSkills>;

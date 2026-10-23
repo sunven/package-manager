@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createManagerMaintenanceWorkflow, type ManagerMaintenanceEffects } from "./managerMaintenanceWorkflow";
+import { getObservationLedgerSnapshot, resetObservationLedgerForTests } from "./observationLedger";
 import { managerFixture } from "./test/fixtures";
 import type { CacheCleanupRun, DiskUsage, HomebrewCleanupPreview, MaintenanceRunPreview, ManagerId, ManagerScanSnapshot } from "./types";
 
@@ -42,9 +43,29 @@ function setup(enabled: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Homebrew", "Pip",
   return { effects, workflow: createManagerMaintenanceWorkflow(effects) };
 }
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  resetObservationLedgerForTests();
+});
 
 describe("persistent observations and maintenance receipts", () => {
+  it("records manager completion and keeps the last success on a failed read", async () => {
+    const { effects, workflow } = setup(["Npm"]);
+    await workflow.refresh("Npm");
+    const first = getObservationLedgerSnapshot().records["manager:npm"];
+    expect(first?.lastSuccess?.completeness).toBe("complete");
+    expect(first?.lastSuccess?.at).toBeGreaterThan(0);
+    expect(workflow.read().scanStates.Npm?.lastReadFailed).toBe(false);
+
+    effects.scan.mockRejectedValue(new Error("offline"));
+    await workflow.refresh("Npm");
+    const second = getObservationLedgerSnapshot().records["manager:npm"];
+    expect(second?.lastSuccess?.at).toBe(first?.lastSuccess?.at);
+    expect(second?.lastAttempt).toMatchObject({ outcome: "failed" });
+    expect(workflow.read().scanStates.Npm?.lastReadFailed).toBe(true);
+    expect(workflow.read().scanStates.Npm?.scannedAt).toBe(first?.lastSuccess?.at);
+  });
+
   it("archives once after supplements settle and records failed scans without relabeling old data", async () => {
     const { effects, workflow } = setup(["Homebrew"]);
     const measurement = deferred<DiskUsage>();

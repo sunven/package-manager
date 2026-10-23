@@ -1,22 +1,22 @@
 import type { DevelopmentHealthSummary } from "../developmentHealth";
-import type { ManagerId, ManagerSnapshot } from "../types";
-import { scanStateLabel, type ManagerScanState } from "../managerScanning";
+import type { ManagerId } from "../types";
+import type { ObservationCoverage } from "../observationCoverage";
 import { formatBytes, formatHomePath, managerLabel } from "../utils/format";
 import { DevelopmentHealthPage } from "./DevelopmentHealthPage";
-import { StatCard, StatusBadge, EmptyState } from "./ui";
+import { StatCard, EmptyState } from "./ui";
 import { Button } from "../../components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../../components/ui/card";
 
-export function OverviewDashboard({ health, homeDirectory, managerSnapshots, scanStates, scanningAll, maintenanceBusy, onRefreshAll, onOpenManager, onOpenView }: {
+export function OverviewDashboard({ health, coverage, homeDirectory, scanningAll, maintenanceBusy, onRefreshAll, onOpenManager, onOpenView, onOpenCoverage }: {
   health: DevelopmentHealthSummary;
+  coverage: ObservationCoverage;
   homeDirectory: string | null;
-  managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
-  scanStates: Partial<Record<ManagerId, ManagerScanState>>;
   scanningAll: boolean;
   maintenanceBusy: boolean;
   onRefreshAll: () => void;
   onOpenManager: (manager: ManagerId) => void;
   onOpenView: (view: "cleanup" | "vscode" | "sessions" | "history") => void;
+  onOpenCoverage: () => void;
 }) {
   return (
     <main className="view-grid overview-dashboard" aria-label="开发环境总览">
@@ -31,20 +31,31 @@ export function OverviewDashboard({ health, homeDirectory, managerSnapshots, sca
       </div>
       <div className="overview-columns">
         <Card className="min-w-0 gap-4 py-4">
-          <CardHeader className="px-4"><CardTitle aria-level={3} role="heading">管理器状态</CardTitle><CardDescription>未扫描不代表没有占用；最近扫描失败时保留上次结果。</CardDescription></CardHeader>
-          <CardContent className="overview-manager-grid px-4">
-            {health.managerStatuses.map(({ managerId }) => {
-              const manager = managerSnapshots[managerId];
-              const state = scanStates[managerId];
-              return <div className="overview-manager-row" key={managerId}>
-                <div className="grid min-w-0 gap-1">
-                  <div className="flex flex-wrap items-center gap-2"><strong>{managerLabel(managerId)}</strong><StatusBadge status={state?.error && manager?.status === "Ready" ? "Partial" : manager?.status ?? (state?.error ? "Failed" : "Not scanned")} /></div>
-                  <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{scanStateLabel(state, manager)}{state?.scannedAt ? ` · 数据时间 ${new Date(state.scannedAt).toLocaleString()}` : ""}</p>
-                  {state?.error ? <p className="text-xs text-destructive [overflow-wrap:anywhere]">{state.error}</p> : null}
-                </div>
-                <Button onClick={() => onOpenManager(managerId)} size="sm" type="button" variant="outline" aria-label={`查看 ${managerLabel(managerId)}`}>查看</Button>
-              </div>;
-            })}
+          <CardHeader className="px-4">
+            <CardTitle aria-level={3} role="heading">观察覆盖度</CardTitle>
+            <CardDescription>未观察不代表没有内容；这里只陈述读取时间、范围与完整性。</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 px-4">
+            <div className="grid gap-2 text-sm">
+              <p><strong>{coverage.summary.attention}</strong> 项需注意</p>
+              <p className="text-muted-foreground">
+                已观察 {coverage.summary.observed}
+                {coverage.summary.partial ? `（含部分 ${coverage.summary.partial}）` : ""}
+                {" · "}未观察 {coverage.summary.notObserved}
+                {coverage.summary.disabled ? ` · 已停用 ${coverage.summary.disabled}` : ""}
+              </p>
+              {(coverage.summary.failed || coverage.summary.unavailable || coverage.summary.invalidated || coverage.summary.scopeChanged)
+                ? <p className="text-xs text-muted-foreground">
+                  {[
+                    coverage.summary.failed ? `读取失败 ${coverage.summary.failed}` : null,
+                    coverage.summary.unavailable ? `不可用 ${coverage.summary.unavailable}` : null,
+                    coverage.summary.invalidated ? `已失效 ${coverage.summary.invalidated}` : null,
+                    coverage.summary.scopeChanged ? `范围变化 ${coverage.summary.scopeChanged}` : null,
+                  ].filter(Boolean).join(" · ")}
+                </p>
+                : null}
+            </div>
+            <Button className="justify-self-start" onClick={onOpenCoverage} size="sm" type="button" variant="outline">查看观察覆盖度</Button>
           </CardContent>
         </Card>
         <div className="grid min-w-0 gap-4">

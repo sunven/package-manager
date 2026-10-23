@@ -10,6 +10,7 @@ export type SessionRead<Source extends string, Scan> = {
 };
 
 export interface SessionOperationAdapter<Source extends string, Scan, Target, Result, Progress = void> {
+  observe?(source: Source, scan: Scan | null, failure: string | null, at: number, readFailed: boolean): void;
   read(scopes: readonly Source[], previous: Partial<Record<Source, Scan>>): Promise<SessionRead<Source, Scan>>;
   scopesFor(target: Target): readonly Source[];
   execute(target: Target, report: (progress: Progress) => void): Promise<Result>;
@@ -100,9 +101,11 @@ export function useSessionOperation<Source extends string, Scan, Target, Result,
       observed = await adapter.read(scopes, scansRef.current);
     } catch (caught) {
       const message = errorToString(caught);
+      const at = Date.now();
       for (const scope of scopes) {
         if (tickets.current[scope] !== ticket) continue;
         setScanning((current) => ({ ...current, [scope]: false }));
+        adapter.observe?.(scope, scansRef.current[scope] ?? null, message, at, true);
         setOutcome((current) => current && adapter.scopesFor(current.target).includes(scope)
           ? { ...current, refresh: { status: "failed", message } }
           : current);
@@ -122,11 +125,13 @@ export function useSessionOperation<Source extends string, Scan, Target, Result,
       applyScans(next);
     }
     let firstFailure: string | null = null;
+    const at = Date.now();
     for (const scope of scopes) {
       if (tickets.current[scope] !== ticket) continue;
       setScanning((current) => ({ ...current, [scope]: false }));
       const failure = observed.failures[scope] ?? null;
       if (failure && firstFailure === null) firstFailure = failure;
+      adapter.observe?.(scope, observed.scans[scope] ?? scansRef.current[scope] ?? null, failure, at, false);
       setOutcome((current) => current && adapter.scopesFor(current.target).includes(scope)
         ? { ...current, refresh: failure ? { status: "failed", message: failure } : { status: "ready", message: null } }
         : current);
