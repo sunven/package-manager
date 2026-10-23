@@ -236,6 +236,7 @@ pub(crate) struct PipEnvironmentHealth {
     pub(crate) inspect_status: AsyncStatus,
     pub(crate) outdated_status: AsyncStatus,
     pub(crate) outdated_message: Option<String>,
+    pub(crate) outdated_failure: Option<CommandFailure>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -354,6 +355,16 @@ pub(crate) struct ManagerScanSnapshot {
     pub(crate) scan_duration_ms: u128,
     pub(crate) manager: ManagerSnapshot,
     pub(crate) diagnostics: crate::scan_diagnostics::ScanDiagnostics,
+    pub(crate) problems: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(tag = "phase", rename_all = "camelCase")]
+pub(crate) enum ManagerScanProgress {
+    Reading,
+    Measuring { completed: usize, total: usize },
+    HydratingHomebrew,
+    HydratingPip,
 }
 
 /// Overall result of running a cleanup plan.

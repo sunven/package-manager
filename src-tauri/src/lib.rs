@@ -34,9 +34,7 @@ mod vscode_removal;
 mod vscode_storage;
 
 use crate::command::{run_command, run_command_owned};
-use crate::disk_usage::disk_usage;
 use crate::managers::{
-    hydrate_homebrew_cleanup_with_runner, hydrate_pip_outdated_with_runner,
     run_cache_cleanup_with_runner, run_npm_maintenance_with_runner,
     run_pnpm_maintenance_with_runner, scan_manager_snapshot,
 };
@@ -46,10 +44,9 @@ use crate::project_cleanup::{
     ProjectDataOpenTarget, ProjectDataScan, ToolAvailability,
 };
 use crate::types::{
-    CacheCleanupRun, DiskUsage, HomebrewCleanupPreview, MaintenanceRunPreview, ManagerId,
-    ManagerScanSnapshot, NpmMaintenanceOperation, PipOutdatedPreview, PnpmMaintenanceOperation,
+    CacheCleanupRun, MaintenanceRunPreview, ManagerId, ManagerScanProgress, ManagerScanSnapshot,
+    NpmMaintenanceOperation, PnpmMaintenanceOperation,
 };
-use std::path::Path;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -797,33 +794,17 @@ async fn record_maintenance_followup(id: String, status: String, message: Option
 }
 
 #[tauri::command]
-async fn scan_manager(manager: ManagerId) -> Result<ManagerScanSnapshot, String> {
-    tauri::async_runtime::spawn_blocking(move || scan_manager_snapshot(manager))
-        .await
-        .map_err(|err| format!("Package manager scan failed: {err}"))
-}
-
-#[tauri::command]
-async fn measure_path_size(path: String) -> Result<DiskUsage, String> {
-    tauri::async_runtime::spawn_blocking(move || disk_usage(Path::new(&path)))
-        .await
-        .map_err(|err| format!("Size scan failed: {err}"))
-}
-
-#[tauri::command]
-async fn hydrate_homebrew_cleanup() -> Result<HomebrewCleanupPreview, String> {
-    tauri::async_runtime::spawn_blocking(move || hydrate_homebrew_cleanup_with_runner(&run_command))
-        .await
-        .map_err(|err| format!("Homebrew cleanup dry-run failed: {err}"))
-}
-
-#[tauri::command]
-async fn hydrate_pip_outdated(python_executable: String) -> Result<PipOutdatedPreview, String> {
+async fn scan_manager(
+    manager: ManagerId,
+    on_progress: tauri::ipc::Channel<ManagerScanProgress>,
+) -> Result<ManagerScanSnapshot, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        hydrate_pip_outdated_with_runner(&python_executable, &run_command_owned)
+        scan_manager_snapshot(manager, &|progress| {
+            let _ = on_progress.send(progress);
+        })
     })
     .await
-    .map_err(|err| format!("pip outdated hydration failed: {err}"))
+    .map_err(|err| format!("Package manager scan failed: {err}"))
 }
 
 #[tauri::command]
@@ -998,9 +979,6 @@ pub fn run() {
             record_maintenance_followup,
             update_maintenance_verification,
             scan_manager,
-            measure_path_size,
-            hydrate_homebrew_cleanup,
-            hydrate_pip_outdated,
             run_npm_maintenance,
             run_pnpm_maintenance,
             run_cache_cleanup

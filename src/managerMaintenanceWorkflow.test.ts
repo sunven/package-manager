@@ -2,7 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createManagerMaintenanceWorkflow, type ManagerMaintenanceEffects } from "./managerMaintenanceWorkflow";
 import { getObservationLedgerSnapshot, resetObservationLedgerForTests } from "./observationLedger";
 import { managerFixture } from "./test/fixtures";
-import type { CacheCleanupRun, DiskUsage, HomebrewCleanupPreview, MaintenanceRunPreview, ManagerId, ManagerScanSnapshot } from "./types";
+import type {
+  CacheCleanupRun,
+  DiskUsage,
+  HomebrewCleanupPreview,
+  MaintenanceRunPreview,
+  ManagerId,
+  ManagerScanProgress,
+  ManagerScanSnapshot,
+} from "./types";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -18,15 +26,51 @@ const success: CacheCleanupRun = { manager: "Npm", outcome: "Succeeded", steps: 
 const uninstallSuccess: MaintenanceRunPreview = { status: "Ready", command, stdout: "", stderr: "", message: null, failure: null };
 
 function scanResult(id: ManagerId): ManagerScanSnapshot {
-  return { manager: managerFixture(id), scanDurationMs: 1 };
+  return { manager: managerFixture(id), scanDurationMs: 1, problems: null };
 }
 
-function supplementedResult(id: "Homebrew" | "Pip"): ManagerScanSnapshot {
-  return { ...scanResult(id), manager: managerFixture(id, {
-    paths: [{ label: "cache", kind: "Cache", path: "/cache", size: { ...size, status: "Pending", bytes: null, human: null } }],
-    ...(id === "Homebrew" ? { homebrew: { formulaCount: 1, caskCount: 0, outdatedCount: 0, leafCount: 0, outdated: [], leaves: [], cleanup: { ...cleanup, status: "Pending" } } }
-      : { pip: { pythonVersion: "3", pythonExecutable: "python3", pipVersion: "24", environmentKind: "System", sitePackages: null, userSite: null, installedCount: 0, outdatedCount: 0, editableCount: 0, directUrlCount: 0, cache: { dir: null, rawInfo: "" }, inspectStatus: "Ready", outdatedStatus: "Pending", outdatedMessage: null } }),
-  }) };
+function completeResult(id: "Homebrew" | "Pip", rawOutput = "old formula"): ManagerScanSnapshot {
+  return {
+    ...scanResult(id),
+    manager: managerFixture(id, {
+      paths: [{ label: "cache", kind: "Cache", path: "/cache", size }],
+      ...(id === "Homebrew"
+        ? {
+            homebrew: {
+              formulaCount: 1,
+              caskCount: 0,
+              outdatedCount: 0,
+              leafCount: 0,
+              outdated: [],
+              leaves: [],
+              cleanup: { ...cleanup, rawOutput },
+            },
+          }
+        : {
+            pip: {
+              pythonVersion: "3",
+              pythonExecutable: "python3",
+              pipVersion: "24",
+              environmentKind: "System",
+              sitePackages: null,
+              userSite: null,
+              installedCount: 0,
+              outdatedCount: 0,
+              editableCount: 0,
+              directUrlCount: 0,
+              cache: { dir: null, rawInfo: "" },
+              inspectStatus: "Ready",
+              outdatedStatus: "Ready",
+              outdatedMessage: null,
+              outdatedFailure: null,
+            },
+          }),
+    }),
+  };
+}
+
+function problemResult(id: "Homebrew" | "Pip", problem: string): ManagerScanSnapshot {
+  return { ...completeResult(id), problems: problem };
 }
 
 function setup(enabled: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Homebrew", "Pip", "Docker"]) {
@@ -34,9 +78,6 @@ function setup(enabled: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Homebrew", "Pip",
     readEnabled: vi.fn(() => enabled),
     writeEnabled: vi.fn(),
     scan: vi.fn<ManagerMaintenanceEffects["scan"]>(async (id) => scanResult(id)),
-    measure: vi.fn<ManagerMaintenanceEffects["measure"]>(async () => size),
-    readHomebrewCleanup: vi.fn<ManagerMaintenanceEffects["readHomebrewCleanup"]>(async () => cleanup),
-    readPipOutdated: vi.fn<ManagerMaintenanceEffects["readPipOutdated"]>(async () => ({ status: "Ready", command, outdated: [], message: null, failure: null })),
     clean: vi.fn<ManagerMaintenanceEffects["clean"]>(async () => success),
     uninstall: vi.fn<ManagerMaintenanceEffects["uninstall"]>(async () => uninstallSuccess),
   };
@@ -76,17 +117,12 @@ describe("persistent observations and maintenance receipts", () => {
     expect(workflow.read().scanStates.Npm?.scannedAt).toBe(first?.lastSuccess?.at);
   });
 
-  it("archives once after supplements settle and records failed scans without relabeling old data", async () => {
+  it("archives each completed read and records failed scans without relabeling old data", async () => {
     const { effects, workflow } = setup(["Homebrew"]);
-    const measurement = deferred<DiskUsage>();
-    effects.scan.mockResolvedValue(supplementedResult("Homebrew"));
-    effects.measure.mockReturnValue(measurement.promise);
+    effects.scan.mockResolvedValue(completeResult("Homebrew"));
     const saveSnapshot = vi.fn(async (draft: import("./managerHistory").SnapshotDraft) => ({ ...draft, id: `saved-${saveSnapshot.mock.calls.length}`, capturedAt: 1 }));
     Object.assign(effects, { saveSnapshot });
-    const reading = workflow.refresh("Homebrew");
-    await vi.waitFor(() => expect(effects.measure).toHaveBeenCalled());
-    expect(saveSnapshot).not.toHaveBeenCalled();
-    measurement.resolve(size); await reading;
+    await workflow.refresh("Homebrew");
     expect(saveSnapshot).toHaveBeenCalledTimes(1);
     expect(saveSnapshot.mock.calls[0][0].paths[0].bytes).toBe(42);
     const previous = workflow.read().managerSnapshots.Homebrew;
@@ -166,7 +202,7 @@ describe("manager maintenance workflow", () => {
     await workflow.retrySupplement("Pip", "pip");
     expect(workflow.requestCacheCleanup("Npm")).toBe(false);
     gates.Pnpm.resolve(scanResult("Pnpm"));
-    await vi.waitFor(() => expect(effects.scan).toHaveBeenCalledWith("Pip"));
+    await vi.waitFor(() => expect(effects.scan).toHaveBeenCalledWith("Pip", expect.any(Function)));
     gates.Yarn.resolve(scanResult("Yarn"));
     gates.Pip.resolve(scanResult("Pip"));
     await Promise.all(scans);
@@ -175,31 +211,38 @@ describe("manager maintenance workflow", () => {
     expect(workflow.read().scanningManagers.size).toBe(0);
   });
 
-  it("publishes base data before supplements and keeps a manager occupied until every supplement settles", async () => {
+  it("streams read progress and keeps the manager occupied until the command returns", async () => {
     const { effects, workflow } = setup();
-    const measurement = deferred<DiskUsage>();
-    const preview = deferred<HomebrewCleanupPreview>();
-    effects.scan.mockResolvedValue(supplementedResult("Homebrew"));
-    effects.measure.mockReturnValue(measurement.promise);
-    effects.readHomebrewCleanup.mockReturnValue(preview.promise);
+    const completion = deferred<ManagerScanSnapshot>();
+    let onProgress!: (progress: ManagerScanProgress) => void;
+    effects.scan.mockImplementation((_id, report) => {
+      onProgress = report;
+      return completion.promise;
+    });
     const scan = workflow.refresh("Homebrew");
-    await vi.waitFor(() => expect(workflow.read().managerSnapshots.Homebrew).toBeDefined());
-    expect(workflow.read().pendingSizeScansByManager.Homebrew).toBe(1);
+    await vi.waitFor(() => expect(onProgress).toBeDefined());
+
+    onProgress({ phase: "reading" });
+    expect(workflow.read().scanStates.Homebrew?.phase).toBe("reading");
+    onProgress({ phase: "measuring", completed: 0, total: 1 });
     expect(workflow.read().scanStates.Homebrew?.phase).toBe("enriching");
+    expect(workflow.read().pendingSizeScansByManager.Homebrew).toBe(1);
     expect(workflow.requestCacheCleanup("Homebrew")).toBe(false);
-    measurement.resolve(size);
-    await vi.waitFor(() => expect(workflow.read().pendingSizeScansByManager.Homebrew).toBe(0));
+    onProgress({ phase: "hydratingHomebrew" });
+    expect(workflow.read().pendingHomebrewCleanup).toBe(true);
     expect(workflow.read().scanningManagers.has("Homebrew")).toBe(true);
-    preview.resolve(cleanup);
+
+    completion.resolve(completeResult("Homebrew"));
     await scan;
     expect(workflow.read().managerSnapshots.Homebrew?.paths[0].size).toEqual(size);
+    expect(workflow.read().pendingSizeScansByManager.Homebrew).toBe(0);
     expect(workflow.read().pendingHomebrewCleanup).toBe(false);
     expect(workflow.read().scanningManagers.size).toBe(0);
   });
 
   it("freezes the preview, invalidates disabled targets, and rejects callbacks from an old confirmation", async () => {
     const { effects, workflow } = setup();
-    effects.scan.mockResolvedValue(supplementedResult("Homebrew"));
+    effects.scan.mockResolvedValue(completeResult("Homebrew"));
     await workflow.refresh("Homebrew");
     workflow.requestCacheCleanup("Homebrew");
     const original = workflow.read().maintenance!;
@@ -214,7 +257,7 @@ describe("manager maintenance workflow", () => {
     expect(effects.clean).not.toHaveBeenCalled();
     workflow.cancelMaintenance(original.id);
     workflow.setManagerEnabled("Homebrew", true);
-    effects.readHomebrewCleanup.mockResolvedValue({ ...cleanup, rawOutput: "new formula" });
+    effects.scan.mockResolvedValueOnce(completeResult("Homebrew", "new formula"));
     await workflow.refresh("Homebrew");
     workflow.requestCacheCleanup("Homebrew");
     expect(workflow.read().maintenance?.reclaimDetails).toBe("new formula");
@@ -277,47 +320,46 @@ describe("manager maintenance workflow", () => {
     expect(workflow.read().maintenance?.execution).toBe(execution);
     expect(workflow.read().maintenance?.verification.status).toBe("succeeded");
     expect(effects.clean).toHaveBeenCalledTimes(1);
-    expect(effects.scan.mock.calls).toEqual([["Npm"], ["Npm"], ["Npm"]]);
+    expect(effects.scan.mock.calls.map(([id]) => id)).toEqual(["Npm", "Npm", "Npm"]);
   });
 
-  it.each(["Homebrew", "Pip"] as const)("includes all %s supplements in verification and retry", async (manager) => {
+  it.each(["Homebrew", "Pip"] as const)("verifies %s read problems and retries the full read", async (manager) => {
     const { effects, workflow } = setup();
-    effects.scan.mockResolvedValue(supplementedResult(manager));
+    effects.scan.mockResolvedValueOnce(completeResult(manager));
     await workflow.refresh(manager);
     workflow.requestCacheCleanup(manager);
     const id = workflow.read().maintenance!.id;
-    effects.measure.mockRejectedValueOnce(new Error("permission denied"));
+    effects.scan.mockResolvedValueOnce(problemResult(manager, "permission denied"));
     await workflow.confirmMaintenance(id);
     expect(workflow.read().maintenance?.execution?.status).toBe("succeeded");
     expect(workflow.read().maintenance?.verification.status).toBe("failed");
+    effects.scan.mockResolvedValueOnce(completeResult(manager));
     await workflow.retryVerification(id);
     expect(workflow.read().maintenance?.verification.status).toBe("succeeded");
     expect(effects.clean).toHaveBeenCalledTimes(1);
-    expect(effects.scan.mock.calls).toEqual([[manager], [manager], [manager]]);
-    expect(effects.measure).toHaveBeenCalledTimes(3);
-    expect(manager === "Homebrew" ? effects.readHomebrewCleanup : effects.readPipOutdated).toHaveBeenCalledTimes(3);
+    expect(effects.scan.mock.calls.map(([id]) => id)).toEqual([manager, manager, manager]);
   });
 
-  it("waits for an existing supplement retry, then performs a fresh full verification", async () => {
+  it("waits for an in-progress supplement retry before a fresh verification read", async () => {
     const { effects, workflow } = setup();
-    effects.scan.mockResolvedValue(supplementedResult("Pip"));
+    effects.scan.mockResolvedValueOnce(completeResult("Pip"));
     await workflow.refresh("Pip");
     workflow.requestCacheCleanup("Pip");
     const id = workflow.read().maintenance!.id;
-    effects.measure.mockRejectedValueOnce(new Error("permission denied"));
+    effects.scan.mockResolvedValueOnce(problemResult("Pip", "permission denied"));
     await workflow.confirmMaintenance(id);
-    const measurement = deferred<DiskUsage>();
-    effects.measure.mockReturnValueOnce(measurement.promise);
+
+    const first = deferred<ManagerScanSnapshot>();
+    effects.scan.mockReturnValueOnce(first.promise);
+    effects.scan.mockResolvedValueOnce(completeResult("Pip"));
     const supplement = workflow.retrySupplement("Pip", "paths");
     const reread = workflow.retryVerification(id);
-    await vi.waitFor(() => expect(effects.measure).toHaveBeenCalledTimes(3));
-    expect(effects.scan).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(effects.scan).toHaveBeenCalledTimes(3));
     expect(workflow.read().maintenanceBusy).toBe(true);
-    measurement.resolve(size);
+    first.resolve(completeResult("Pip"));
     await Promise.all([supplement, reread]);
-    expect(effects.scan).toHaveBeenCalledTimes(3);
-    expect(effects.measure).toHaveBeenCalledTimes(4);
-    expect(effects.readPipOutdated).toHaveBeenCalledTimes(3);
+    expect(effects.scan).toHaveBeenCalledTimes(4);
+    expect(workflow.read().maintenance?.verification.status).toBe("succeeded");
     expect(effects.clean).toHaveBeenCalledTimes(1);
   });
 
@@ -329,7 +371,7 @@ describe("manager maintenance workflow", () => {
     await workflow.confirmMaintenance(workflow.read().maintenance!.id);
     expect(workflow.read().maintenance?.execution?.status).toBe(outcome === "Failed" ? "failed" : "partial");
     expect(workflow.read().maintenance?.verification.status).toBe("succeeded");
-    expect(effects.scan.mock.calls).toEqual([["Docker"], ["Docker"]]);
+    expect(effects.scan.mock.calls.map(([id]) => id)).toEqual(["Docker", "Docker"]);
   });
 
   it.each(["Npm", "Pnpm"] as const)("uninstalls the frozen %s package and verifies native timeout failures", async (manager) => {

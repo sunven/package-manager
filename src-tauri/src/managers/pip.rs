@@ -9,7 +9,7 @@ use crate::types::{
     PipOutdatedPreview,
 };
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::Path;
 use std::time::Duration;
@@ -245,6 +245,7 @@ where
         inspect_status,
         outdated_status: AsyncStatus::Pending,
         outdated_message: Some("Outdated scan pending".to_string()),
+        outdated_failure: None,
     });
 
     snapshot.scope_key = resolved_python.as_ref().and_then(|_| {
@@ -527,6 +528,35 @@ where
     }
 }
 
+pub(super) fn merge_pip_outdated(
+    snapshot: &mut ManagerSnapshot,
+    preview: &PipOutdatedPreview,
+) {
+    let outdated = preview
+        .outdated
+        .iter()
+        .map(|name| name.to_lowercase())
+        .collect::<HashSet<_>>();
+    for package in &mut snapshot.packages {
+        package
+            .signals
+            .retain(|signal| !matches!(signal, PackageSignal::Outdated));
+        if outdated.contains(&package.name.to_lowercase()) {
+            package.signals.push(PackageSignal::Outdated);
+        }
+    }
+    if let Some(pip) = snapshot.pip.as_mut() {
+        pip.outdated_status = preview.status;
+        pip.outdated_count = if matches!(preview.status, AsyncStatus::Ready) {
+            outdated.len()
+        } else {
+            0
+        };
+        pip.outdated_message = preview.message.clone();
+        pip.outdated_failure = preview.failure.clone();
+    }
+}
+
 fn parse_pip_outdated(stdout: &str) -> Result<Vec<String>, String> {
     let value: Value = serde_json::from_str(stdout).map_err(|err| err.to_string())?;
     let packages = value
@@ -542,8 +572,13 @@ fn parse_pip_outdated(stdout: &str) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{enrich_pip_from_inspect, parse_pip_list, parse_pip_outdated};
-    use crate::types::{PackageKind, PackageSignal};
+    use super::{enrich_pip_from_inspect, merge_pip_outdated, parse_pip_list, parse_pip_outdated};
+    use crate::command::envelope_owned;
+    use crate::managers::scan_support::{empty_snapshot, package_row};
+    use crate::types::{
+        AsyncStatus, ManagerId, PackageKind, PackageSignal, PipCacheInfo, PipEnvironmentHealth,
+        PipEnvironmentKind, PipOutdatedPreview,
+    };
 
     #[test]
     fn scan_source_uses_the_same_interpreter_as_inventory_and_never_a_failed_probe_fallback() {
@@ -659,5 +694,76 @@ mod tests {
         .expect("parse outdated");
 
         assert_eq!(outdated, vec!["black".to_string(), "requests".to_string()]);
+    }
+
+    #[test]
+    fn merges_outdated_preview_into_package_signals_and_health() {
+        let mut snapshot = empty_snapshot(ManagerId::Pip, "pip");
+        snapshot.packages = vec![
+            package_row(
+                "Black".into(),
+                "23.0.0".into(),
+                None,
+                "pip",
+                PackageKind::PythonDistribution,
+            ),
+            package_row(
+                "requests".into(),
+                "2.31.0".into(),
+                None,
+                "pip",
+                PackageKind::PythonDistribution,
+            ),
+        ];
+        snapshot.pip = Some(PipEnvironmentHealth {
+            python_version: "3.12.0".into(),
+            python_executable: "/usr/bin/python3".into(),
+            pip_version: "24.0".into(),
+            environment_kind: PipEnvironmentKind::System,
+            site_packages: None,
+            user_site: None,
+            installed_count: 2,
+            outdated_count: 0,
+            editable_count: 0,
+            direct_url_count: 0,
+            cache: PipCacheInfo {
+                dir: None,
+                raw_info: String::new(),
+            },
+            inspect_status: AsyncStatus::Ready,
+            outdated_status: AsyncStatus::Pending,
+            outdated_message: None,
+            outdated_failure: None,
+        });
+        let preview = PipOutdatedPreview {
+            status: AsyncStatus::Ready,
+            command: envelope_owned(
+                "python3",
+                vec![
+                    "-m".into(),
+                    "pip".into(),
+                    "list".into(),
+                    "--outdated".into(),
+                    "--format=json".into(),
+                ],
+                30_000,
+            ),
+            outdated: vec!["BLACK".into()],
+            message: None,
+            failure: None,
+        };
+
+        merge_pip_outdated(&mut snapshot, &preview);
+
+        assert!(snapshot.packages[0]
+            .signals
+            .contains(&PackageSignal::Outdated));
+        assert!(!snapshot.packages[1]
+            .signals
+            .contains(&PackageSignal::Outdated));
+        let pip = snapshot.pip.unwrap();
+        assert_eq!(pip.outdated_status, AsyncStatus::Ready);
+        assert_eq!(pip.outdated_count, 1);
+        assert!(pip.outdated_failure.is_none());
     }
 }

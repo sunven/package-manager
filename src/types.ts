@@ -267,7 +267,14 @@ export interface ManagerScanSnapshot {
   scanDurationMs: number;
   manager: ManagerSnapshot;
   diagnostics?: ScanDiagnostics;
+  problems: string | null;
 }
+
+export type ManagerScanProgress =
+  | { phase: "reading" }
+  | { phase: "measuring"; completed: number; total: number }
+  | { phase: "hydratingHomebrew" }
+  | { phase: "hydratingPip" };
 
 export interface ScanDiagnostics {
   pathEntries: string[];

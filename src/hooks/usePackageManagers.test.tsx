@@ -6,7 +6,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { usePackageManagers } from "./usePackageManagers";
 import { managerFixture } from "../test/fixtures";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(),
+  Channel: class {
+    constructor(readonly onmessage: (message: unknown) => void) {}
+  },
+}));
 vi.mock("@tauri-apps/api/path", () => ({ homeDir: async () => "/home/test" }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openPath: vi.fn() }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn() }));
@@ -57,22 +62,30 @@ describe("manager scan lifecycle", () => {
     });
   });
 
-  it("retains pip supplement failure details and clears them on a targeted retry", async () => {
+  it("retains pip read problems and clears them on a full retry", async () => {
     const command = { program: "python3", args: ["-m", "pip", "list", "--outdated", "--format=json"], preview: "python3 -m pip list --outdated --format=json", timeoutMs: 30000 };
-    const failure = { kind: "Timeout", message: "index timed out", command, stdout: "", stderr: "network unavailable" };
-    const manager = managerFixture("Pip", { pip: {
-      pythonVersion: "3", pythonExecutable: "python3", pipVersion: "24", environmentKind: "System", sitePackages: null, userSite: null,
-      installedCount: 0, outdatedCount: 0, editableCount: 0, directUrlCount: 0, cache: { dir: null, rawInfo: "" }, inspectStatus: "Ready", outdatedStatus: "Pending", outdatedMessage: null,
-    } });
-    vi.mocked(invoke).mockResolvedValueOnce({ manager, scanDurationMs: 1 }).mockResolvedValueOnce({ status: "Failed", command, outdated: [], message: failure.message, failure });
+    const failure = { kind: "Timeout" as const, message: "index timed out", command, stdout: "", stderr: "network unavailable" };
+    const pip = {
+      pythonVersion: "3", pythonExecutable: "python3", pipVersion: "24", environmentKind: "System" as const, sitePackages: null, userSite: null,
+      installedCount: 0, outdatedCount: 0, editableCount: 0, directUrlCount: 0, cache: { dir: null, rawInfo: "" }, inspectStatus: "Ready" as const,
+    };
+    let scans = 0;
+    vi.mocked(invoke).mockImplementation(async (name) => {
+      if (name === "scan_manager") {
+        scans += 1;
+        return scans === 1
+          ? { manager: managerFixture("Pip", { pip: { ...pip, outdatedStatus: "Failed" as const, outdatedMessage: failure.message, outdatedFailure: failure } }), scanDurationMs: 1, problems: failure.message }
+          : { manager: managerFixture("Pip", { pip: { ...pip, outdatedStatus: "Ready" as const, outdatedMessage: null, outdatedFailure: null } }), scanDurationMs: 1, problems: null };
+      }
+      return { id: "snapshot-1" };
+    });
     const { result } = renderHook(usePackageManagers);
     await act(async () => { await result.current.actions.refresh("Pip"); });
     expect(result.current.managerSnapshots.Pip?.pip?.outdatedFailure).toEqual(failure);
     act(() => result.current.actions.selectManager("Pip"));
-    vi.mocked(invoke).mockResolvedValueOnce({ status: "Ready", command, outdated: [], message: null, failure: null });
     await act(async () => { await result.current.actions.retrySupplement("pip"); });
     expect(result.current.managerSnapshots.Pip?.pip?.outdatedFailure).toBeNull();
-    expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual(["scan_manager", "hydrate_pip_outdated", "save_manager_snapshot", "hydrate_pip_outdated"]);
+    expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual(["scan_manager", "save_manager_snapshot", "scan_manager", "save_manager_snapshot"]);
   });
   it("blocks refresh and retries during maintenance confirmation, then allows scanning after cancellation", async () => {
     vi.mocked(invoke).mockResolvedValue({ manager: managerFixture(), scanDurationMs: 1 });
@@ -96,7 +109,7 @@ describe("manager scan lifecycle", () => {
     vi.mocked(invoke).mockResolvedValueOnce({ manager: previous, scanDurationMs: 1 });
     const { result } = renderHook(usePackageManagers);
     await act(async () => { await result.current.actions.refresh("Npm"); });
-    vi.mocked(invoke).mockResolvedValueOnce({ manager: managerFixture("Npm", { status: "Failed" }), scanDurationMs: 1 });
+    vi.mocked(invoke).mockResolvedValueOnce({ manager: managerFixture("Npm", { status: "Failed" }), scanDurationMs: 1, problems: "manager scan failed" });
     await act(async () => { await result.current.actions.refresh("Npm"); });
     expect(result.current.currentManager?.version).toBe("old");
     expect(result.current.scanStates.Npm?.error).toBeTruthy();
@@ -125,19 +138,34 @@ describe("manager scan lifecycle", () => {
     expect(result.current.scanningAll).toBe(false);
   });
 
-  it("publishes the package list before a failed size measurement, and retries only that measurement", async () => {
-    const manager = managerFixture("Npm", { paths: [{ label: "cache", kind: "Cache", path: "/cache", size: { status: "Pending", bytes: null, human: null, files: 0, directories: 0, skipped: 0, message: null } }] });
-    vi.mocked(invoke).mockResolvedValueOnce({ manager, scanDurationMs: 1 }).mockRejectedValueOnce(new Error("permission denied"));
+  it("installs a measured snapshot and retries the full read after a path problem", async () => {
+    const failed = managerFixture("Npm", {
+      paths: [{ label: "cache", kind: "Cache", path: "/cache", size: { status: "Error", bytes: null, human: null, files: 0, directories: 0, skipped: 0, message: "permission denied" } }],
+    });
+    const fixed = managerFixture("Npm", {
+      paths: [{ label: "cache", kind: "Cache", path: "/cache", size: { status: "Ready", bytes: 42, human: "42 B", files: 1, directories: 0, skipped: 0, message: null } }],
+    });
+    let scans = 0;
+    vi.mocked(invoke).mockImplementation(async (name) => {
+      if (name === "scan_manager") {
+        scans += 1;
+        return scans === 1
+          ? { manager: failed, scanDurationMs: 1, problems: "cache：permission denied" }
+          : { manager: fixed, scanDurationMs: 1, problems: null };
+      }
+      return { id: "snapshot-1" };
+    });
     const { result } = renderHook(usePackageManagers);
     await act(async () => { await result.current.actions.refresh(); });
     expect(result.current.currentManager).not.toBeNull();
     expect(result.current.currentManager?.paths[0].size.status).toBe("Error");
-    vi.mocked(invoke).mockResolvedValueOnce({ status: "Ready", bytes: 42, human: "42 B", files: 1, directories: 0, skipped: 0, message: null });
+    expect(result.current.scanStates.Npm?.error).toBe("cache：permission denied");
     await act(async () => { await result.current.actions.retrySupplement("paths"); });
     expect(result.current.currentManager?.paths[0].size.bytes).toBe(42);
     expect(result.current.scanStates.Npm?.error).toBeNull();
-    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual(["scan_manager", "measure_path_size", "save_manager_snapshot", "measure_path_size"]);
+    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual(["scan_manager", "save_manager_snapshot", "scan_manager", "save_manager_snapshot"]);
   });
+
 });
 
 
@@ -179,7 +207,10 @@ it("keeps the confirmed manager when selection changes and sends the existing na
   vi.mocked(invoke).mockResolvedValueOnce({ status: "Ready", command: { preview: "npm uninstall -g @scope/tool" }, stdout: "", stderr: "", message: null, failure: null });
   await act(async () => { await result.current.actions.confirmMaintenance(); });
   expect(invoke).toHaveBeenCalledWith("run_npm_maintenance", { beforeSnapshotId: null, operation: { kind: "uninstallGlobalPackage", packageName: "@scope/tool" } });
-  expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")[2]).toEqual(["scan_manager", { manager: "Npm" }]);
+  expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")[2]).toEqual([
+    "scan_manager",
+    expect.objectContaining({ manager: "Npm" }),
+  ]);
   expect(result.current.selectedManager).toBe("Pip");
   expect(result.current.maintenance?.execution?.status).toBe("succeeded");
 });

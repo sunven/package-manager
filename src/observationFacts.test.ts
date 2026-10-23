@@ -126,7 +126,7 @@ describe("observation facts", () => {
     const skipped = managerFixture("Npm", {
       paths: [{ kind: "Cache", label: "cache", path: "/cache", size: { status: "Ready", bytes: 1, human: "1 B", files: 1, directories: 0, skipped: 1, message: null } }],
     });
-    expect(managerObservationFacts(skipped, state()).success?.completeness).toBe("partial");
+    expect(managerObservationFacts(skipped, state({ error: "cache：目录读取不完整" })).success?.completeness).toBe("partial");
     const unsupported = managerObservationFacts(managerFixture("Yarn", { status: "Unsupported" }), state());
     expect(unsupported.success?.completeness).toBe("complete");
     expect(unsupported.success?.note).toBe("清单不可用");
