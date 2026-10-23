@@ -20,9 +20,8 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { formatBytes, formatHomePath } from "../utils/format";
 import {
+  ageRemovalRequest,
   bulkRemovalConfirmText,
-  bulkRemovalRequest,
-  openCodeAgeEligibleCount,
   formatSessionActivity,
   removableSessionRecords,
   removalProgressBreakdown,
@@ -428,7 +427,6 @@ export function SessionRecordsPage({
             onRefresh={openCode.refresh}
             scan={openCodeScan}
             scanning={openCodeScanning}
-            nowMs={nowMs ?? Date.now()}
           />
         </TabsContent>
       </Tabs>
@@ -448,7 +446,6 @@ function RefreshNotice({ value, onRetry }: { value: SessionRefresh; onRetry: () 
 function OpenCodeSection({
   scan,
   scanning,
-  nowMs,
   preparing,
   error,
   prepareError,
@@ -466,7 +463,6 @@ function OpenCodeSection({
 }: {
   scan: OpenCodeSessionScan | null;
   scanning: boolean;
-  nowMs: number;
   preparing: boolean;
   error: string | null;
   prepareError: string | null;
@@ -491,10 +487,10 @@ function OpenCodeSection({
   const selectedSet = new Set(selectedIds);
   const selectedRecords = records.filter((record) => selectedSet.has(record.id));
   const eligibleAge7 = scan?.status === "ready" && scan.activeSessionIds
-    ? openCodeAgeEligibleCount(scan.records, 7, nowMs, scan.activeSessionIds)
+    ? scan.ageEligible.days7
     : null;
   const eligibleAge30 = scan?.status === "ready" && scan.activeSessionIds
-    ? openCodeAgeEligibleCount(scan.records, 30, nowMs, scan.activeSessionIds)
+    ? scan.ageEligible.days30
     : null;
 
   return (
@@ -686,8 +682,8 @@ function SourceSection({
   const selected = selectedRemovalRequest(records, selectedIds);
   const selectedCount = selected?.count ?? 0;
   const selectedSet = new Set(selected?.ids ?? []);
-  const eligibleAge7 = bulkRemovalRequest(allSourceRecords, 7, nowMs)?.count ?? 0;
-  const eligibleAge30 = bulkRemovalRequest(allSourceRecords, 30, nowMs)?.count ?? 0;
+  const eligibleAge7 = source?.ageEligible.days7 ?? 0;
+  const eligibleAge30 = source?.ageEligible.days30 ?? 0;
   const inUseCount = allSourceRecords.filter((record) => record.inUse).length;
   const unknownActivityCount = allSourceRecords.filter((record) => record.lastActivityMs === null).length;
   const recentAge7Count = allSourceRecords.filter((record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs >= nowMs - 7 * 24 * 60 * 60 * 1000).length;
@@ -720,7 +716,7 @@ function SourceSection({
             {scanning ? "读取中" : "刷新"}
           </Button>
           {([7, 30] as const).map((days) => {
-            const request = bulkRemovalRequest(source?.records ?? [], days, nowMs);
+            const request = ageRemovalRequest(source?.ageEligible, days);
             return (
               <Button
                 aria-describedby={`${sourceKey}-age-removal-help ${ageEligibilityId}`}

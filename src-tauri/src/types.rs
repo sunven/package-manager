@@ -400,6 +400,13 @@ pub(crate) struct CacheCleanupRun {
     pub(crate) message: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgeEligibleCounts {
+    pub days7: usize,
+    pub days30: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NpmMaintenanceOperation, PnpmMaintenanceOperation};

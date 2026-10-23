@@ -1,6 +1,6 @@
 use crate::opencode_sessions::{
-    check_deletable, delete_checked, discover, read_records, running_ids, send_delete, valid_session_id,
-    OpenCodeSessionRecord, Service,
+    check_deletable, delete_checked, discover, eligible_ids, read_records, running_ids,
+    send_delete, valid_session_id, OpenCodeSessionRecord, Service,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -591,35 +591,6 @@ fn affected_by_root(
         );
     }
     affected
-}
-
-fn eligible_ids(
-    records: &[OpenCodeSessionRecord],
-    active: &HashSet<String>,
-    cutoff_ms: i64,
-) -> Vec<String> {
-    let by_id = records
-        .iter()
-        .map(|record| (record.id.as_str(), record))
-        .collect::<HashMap<_, _>>();
-    let mut blocked = HashSet::new();
-    for record in records {
-        if record.last_activity_ms < cutoff_ms && !active.contains(&record.id) {
-            continue;
-        }
-        let mut current = Some(record);
-        while let Some(record) = current {
-            if !blocked.insert(record.id.clone()) {
-                break;
-            }
-            current = record.parent_id.as_ref().and_then(|parent| by_id.get(parent.as_str()).copied());
-        }
-    }
-    records
-        .iter()
-        .filter(|record| !blocked.contains(&record.id))
-        .map(|record| record.id.clone())
-        .collect()
 }
 
 fn unique_valid_ids(session_ids: &[String]) -> Result<Vec<String>, String> {

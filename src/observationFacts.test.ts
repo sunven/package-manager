@@ -98,6 +98,7 @@ const sessionScan = (overrides: Partial<SessionSourceScan> = {}): SessionSourceS
   status: "Ready",
   records: [],
   message: null,
+  ageEligible: { days7: 0, days30: 0 },
   ...overrides,
 });
 
@@ -107,6 +108,7 @@ const openCode = (overrides: Partial<OpenCodeSessionScan> = {}): OpenCodeSession
   message: null,
   activeSessionIds: [],
   activityMessage: null,
+  ageEligible: { days7: 0, days30: 0 },
   ...overrides,
 });
 

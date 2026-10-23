@@ -15,6 +15,7 @@ const codex: SessionSourceScan = {
   directory: "/Users/example/.codex/sessions",
   status: "Ready",
   message: null,
+  ageEligible: { days7: 0, days30: 0 },
   records: [
     {
       id: "2026/09/24/chat.jsonl",
@@ -33,6 +34,7 @@ const scan: SessionRecordScan = {
     directory: "/Users/example/.claude/projects",
     status: "Missing",
     message: null,
+    ageEligible: { days7: 0, days30: 0 },
     records: [],
   },
 };
@@ -108,6 +110,7 @@ describe("SessionRecordsPage", () => {
             status: "Failed",
             message: "无法读取会话记录目录",
             records: [],
+            ageEligible: { days7: 0, days30: 0 },
           },
         }}
       />,

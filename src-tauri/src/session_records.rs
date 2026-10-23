@@ -1,3 +1,4 @@
+use crate::types::AgeEligibleCounts;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::value::RawValue;
@@ -9,6 +10,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const TITLE_LIMIT: usize = 140;
+const DAY_MS: i64 = 86_400_000;
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +26,7 @@ pub(crate) struct SessionSourceScan {
     pub status: SessionScanStatus,
     pub records: Vec<SessionRecord>,
     pub message: Option<String>,
+    pub age_eligible: AgeEligibleCounts,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -98,6 +101,7 @@ fn failed_source(directory: String, message: String) -> SessionSourceScan {
         status: SessionScanStatus::Failed,
         records: Vec::new(),
         message: Some(message),
+        age_eligible: AgeEligibleCounts::default(),
     }
 }
 
@@ -282,10 +286,7 @@ pub(crate) fn remove_older_default_with_reporter(
             return Ok(SessionRemovalResult::aborted(message));
         }
     };
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or(0);
+    let now_ms = now_ms();
     let format = match source {
         SessionSourceKind::Codex => RecordFormat::Codex,
         SessionSourceKind::Claude => RecordFormat::Claude,
@@ -334,7 +335,7 @@ pub(crate) fn remove_older_than_with_reporter(
     report: &mut dyn FnMut(SessionRemovalProgress),
     on_item: &mut dyn FnMut(&SessionRemovalItem),
 ) -> SessionRemovalResult {
-    let cutoff = now_ms.saturating_sub(i64::try_from(days).unwrap_or(0).saturating_mul(86_400_000));
+    let cutoff = cutoff_ms(i64::try_from(days).unwrap_or(0), now_ms);
     let scan = match list_records(directory, is_open, format) {
         Ok(scan) => scan,
         Err(message) => {
@@ -653,6 +654,7 @@ fn list_records(
         status: SessionScanStatus::Ready,
         records: Vec::new(),
         message: None,
+        age_eligible: AgeEligibleCounts::default(),
     };
     let metadata = match fs::symlink_metadata(directory) {
         Ok(metadata) => metadata,
@@ -701,7 +703,41 @@ fn list_records(
             in_use: is_open(&path),
         });
     }
+    scan.age_eligible = age_eligible_counts(&scan.records, now_ms());
     Ok(scan)
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+fn cutoff_ms(days: i64, now_ms: i64) -> i64 {
+    now_ms.saturating_sub(days.saturating_mul(DAY_MS))
+}
+
+pub(crate) fn age_eligible_counts(
+    records: &[SessionRecord],
+    now_ms: i64,
+) -> AgeEligibleCounts {
+    let count = |days: i64| {
+        let cutoff = cutoff_ms(days, now_ms);
+        records
+            .iter()
+            .filter(|record| {
+                !record.in_use
+                    && record
+                        .last_activity_ms
+                        .is_some_and(|last_activity| last_activity < cutoff)
+            })
+            .count()
+    };
+    AgeEligibleCounts {
+        days7: count(7),
+        days30: count(30),
+    }
 }
 
 fn collect_session_files(dir: &Path, files: &mut Vec<PathBuf>, scan: &mut SessionSourceScan) {
@@ -1765,6 +1801,30 @@ mod tests {
             .records
             .iter()
             .all(|record| !record.id.ends_with("just-old.jsonl")));
+    }
+
+    #[test]
+    fn age_eligible_counts_exclude_recent_in_use_and_unknown_activity() {
+        let now = 40 * DAY_MS;
+        let record = |id: &str, last_activity_ms: Option<i64>, in_use: bool| SessionRecord {
+            id: id.into(),
+            title: id.into(),
+            last_activity_ms,
+            working_directory: None,
+            bytes: 0,
+            in_use,
+        };
+        let records = vec![
+            record("old", Some(DAY_MS), false),
+            record("mid", Some(20 * DAY_MS), false),
+            record("fresh", Some(39 * DAY_MS), false),
+            record("busy", Some(DAY_MS), true),
+            record("unknown", None, false),
+        ];
+
+        let counts = age_eligible_counts(&records, now);
+        assert_eq!(counts.days7, 2);
+        assert_eq!(counts.days30, 1);
     }
 }
 

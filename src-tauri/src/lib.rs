@@ -449,6 +449,7 @@ async fn scan_opencode_sessions() -> opencode_sessions::OpenCodeSessionScan {
             message: Some("OpenCode 会话读取任务未能完成。".into()),
             active_session_ids: None,
             activity_message: None,
+            age_eligible: Default::default(),
         })
 }
 

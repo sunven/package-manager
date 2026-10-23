@@ -1,12 +1,14 @@
+use crate::types::AgeEligibleCounts;
 use reqwest::blocking::{Client, Response};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const PAGE_SIZE: usize = 100;
 const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
@@ -28,6 +30,7 @@ pub(crate) struct OpenCodeSessionScan {
     pub message: Option<String>,
     pub active_session_ids: Option<Vec<String>>,
     pub activity_message: Option<String>,
+    pub age_eligible: AgeEligibleCounts,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -131,6 +134,7 @@ pub(crate) fn scan_default() -> OpenCodeSessionScan {
             message: Some(message),
             active_session_ids: None,
             activity_message: None,
+            age_eligible: AgeEligibleCounts::default(),
         },
         Err(ScanError::Failed(message)) => OpenCodeSessionScan {
             status: OpenCodeScanStatus::Failed,
@@ -138,6 +142,7 @@ pub(crate) fn scan_default() -> OpenCodeSessionScan {
             message: Some(message),
             active_session_ids: None,
             activity_message: None,
+            age_eligible: AgeEligibleCounts::default(),
         },
     }
 }
@@ -227,7 +232,75 @@ fn scan_with_activity(service: &Service) -> Result<OpenCodeSessionScan, ScanErro
         Ok(ids) => (Some(ids), None),
         Err(message) => (None, Some(format!("无法读取运行状态，按年龄删除暂不可用：{message}"))),
     };
-    Ok(OpenCodeSessionScan { status: OpenCodeScanStatus::Ready, records, message: None, active_session_ids, activity_message })
+    let age_eligible = active_session_ids
+        .as_ref()
+        .map(|active| {
+            let active = active.iter().cloned().collect::<HashSet<_>>();
+            age_eligible_counts(&records, &active, now_ms())
+        })
+        .unwrap_or_default();
+    Ok(OpenCodeSessionScan {
+        status: OpenCodeScanStatus::Ready,
+        records,
+        message: None,
+        active_session_ids,
+        activity_message,
+        age_eligible,
+    })
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+pub(crate) fn eligible_ids(
+    records: &[OpenCodeSessionRecord],
+    active: &HashSet<String>,
+    cutoff_ms: i64,
+) -> Vec<String> {
+    let by_id = records
+        .iter()
+        .map(|record| (record.id.as_str(), record))
+        .collect::<HashMap<_, _>>();
+    let mut blocked = HashSet::new();
+    for record in records {
+        if record.last_activity_ms < cutoff_ms && !active.contains(&record.id) {
+            continue;
+        }
+        let mut current = Some(record);
+        while let Some(record) = current {
+            if !blocked.insert(record.id.clone()) {
+                break;
+            }
+            current = record
+                .parent_id
+                .as_ref()
+                .and_then(|parent| by_id.get(parent.as_str()).copied());
+        }
+    }
+    records
+        .iter()
+        .filter(|record| !blocked.contains(&record.id))
+        .map(|record| record.id.clone())
+        .collect()
+}
+
+pub(crate) fn age_eligible_counts(
+    records: &[OpenCodeSessionRecord],
+    active: &HashSet<String>,
+    now_ms: i64,
+) -> AgeEligibleCounts {
+    let count = |days: i64| {
+        let cutoff_ms = now_ms.saturating_sub(days.saturating_mul(86_400_000));
+        eligible_ids(records, active, cutoff_ms).len()
+    };
+    AgeEligibleCounts {
+        days7: count(7),
+        days30: count(30),
+    }
 }
 
 fn scan_service(service: &Service) -> Result<Vec<OpenCodeSessionRecord>, ScanError> {
@@ -717,8 +790,38 @@ mod tests {
         assert_eq!(scan.status, OpenCodeScanStatus::Ready);
         assert_eq!(scan.records.len(), 1);
         assert_eq!(scan.active_session_ids, None);
+        assert_eq!(scan.age_eligible, AgeEligibleCounts::default());
         assert!(scan.activity_message.unwrap().contains("按年龄删除暂不可用"));
         assert_eq!(server.join().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn age_eligible_counts_preserve_recent_descendants() {
+        let record = |id: &str, last_activity_ms: i64, parent_id: Option<&str>| {
+            OpenCodeSessionRecord {
+                id: id.into(),
+                title: id.into(),
+                last_activity_ms,
+                working_directory: "/work".into(),
+                archived: false,
+                parent_id: parent_id.map(str::to_string),
+                parent_title: None,
+            }
+        };
+        let now = 40 * 86_400_000;
+        let records = vec![
+            record("old-parent", 1 * 86_400_000, None),
+            record("recent-child", 20 * 86_400_000, Some("old-parent")),
+            record("old-leaf", 2 * 86_400_000, None),
+        ];
+
+        let counts = age_eligible_counts(&records, &HashSet::new(), now);
+        assert_eq!(counts.days7, 3);
+        assert_eq!(counts.days30, 1);
+
+        let active = HashSet::from(["old-leaf".to_string()]);
+        let counts = age_eligible_counts(&records, &active, now);
+        assert_eq!(counts.days30, 0);
     }
 
     #[test]

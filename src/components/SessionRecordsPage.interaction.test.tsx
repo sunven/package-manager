@@ -30,12 +30,18 @@ const mockedInvoke = vi.mocked(invoke);
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 const scan: SessionRecordScan = {
-  codex: { directory: "/codex/sessions", status: "Ready", message: null, records: [
-    { id: "alpha.jsonl", title: "Alpha project", workingDirectory: "/code/alpha", lastActivityMs: 1, bytes: 100, inUse: false },
-    { id: "beta.jsonl", title: "Beta project", workingDirectory: "/code/beta", lastActivityMs: 1, bytes: 200, inUse: false },
-    { id: "busy.jsonl", title: "Busy project", workingDirectory: null, lastActivityMs: 1, bytes: 300, inUse: true },
-  ] },
-  claude: { directory: "/claude/projects", status: "Missing", records: [], message: null },
+  codex: {
+    directory: "/codex/sessions",
+    status: "Ready",
+    message: null,
+    ageEligible: { days7: 2, days30: 2 },
+    records: [
+      { id: "alpha.jsonl", title: "Alpha project", workingDirectory: "/code/alpha", lastActivityMs: 1, bytes: 100, inUse: false },
+      { id: "beta.jsonl", title: "Beta project", workingDirectory: "/code/beta", lastActivityMs: 1, bytes: 200, inUse: false },
+      { id: "busy.jsonl", title: "Busy project", workingDirectory: null, lastActivityMs: 1, bytes: 300, inUse: true },
+    ],
+  },
+  claude: { directory: "/claude/projects", status: "Missing", records: [], message: null, ageEligible: { days7: 0, days30: 0 } },
 };
 
 const openCodeScan: OpenCodeSessionScan = {
@@ -43,6 +49,7 @@ const openCodeScan: OpenCodeSessionScan = {
   message: null,
   activeSessionIds: [],
   activityMessage: null,
+  ageEligible: { days7: 2, days30: 2 },
   records: [
     { id: "ses_parent", title: "Parent session", lastActivityMs: 20, workingDirectory: "/work/project", archived: false, parentId: null, parentTitle: null },
     { id: "ses_child", title: "Archived child", lastActivityMs: 30, workingDirectory: "/work/project/subproject", archived: true, parentId: "ses_parent", parentTitle: "Parent session" },
@@ -108,7 +115,18 @@ async function setup(overrides: Options = {}) {
   planSequence = 0;
   const selected = vi.fn().mockResolvedValue(removalResult({ skipped: 1, items: [{ id: "beta.jsonl", status: "Skipped", reason: "InUse", message: null }] }));
   const age = vi.fn().mockResolvedValue(removalResult());
-  const fixtures = { scan, openCodeScan: { status: "ready", records: [], message: null, activeSessionIds: [], activityMessage: null } as OpenCodeSessionScan, ...overrides };
+  const fixtures = {
+    scan,
+    openCodeScan: {
+      status: "ready",
+      records: [],
+      message: null,
+      activeSessionIds: [],
+      activityMessage: null,
+      ageEligible: { days7: 0, days30: 0 },
+    } as OpenCodeSessionScan,
+    ...overrides,
+  };
   mockedInvoke.mockImplementation(async (command, args) => {
     const params = args as {
       source: SessionSourceId;
@@ -473,7 +491,13 @@ describe("session selection boundaries", () => {
       { ...scan.codex.records[1], lastActivityMs: null },
       { ...scan.codex.records[2], lastActivityMs: 1 },
     ];
-    await setup({ nowMs, scan: { ...scan, codex: { ...scan.codex, records } } });
+    await setup({
+      nowMs,
+      scan: {
+        ...scan,
+        codex: { ...scan.codex, records, ageEligible: { days7: 0, days30: 0 } },
+      },
+    });
     const inUseCheckbox = screen.getByRole("checkbox", { name: "选择 Busy project" });
     expect(inUseCheckbox.getAttribute("aria-describedby")).toBeTruthy();
     expect(screen.getByText("使用中，暂不移除")).toBeTruthy();
@@ -489,7 +513,12 @@ describe("session selection boundaries", () => {
     await setup({
       initialSource: "opencode",
       nowMs,
-      openCodeScan: { ...openCodeScan, records: [recent], activeSessionIds: [] },
+      openCodeScan: {
+        ...openCodeScan,
+        records: [recent],
+        activeSessionIds: [],
+        ageEligible: { days7: 0, days30: 0 },
+      },
     });
     expect((screen.getByRole("button", { name: "永久删除 7 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "永久删除 30 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);

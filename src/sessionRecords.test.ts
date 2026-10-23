@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  ageRemovalRequest,
   bulkRemovalConfirmText,
-  bulkRemovalRequest,
   filterOpenCodeSessions,
   groupOpenCodeSessions,
   groupSessionRecords,
-  recordsOlderThan,
+  removeCompletedRecords,
   removableSessionRecords,
   removalProgressBreakdown,
   removalProgressText,
@@ -118,6 +118,7 @@ describe("session record grouping", () => {
       status: "Failed",
       records: [],
       message: "无法读取",
+      ageEligible: { days7: 0, days30: 0 },
     };
     const missing: SessionSourceScan = { ...failed, status: "Missing", message: null };
 
@@ -148,24 +149,33 @@ describe("session record grouping", () => {
     expect(removalProgressBreakdown({ phase: "preparing" })).toBeNull();
   });
 
-  it("selects one source's records older than 7 or 30 periods of 24 hours", () => {
-    const now = Date.UTC(2026, 0, 15);
-    const day = 24 * 60 * 60 * 1000;
-    const records = [
-      record({ id: "exact", lastActivityMs: now - 7 * day, bytes: 1 }),
-      record({ id: "just-old", lastActivityMs: now - 7 * day - 1, bytes: 1 }),
-      record({ id: "month", lastActivityMs: now - 30 * day - 1, bytes: 1 }),
-      record({ id: "busy", lastActivityMs: now - 40 * day, bytes: 1, inUse: true }),
-      record({ id: "unknown", lastActivityMs: null, bytes: 1 }),
-    ];
-
-    expect(recordsOlderThan(records, 7, now).map((item) => item.id)).toEqual(["just-old", "month"]);
-    expect(recordsOlderThan(records, 30, now).map((item) => item.id)).toEqual(["month"]);
-    expect(bulkRemovalRequest(records, 30, now)).toEqual({ days: 30, count: 1 });
-    expect(bulkRemovalRequest([records[0]], 7, now)).toBeNull();
+  it("forms age removal requests from the counts stated by the scan", () => {
+    expect(ageRemovalRequest({ days7: 2, days30: 1 }, 7)).toEqual({ days: 7, count: 2 });
+    expect(ageRemovalRequest({ days7: 2, days30: 1 }, 30)).toEqual({ days: 30, count: 1 });
+    expect(ageRemovalRequest({ days7: 0, days30: 0 }, 7)).toBeNull();
+    expect(ageRemovalRequest(undefined, 30)).toBeNull();
     expect(bulkRemovalConfirmText("Claude", 30, 1)).toBe(
       "将整个 Claude 来源中最后活动时间早于 30 天前的会话记录移入废纸篓。当前符合条件的有 1 条，不受搜索和状态筛选限制。使用中或无法读取最后活动时间的记录会跳过；移除前会再次检查。",
     );
+  });
+
+  it("removes completed ids from the target scope only", () => {
+    const scans: Record<"codex" | "claude", SessionSourceScan> = {
+      codex: source([
+        record({ id: "alpha", bytes: 1, lastActivityMs: 1 }),
+        record({ id: "beta", bytes: 1, lastActivityMs: 1 }),
+      ]),
+      claude: source([record({ id: "gamma", bytes: 1, lastActivityMs: 1 })]),
+    };
+
+    const next = removeCompletedRecords<"codex" | "claude", SessionSourceScan>(
+      scans,
+      "codex",
+      ["alpha"],
+    );
+    expect(next.codex?.records.map((item) => item.id)).toEqual(["beta"]);
+    expect(next.claude).toBe(scans.claude);
+    expect(removeCompletedRecords(scans, "codex", [])).toBe(scans);
   });
 
   it("forms an explicit selection from removable records only", () => {
@@ -195,5 +205,6 @@ function source(records: SessionRecord[]): SessionSourceScan {
     status: "Ready",
     records,
     message: null,
+    ageEligible: { days7: 0, days30: 0 },
   };
 }
