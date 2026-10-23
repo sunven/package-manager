@@ -1,6 +1,6 @@
 # 跨领域维护历史
 
-Status: ready-for-agent
+Status: done
 
 ## 目标与范围
 
@@ -403,13 +403,13 @@ Rust 独占写入权。所有命令在历史写入失败时仍执行原操作，
 
 ## Issues
 
-- [01-add-unified-maintenance-history-store.md](./issues/01-add-unified-maintenance-history-store.md)
-- [02-add-history-page.md](./issues/02-add-history-page.md)
-- [03-record-project-cleanup-batches.md](./issues/03-record-project-cleanup-batches.md)
-- [04-record-session-record-removals.md](./issues/04-record-session-record-removals.md)
-- [05-record-opencode-deletions.md](./issues/05-record-opencode-deletions.md)
-- [06-record-vscode-storage-removals.md](./issues/06-record-vscode-storage-removals.md)
-- [07-surface-history-links-and-verify.md](./issues/07-surface-history-links-and-verify.md)
+- 01-add-unified-maintenance-history-store.md
+- 02-add-history-page.md
+- 03-record-project-cleanup-batches.md
+- 04-record-session-record-removals.md
+- 05-record-opencode-deletions.md
+- 06-record-vscode-storage-removals.md
+- 07-surface-history-links-and-verify.md
 
 ## 风险与验证点
 

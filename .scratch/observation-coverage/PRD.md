@@ -1,6 +1,6 @@
 # 观察覆盖度与新近度总览
 
-Status: ready-for-agent
+Status: done
 
 ## 目标与范围
 
@@ -432,13 +432,13 @@ interface ObservationCoverageItem {
 
 建议实施顺序：01 → 06 → 02–05 → 07。01 提供台账与范围描述，06 提供共享状态语义；02–05 依赖两者写入各领域，07 最后接入页面。
 
-- [01-add-observation-ledger-and-scope-descriptors.md](./issues/01-add-observation-ledger-and-scope-descriptors.md)
-- [02-record-manager-observations.md](./issues/02-record-manager-observations.md)
-- [03-record-environment-and-project-observations.md](./issues/03-record-environment-and-project-observations.md)
-- [04-record-vscode-and-session-observations.md](./issues/04-record-vscode-and-session-observations.md)
-- [05-record-codex-and-claude-observations.md](./issues/05-record-codex-and-claude-observations.md)
-- [06-build-observation-coverage-model.md](./issues/06-build-observation-coverage-model.md)
-- [07-build-observation-coverage-page.md](./issues/07-build-observation-coverage-page.md)
+- 01-add-observation-ledger-and-scope-descriptors.md
+- 02-record-manager-observations.md
+- 03-record-environment-and-project-observations.md
+- 04-record-vscode-and-session-observations.md
+- 05-record-codex-and-claude-observations.md
+- 06-build-observation-coverage-model.md
+- 07-build-observation-coverage-page.md
 
 ## 风险与验证点
 

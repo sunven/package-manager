@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # 会话记录移除
 

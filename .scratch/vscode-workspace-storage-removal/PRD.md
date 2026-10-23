@@ -1,6 +1,6 @@
 # VS Code 工作区存储移除
 
-状态：已实现；自动化验证通过，真实 VS Code/废纸篓端到端验证待人工完成。
+状态：已实现并验证（2026-10-23 完成人工端到端验证）。
 
 ## 目标
 
@@ -83,17 +83,17 @@
 - [x] 确认后执行时逐条复核；项目路径恢复、记录消失、变成符号链接的目标被跳过并说明原因。
 - [x] 批量执行显示流式进度，执行中不能取消或关闭对话框；单条失败不阻止后续。
 - [x] 结果区分已移入、跳过、失败，完成后自动重扫；重扫失败单独提示。
-- [ ] 被移除记录离开原目录并可从系统废纸篓恢复；清空废纸篓前磁盘空间不立即下降。（真实端到端验证待人工完成）
+- [x] 被移除记录离开原目录并可从系统废纸篓恢复；清空废纸篓前磁盘空间不立即下降。
 - [x] 不写入维护记录；不提供永久删除、清空废纸篓，也不移除 VS Code 其他数据。
 - [x] `pnpm test`、`cargo test`、`pnpm build` 通过；README 和 PRODUCT 不再声称该页面完全只读，旧 PRD 已注明后续能力。
 
 ## 实现顺序
 
-1. [`01-expose-removable-workspace-records.md`](issues/01-expose-removable-workspace-records.md)
-2. [`02-remove-vscode-workspace-storage.md`](issues/02-remove-vscode-workspace-storage.md)
-3. [`03-add-vscode-removal-lifecycle.md`](issues/03-add-vscode-removal-lifecycle.md)
-4. [`04-wire-vscode-removal-into-page.md`](issues/04-wire-vscode-removal-into-page.md)
-5. [`05-update-docs-and-verify.md`](issues/05-update-docs-and-verify.md)
+1. `01-expose-removable-workspace-records.md`
+2. `02-remove-vscode-workspace-storage.md`
+3. `03-add-vscode-removal-lifecycle.md`
+4. `04-wire-vscode-removal-into-page.md`
+5. `05-update-docs-and-verify.md`
 
 ## 验证记录（2026-10-22）
 
@@ -102,4 +102,4 @@
 - `pnpm build`：通过；Vite 提示入口 chunk 792.99 kB，为现有体积提示。
 - 新增后端测试：`vscode_storage` 7 项、`vscode_removal` 10 项；覆盖资格判定、符号链接、执行时状态变化、外接盘恢复、编辑器运行/中途启动、废纸篓失败和进度顺序。
 - 新增前端测试：`vscodeRemoval.test.ts` 5 项、`useVscodeStorage.test.tsx` 3 项、`VscodeStoragePage.test.tsx` 7 项、`VscodeStoragePage.interaction.test.tsx` 5 项；覆盖选择裁剪、运行中拦截、确认框、进度、结果和刷新失败。
-- 真实端到端验证尚未执行：需要退出 VS Code 并把真实 `workspaceStorage` 记录移入系统废纸篓。代理没有操作用户的编辑器或数据；步骤见 issue 05。
+- 2026-10-23：用户完成人工端到端验证（issue 05 清单）：单条移除进入系统废纸篓、可恢复并重新出现，VS Code 运行中横幅与按钮禁用生效，多选移除结果与废纸篓一致，其他记录与项目源码未受影响。

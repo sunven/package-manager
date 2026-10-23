@@ -1,6 +1,6 @@
 # OpenCode 会话记录
 
-Status: ready-for-agent
+Status: done
 
 ## 已确认的方向
 
