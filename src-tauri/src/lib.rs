@@ -13,6 +13,7 @@ mod codex_skills;
 mod command;
 mod disk_usage;
 mod environment_inspection;
+mod maintenance_history;
 mod manager_history;
 mod managers;
 mod observed_file;
@@ -43,6 +44,7 @@ use crate::types::{
     ManagerScanSnapshot, NpmMaintenanceOperation, PipOutdatedPreview, PnpmMaintenanceOperation,
 };
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -334,15 +336,159 @@ async fn change_codex_plugin(
         .map_err(|error| error.to_string())?
 }
 
+#[derive(serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SessionRecordSnapshotInput {
+    id: String,
+    title: String,
+    working_directory: Option<String>,
+    last_activity_ms: Option<i64>,
+}
+
+fn session_record_snapshot(
+    record: SessionRecordSnapshotInput,
+) -> maintenance_history::SessionRecordSnapshot {
+    maintenance_history::SessionRecordSnapshot {
+        id: record.id,
+        title: record.title,
+        working_directory: record.working_directory,
+        last_activity_ms: record.last_activity_ms,
+    }
+}
+
+fn session_history_scope(
+    source: session_records::SessionSourceKind,
+    mode: maintenance_history::SessionRemovalMode,
+    days: Option<u64>,
+    confirmed_count: Option<usize>,
+    confirmed_records: Option<Vec<SessionRecordSnapshotInput>>,
+) -> maintenance_history::MaintenanceDetail {
+    maintenance_history::MaintenanceDetail::SessionTrash(
+        maintenance_history::SessionTrashDetail {
+            scope: maintenance_history::SessionTrashScope {
+                source,
+                mode,
+                days,
+                confirmed_count,
+                confirmed_records: confirmed_records.map(|records| {
+                    records.into_iter().map(session_record_snapshot).collect()
+                }),
+            },
+            execution_total: None,
+            results: Vec::new(),
+        },
+    )
+}
+
+fn append_session_history(
+    history: &maintenance_history::MaintenanceHistoryState,
+    history_id: Option<&String>,
+    result: &session_records::SessionRemovalResult,
+    warning: &mut Option<String>,
+) {
+    let Some(history_id) = history_id else {
+        return;
+    };
+    for item in &result.items {
+        if let Err(error) = history.append_session_item(history_id, item) {
+            warning.get_or_insert(error);
+            return;
+        }
+    }
+    if let Err(error) = history.finish_session_trash(history_id, result.items.len(), result) {
+        warning.get_or_insert(error);
+    }
+}
+
+fn finish_session_history(
+    history: &maintenance_history::MaintenanceHistoryState,
+    history_id: Option<&String>,
+    result: &session_records::SessionRemovalResult,
+    warning: &mut Option<String>,
+) {
+    if let Some(history_id) = history_id {
+        if let Err(error) = history.finish_session_trash(history_id, result.items.len(), result) {
+            warning.get_or_insert(error);
+        }
+    }
+}
+
+fn abort_session_history(
+    history: &maintenance_history::MaintenanceHistoryState,
+    history_id: Option<&String>,
+    error: &str,
+) {
+    if let Some(history_id) = history_id {
+        let _ = history.finish(
+            history_id,
+            maintenance_history::ExecutionSummary::NotExecuted,
+            error.to_string(),
+        );
+    }
+}
+
 #[tauri::command]
 async fn remove_session_records_older_than(
     source: session_records::SessionSourceKind,
     days: u64,
+    confirmed_count: Option<usize>,
     on_progress: tauri::ipc::Channel<session_records::SessionRemovalProgress>,
-) -> Result<session_records::SessionRemovalResult, String> {
+    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_history::Receipt<session_records::SessionRemovalResult>, String> {
+    let history = history.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        session_records::remove_older_default(source, days, &mut |progress| {
-            let _ = on_progress.send(progress);
+        let (history_id, mut warning) = match history.begin(
+            maintenance_history::MaintenanceDomain::SessionRecord,
+            maintenance_history::MaintenanceOperation::RemoveToTrash,
+            session_history_scope(
+                source,
+                maintenance_history::SessionRemovalMode::OlderThan,
+                Some(days),
+                confirmed_count,
+                None,
+            ),
+            None,
+        ) {
+            Ok(id) => (Some(id), None),
+            Err(error) => (None, Some(error)),
+        };
+        let item_warning = Arc::new(Mutex::new(None::<String>));
+        let item_sink = item_warning.clone();
+        let item_history = history.clone();
+        let item_history_id = history_id.clone();
+        let mut on_item = move |item: &session_records::SessionRemovalItem| {
+            if let Some(id) = &item_history_id {
+                if let Err(error) = item_history.append_session_item(id, item) {
+                    *item_sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(error);
+                }
+            }
+        };
+        let result = match session_records::remove_older_default_with_reporter(
+            source,
+            days,
+            &mut |progress| {
+                let _ = on_progress.send(progress);
+            },
+            &mut on_item,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                abort_session_history(&history, history_id.as_ref(), &error);
+                return Err(error);
+            }
+        };
+        if let Some(error) = item_warning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            warning.get_or_insert(error);
+        }
+        finish_session_history(&history, history_id.as_ref(), &result, &mut warning);
+        Ok(maintenance_history::Receipt {
+            result,
+            history_id,
+            history_warning: warning,
         })
     })
     .await
@@ -353,21 +499,106 @@ async fn remove_session_records_older_than(
 async fn remove_session_record(
     source: session_records::SessionSourceKind,
     id: String,
-) -> Result<session_records::SessionRemovalResult, String> {
-    tauri::async_runtime::spawn_blocking(move || session_records::remove_default(source, &id))
-        .await
-        .map_err(|error| format!("会话记录移除失败：{error}"))?
+    confirmed_record: Option<SessionRecordSnapshotInput>,
+    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_history::Receipt<session_records::SessionRemovalResult>, String> {
+    let history = history.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (history_id, mut warning) = match history.begin(
+            maintenance_history::MaintenanceDomain::SessionRecord,
+            maintenance_history::MaintenanceOperation::RemoveToTrash,
+            session_history_scope(
+                source,
+                maintenance_history::SessionRemovalMode::Single,
+                None,
+                Some(1),
+                confirmed_record.map(|record| vec![record]),
+            ),
+            None,
+        ) {
+            Ok(id) => (Some(id), None),
+            Err(error) => (None, Some(error)),
+        };
+        let result = match session_records::remove_default(source, &id) {
+            Ok(result) => result,
+            Err(error) => {
+                abort_session_history(&history, history_id.as_ref(), &error);
+                return Err(error);
+            }
+        };
+        append_session_history(&history, history_id.as_ref(), &result, &mut warning);
+        Ok(maintenance_history::Receipt {
+            result,
+            history_id,
+            history_warning: warning,
+        })
+    })
+    .await
+    .map_err(|error| format!("会话记录移除失败：{error}"))?
 }
 
 #[tauri::command]
 async fn remove_session_records(
     source: session_records::SessionSourceKind,
     ids: Vec<String>,
+    confirmed_records: Vec<SessionRecordSnapshotInput>,
     on_progress: tauri::ipc::Channel<session_records::SessionRemovalProgress>,
-) -> Result<session_records::SessionRemovalResult, String> {
+    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_history::Receipt<session_records::SessionRemovalResult>, String> {
+    let history = history.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        session_records::remove_selected_default(source, &ids, &mut |progress| {
-            let _ = on_progress.send(progress);
+        let (history_id, mut warning) = match history.begin(
+            maintenance_history::MaintenanceDomain::SessionRecord,
+            maintenance_history::MaintenanceOperation::RemoveToTrash,
+            session_history_scope(
+                source,
+                maintenance_history::SessionRemovalMode::Selected,
+                None,
+                Some(confirmed_records.len()),
+                Some(confirmed_records),
+            ),
+            None,
+        ) {
+            Ok(id) => (Some(id), None),
+            Err(error) => (None, Some(error)),
+        };
+        let item_warning = Arc::new(Mutex::new(None::<String>));
+        let item_sink = item_warning.clone();
+        let item_history = history.clone();
+        let item_history_id = history_id.clone();
+        let mut on_item = move |item: &session_records::SessionRemovalItem| {
+            if let Some(id) = &item_history_id {
+                if let Err(error) = item_history.append_session_item(id, item) {
+                    *item_sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(error);
+                }
+            }
+        };
+        let result = match session_records::remove_selected_default_with_reporter(
+            source,
+            &ids,
+            &mut |progress| {
+                let _ = on_progress.send(progress);
+            },
+            &mut on_item,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                abort_session_history(&history, history_id.as_ref(), &error);
+                return Err(error);
+            }
+        };
+        if let Some(error) = item_warning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            warning.get_or_insert(error);
+        }
+        finish_session_history(&history, history_id.as_ref(), &result, &mut warning);
+        Ok(maintenance_history::Receipt {
+            result,
+            history_id,
+            history_warning: warning,
         })
     })
     .await
@@ -421,15 +652,119 @@ async fn prepare_opencode_deletion(
         .map_err(|_| "OpenCode 删除计划准备任务未能完成。".to_string())?
 }
 
+fn opencode_mode(kind: opencode_deletion::DeletionKind) -> maintenance_history::SessionRemovalMode {
+    match kind {
+        opencode_deletion::DeletionKind::One => {
+            maintenance_history::SessionRemovalMode::Single
+        }
+        opencode_deletion::DeletionKind::Selected => {
+            maintenance_history::SessionRemovalMode::Selected
+        }
+        opencode_deletion::DeletionKind::Age => {
+            maintenance_history::SessionRemovalMode::OlderThan
+        }
+    }
+}
+
+fn opencode_session_snapshot(
+    record: &opencode_sessions::OpenCodeSessionRecord,
+) -> maintenance_history::OpenCodeSessionSnapshot {
+    maintenance_history::OpenCodeSessionSnapshot {
+        id: record.id.clone(),
+        title: record.title.clone(),
+        working_directory: Some(record.working_directory.clone()),
+        last_activity_ms: record.last_activity_ms,
+        archived: record.archived,
+        parent_id: record.parent_id.clone(),
+    }
+}
+
 #[tauri::command]
 async fn commit_opencode_deletion(
     plan_id: String,
     state: tauri::State<'_, opencode_deletion::DeletionState>,
-) -> Result<opencode_deletion::OpenCodeDeletionResult, String> {
+    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_history::Receipt<opencode_deletion::OpenCodeDeletionResult>, String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.commit(&plan_id))
-        .await
-        .map_err(|_| "OpenCode 会话删除任务未能完成。".to_string())?
+    let history = history.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let plan = state.peek_plan(&plan_id)?;
+        let detail = maintenance_history::MaintenanceDetail::OpenCodeDeletion(
+            maintenance_history::OpenCodeDeletionDetail {
+                scope: maintenance_history::OpenCodeDeletionScope {
+                    source: "opencode".into(),
+                    mode: opencode_mode(plan.kind),
+                    plan_id: plan.plan_id.clone(),
+                    days: plan.days,
+                    cutoff_ms: plan.cutoff_ms,
+                    confirmed_roots: plan
+                        .roots
+                        .iter()
+                        .map(opencode_session_snapshot)
+                        .collect(),
+                    confirmed_affected: plan
+                        .affected
+                        .iter()
+                        .map(opencode_session_snapshot)
+                        .collect(),
+                },
+                completed_ids: Vec::new(),
+                results: Vec::new(),
+            },
+        );
+        let (history_id, mut warning) = match history.begin(
+            maintenance_history::MaintenanceDomain::SessionRecord,
+            maintenance_history::MaintenanceOperation::DeletePermanently,
+            detail,
+            None,
+        ) {
+            Ok(id) => (Some(id), None),
+            Err(error) => (None, Some(error)),
+        };
+        let item_warning = Arc::new(Mutex::new(None::<String>));
+        let item_sink = item_warning.clone();
+        let item_history = history.clone();
+        let item_history_id = history_id.clone();
+        let mut on_item = move |item: &opencode_deletion::OpenCodeDeletionItem| {
+            if let Some(id) = &item_history_id {
+                if let Err(error) = item_history.append_opencode_item(id, item) {
+                    *item_sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(error);
+                }
+            }
+        };
+        let result = match state.commit_with_reporter(&plan_id, &mut on_item) {
+            Ok(result) => result,
+            Err(error) => {
+                if let Some(id) = &history_id {
+                    let _ = history.finish(
+                        id,
+                        maintenance_history::ExecutionSummary::NotExecuted,
+                        error.clone(),
+                    );
+                }
+                return Err(error);
+            }
+        };
+        if let Some(error) = item_warning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            warning.get_or_insert(error);
+        }
+        if let Some(id) = &history_id {
+            if let Err(error) = history.finish_opencode(id, &result) {
+                warning.get_or_insert(error);
+            }
+        }
+        Ok(maintenance_history::Receipt {
+            result,
+            history_id,
+            history_warning: warning,
+        })
+    })
+    .await
+    .map_err(|_| "OpenCode 会话删除任务未能完成。".to_string())?
 }
 
 #[tauri::command]
@@ -446,14 +781,107 @@ async fn get_vscode_editor_status() -> vscode_removal::VscodeEditorStatus {
         .unwrap_or(vscode_removal::VscodeEditorStatus::Unknown)
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VscodeWorkspaceSnapshotInput {
+    id: String,
+    name: String,
+    project_path: Option<String>,
+    storage_path: String,
+    kind: String,
+    project_status: String,
+    removable: bool,
+    removal_block_reason: Option<String>,
+    bytes: Option<u64>,
+    usage_complete: bool,
+}
+
 #[tauri::command]
 async fn remove_vscode_workspace_storage(
     ids: Vec<String>,
+    confirmed_workspaces: Vec<VscodeWorkspaceSnapshotInput>,
     on_progress: tauri::ipc::Channel<vscode_removal::VscodeStorageRemovalProgress>,
-) -> Result<vscode_removal::VscodeStorageRemovalResult, String> {
+    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_history::Receipt<vscode_removal::VscodeStorageRemovalResult>, String> {
+    let history = history.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        vscode_removal::remove_selected_default(&ids, &mut |progress| {
-            let _ = on_progress.send(progress);
+        let detail = maintenance_history::MaintenanceDetail::VscodeStorage(
+            maintenance_history::VscodeStorageDetail {
+                scope: maintenance_history::VscodeStorageScope {
+                    workspaces: confirmed_workspaces
+                        .into_iter()
+                        .map(|workspace| maintenance_history::VscodeWorkspaceSnapshot {
+                            id: workspace.id,
+                            name: workspace.name,
+                            project_path: workspace.project_path,
+                            storage_path: workspace.storage_path,
+                            kind: workspace.kind,
+                            project_status: workspace.project_status,
+                            removable: workspace.removable,
+                            removal_block_reason: workspace.removal_block_reason,
+                            bytes: workspace.bytes,
+                            usage_complete: workspace.usage_complete,
+                        })
+                        .collect(),
+                },
+                results: Vec::new(),
+            },
+        );
+        let (history_id, mut warning) = match history.begin(
+            maintenance_history::MaintenanceDomain::VscodeStorage,
+            maintenance_history::MaintenanceOperation::RemoveWorkspaceStorage,
+            detail,
+            None,
+        ) {
+            Ok(id) => (Some(id), None),
+            Err(error) => (None, Some(error)),
+        };
+        let item_warning = Arc::new(Mutex::new(None::<String>));
+        let item_sink = item_warning.clone();
+        let item_history = history.clone();
+        let item_history_id = history_id.clone();
+        let mut on_item = move |item: &vscode_removal::VscodeStorageRemovalItem| {
+            if let Some(id) = &item_history_id {
+                if let Err(error) = item_history.append_vscode_item(id, item) {
+                    *item_sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(error);
+                }
+            }
+        };
+        let result = match vscode_removal::remove_selected_default_with_reporter(
+            &ids,
+            &mut |progress| {
+                let _ = on_progress.send(progress);
+            },
+            &mut on_item,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                if let Some(id) = &history_id {
+                    let _ = history.finish(
+                        id,
+                        maintenance_history::ExecutionSummary::NotExecuted,
+                        error.clone(),
+                    );
+                }
+                return Err(error);
+            }
+        };
+        if let Some(error) = item_warning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            warning.get_or_insert(error);
+        }
+        if let Some(id) = &history_id {
+            if let Err(error) = history.finish_vscode(id, &result) {
+                warning.get_or_insert(error);
+            }
+        }
+        Ok(maintenance_history::Receipt {
+            result,
+            history_id,
+            history_warning: warning,
         })
     })
     .await
@@ -575,12 +1003,95 @@ async fn measure_project_data_candidate(
     state.apply_measurement(&scan_id, &candidate_id, measurement)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MaintenanceHistoryBegin {
+    history_id: Option<String>,
+    history_warning: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectCleanupEffectFailure {
+    candidate_id: String,
+    message: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CleanProjectDataCandidateReceipt {
+    #[serde(flatten)]
+    result: ProjectCleanupResult,
+    history_warning: Option<String>,
+}
+
+#[tauri::command]
+fn begin_project_cleanup_history(
+    scan_id: String,
+    batch_id: String,
+    candidate_ids: Vec<String>,
+    state: tauri::State<'_, ProjectCleanupState>,
+    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> MaintenanceHistoryBegin {
+    let (root_id, root_path, candidates) = match state.history_scope(&scan_id, &candidate_ids) {
+        Ok(scope) => scope,
+        Err(warning) => {
+            return MaintenanceHistoryBegin {
+                history_id: None,
+                history_warning: Some(warning),
+            }
+        }
+    };
+    let detail = maintenance_history::MaintenanceDetail::ProjectCleanup(
+        maintenance_history::ProjectCleanupDetail {
+            scope: maintenance_history::ProjectCleanupScope {
+                scan_id,
+                scan_root_id: root_id,
+                scan_root_path: root_path,
+                batch_id,
+                candidates: candidates
+                    .into_iter()
+                    .enumerate()
+                    .map(|(order, candidate)| maintenance_history::ProjectCleanupCandidateSnapshot {
+                        candidate_id: candidate.candidate_id,
+                        kind: candidate.kind,
+                        project_path: candidate.project_path,
+                        directory_path: candidate.directory_path,
+                        order,
+                        confirmed_bytes: candidate.confirmed_bytes,
+                        confirmed_complete: candidate.confirmed_complete,
+                    })
+                    .collect(),
+            },
+            finish: maintenance_history::ProjectCleanupFinish::Completed,
+            results: Vec::new(),
+        },
+    );
+    match history.begin(
+        maintenance_history::MaintenanceDomain::ProjectCleanup,
+        maintenance_history::MaintenanceOperation::CleanBatch,
+        detail,
+        None,
+    ) {
+        Ok(history_id) => MaintenanceHistoryBegin {
+            history_id: Some(history_id),
+            history_warning: None,
+        },
+        Err(warning) => MaintenanceHistoryBegin {
+            history_id: None,
+            history_warning: Some(warning),
+        },
+    }
+}
+
 #[tauri::command]
 async fn clean_project_data_candidate(
     scan_id: String,
     candidate_id: String,
+    history_id: Option<String>,
     state: tauri::State<'_, ProjectCleanupState>,
-) -> Result<ProjectCleanupResult, String> {
+    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<CleanProjectDataCandidateReceipt, String> {
     let (root_path, candidate) = state.cleanup_context(&scan_id, &candidate_id)?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         run_project_cleanup_with_runner(&root_path, &candidate, &run_command_owned)
@@ -588,7 +1099,36 @@ async fn clean_project_data_candidate(
     .await
     .map_err(|err| format!("Project cleanup failed: {err}"))?;
     state.apply_cleanup_result(&scan_id, &result)?;
-    Ok(result)
+    let history_warning = history_id.and_then(|id| {
+        history
+            .append_project_result(&id, &result)
+            .err()
+    });
+    Ok(CleanProjectDataCandidateReceipt {
+        result,
+        history_warning,
+    })
+}
+
+#[tauri::command]
+fn finish_project_cleanup_history(
+    history_id: String,
+    finish: maintenance_history::ProjectCleanupFinish,
+    effect_failures: Vec<ProjectCleanupEffectFailure>,
+    message: Option<String>,
+    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Option<String> {
+    history
+        .finish_project(
+            &history_id,
+            finish,
+            effect_failures
+                .into_iter()
+                .map(|failure| (failure.candidate_id, failure.message))
+                .collect(),
+            message.unwrap_or_else(|| "项目清理批次已结束".into()),
+        )
+        .err()
 }
 
 #[tauri::command]
@@ -635,9 +1175,27 @@ async fn list_manager_history(manager: ManagerId, state: tauri::State<'_, manage
 }
 
 #[tauri::command]
-async fn update_maintenance_verification(id: String, status: String, message: Option<String>, after_snapshot_id: Option<String>, state: tauri::State<'_, manager_history::HistoryState>) -> Result<(), String> {
+async fn update_maintenance_verification(id: String, status: String, message: Option<String>, after_snapshot_id: Option<String>, state: tauri::State<'_, maintenance_history::MaintenanceHistoryState>) -> Result<(), String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || state.verify(&id, &status, message, after_snapshot_id)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn list_maintenance_history(state: tauri::State<'_, maintenance_history::MaintenanceHistoryState>) -> Result<maintenance_history::History, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.list()).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_maintenance_record(id: String, state: tauri::State<'_, maintenance_history::MaintenanceHistoryState>) -> Result<maintenance_history::MaintenanceRecord, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.get(&id)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn record_maintenance_followup(id: String, status: String, message: Option<String>, state: tauri::State<'_, maintenance_history::MaintenanceHistoryState>) -> Result<(), String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.record_followup(&id, &status, message)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -674,13 +1232,13 @@ async fn hydrate_pip_outdated(python_executable: String) -> Result<PipOutdatedPr
 async fn run_npm_maintenance(
     operation: NpmMaintenanceOperation,
     before_snapshot_id: Option<String>,
-    state: tauri::State<'_, manager_history::HistoryState>,
-) -> Result<manager_history::Receipt<MaintenanceRunPreview>, String> {
+    state: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_history::Receipt<MaintenanceRunPreview>, String> {
     let state = state.inner().clone();
     let NpmMaintenanceOperation::UninstallGlobalPackage { ref package_name } = operation;
     let target = package_name.clone();
-    tauri::async_runtime::spawn_blocking(move || state.run(ManagerId::Npm, "uninstallGlobalPackage", Some(target), before_snapshot_id,
-        || run_npm_maintenance_with_runner(operation, &run_command_owned), manager_history::uninstall_summary))
+    tauri::async_runtime::spawn_blocking(move || state.run(ManagerId::Npm, maintenance_history::MaintenanceOperation::UninstallGlobalPackage, Some(target), before_snapshot_id,
+        || run_npm_maintenance_with_runner(operation, &run_command_owned), maintenance_history::uninstall_summary))
         .await.map_err(|err| format!("npm maintenance failed: {err}"))
 }
 
@@ -688,23 +1246,23 @@ async fn run_npm_maintenance(
 async fn run_pnpm_maintenance(
     operation: PnpmMaintenanceOperation,
     before_snapshot_id: Option<String>,
-    state: tauri::State<'_, manager_history::HistoryState>,
-) -> Result<manager_history::Receipt<MaintenanceRunPreview>, String> {
+    state: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_history::Receipt<MaintenanceRunPreview>, String> {
     let state = state.inner().clone();
     let PnpmMaintenanceOperation::UninstallGlobalPackage { ref package_name } = operation;
     let target = package_name.clone();
-    tauri::async_runtime::spawn_blocking(move || state.run(ManagerId::Pnpm, "uninstallGlobalPackage", Some(target), before_snapshot_id,
-        || run_pnpm_maintenance_with_runner(operation, &run_command_owned), manager_history::uninstall_summary))
+    tauri::async_runtime::spawn_blocking(move || state.run(ManagerId::Pnpm, maintenance_history::MaintenanceOperation::UninstallGlobalPackage, Some(target), before_snapshot_id,
+        || run_pnpm_maintenance_with_runner(operation, &run_command_owned), maintenance_history::uninstall_summary))
         .await.map_err(|err| format!("pnpm maintenance failed: {err}"))
 }
 
 /// Execution remains manager-only and allowlisted. The optional archive ID is
 /// observation metadata and grants no authority over commands or paths.
 #[tauri::command]
-async fn run_cache_cleanup(manager: ManagerId, before_snapshot_id: Option<String>, state: tauri::State<'_, manager_history::HistoryState>) -> Result<manager_history::Receipt<CacheCleanupRun>, String> {
+async fn run_cache_cleanup(manager: ManagerId, before_snapshot_id: Option<String>, state: tauri::State<'_, maintenance_history::MaintenanceHistoryState>) -> Result<maintenance_history::Receipt<CacheCleanupRun>, String> {
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.run(manager, "cleanupCache", None, before_snapshot_id,
-        || run_cache_cleanup_with_runner(manager, &run_command_owned), manager_history::cleanup_summary))
+    tauri::async_runtime::spawn_blocking(move || state.run(manager, maintenance_history::MaintenanceOperation::CleanupCache, None, before_snapshot_id,
+        || run_cache_cleanup_with_runner(manager, &run_command_owned), maintenance_history::cleanup_summary))
         .await.map_err(|err| format!("Cache cleanup failed: {err}"))
 }
 
@@ -730,7 +1288,9 @@ pub fn run() {
                 .map_err(|err| format!("Could not resolve app config directory: {err}"))?
                 .join("build-artifacts.json");
             app.manage(ProjectCleanupState::load(settings_path));
-            app.manage(manager_history::HistoryState::new(app.path().app_data_dir()?.join("manager-history")));
+            let history_directory = app.path().app_data_dir()?.join("manager-history");
+            app.manage(manager_history::HistoryState::new(history_directory.clone()));
+            app.manage(maintenance_history::MaintenanceHistoryState::new(history_directory));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -779,12 +1339,17 @@ pub fn run() {
             update_project_cleanup_depth,
             scan_project_data,
             measure_project_data_candidate,
+            begin_project_cleanup_history,
             clean_project_data_candidate,
+            finish_project_cleanup_history,
             open_project_cleanup_root,
             open_project_data_path,
             inspect_environment,
             save_manager_snapshot,
             list_manager_history,
+            list_maintenance_history,
+            get_maintenance_record,
+            record_maintenance_followup,
             update_maintenance_verification,
             scan_manager,
             measure_path_size,

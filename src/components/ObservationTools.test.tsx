@@ -3,9 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GlobalSearch } from "./GlobalSearch";
-import { EnvironmentPanel, HistoryPanel } from "./ObservationTools";
+import { EnvironmentPanel } from "./ObservationTools";
 import { managerFixture } from "../test/fixtures";
-import { snapshotDraft } from "../managerHistory";
 import type { ObservationToolsState } from "../hooks/useObservationTools";
 
 afterEach(cleanup);
@@ -61,24 +60,5 @@ describe("observation panels", () => {
     expect(screen.getByText("permission denied")).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "查看 npm" }));
     expect(onOpenManager).toHaveBeenCalledWith("Npm");
-  });
-  it("keeps native execution success visible when verification failed and links the original snapshot pair", async () => {
-    const current = state();
-    current.history = { snapshots: [], warnings: [], operations: [{ id: "op", managerId: "Pip", operation: "cleanupCache", target: null, startedAt: 1, finishedAt: 2, execution: "succeeded", message: "原生命令已完成", verification: "failed", verificationMessage: "目录无法测量", beforeSnapshotId: "before", afterSnapshotId: "after" }] };
-    render(<HistoryPanel state={current} homeDirectory={null} />);
-    await userEvent.click(screen.getByRole("button", { name: "维护记录" }));
-    expect(screen.getByText(/已完成 · 核对未完成/)).toBeTruthy();
-    await userEvent.click(screen.getByText(/pip · 缓存清理/));
-    expect(screen.getByText("原生命令已完成")).toBeTruthy();
-    await userEvent.click(screen.getByRole("button", { name: "查看关联快照" }));
-    expect(current.setHistoryManager).toHaveBeenCalledWith("Pip");
-  });
-  it("explains incomplete comparisons and renders the actual snapshot details", () => {
-    const current = state();
-    const draft = snapshotDraft(managerFixture("Npm", { scopeKey: "root" }), null);
-    current.history = { snapshots: [{ ...draft, id: "2", capturedAt: 2, complete: false, message: "读取不完整" }, { ...draft, id: "1", capturedAt: 1 }], operations: [], warnings: [] };
-    render(<HistoryPanel state={current} homeDirectory={null} />);
-    expect(screen.getByText("条目差异无法判定")).toBeTruthy();
-    expect(screen.getByText("读取不完整")).toBeTruthy();
   });
 });

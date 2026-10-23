@@ -75,7 +75,9 @@ describe("OpenCode sessions adapter", () => {
       request: { kind: "one", sessionIds: ["parent"] },
     });
     expect(view.current.operation?.target.planId).toBe("plan-1");
-    mockedInvoke.mockResolvedValueOnce(result()).mockResolvedValueOnce({ ...initial, records: initial.records.slice(2) });
+    mockedInvoke.mockResolvedValueOnce(result())
+      .mockResolvedValueOnce({ ...initial, records: initial.records.slice(2) })
+      .mockResolvedValueOnce(null);
     await act(async () => { await view.current.confirm(view.current.operation!.id); });
     expect(mockedInvoke).toHaveBeenCalledWith("commit_opencode_deletion", { planId: "plan-1" });
     expect(view.current.outcome?.completedIds).toEqual(["parent", "child"]);
@@ -83,21 +85,42 @@ describe("OpenCode sessions adapter", () => {
     expect(view.current.operation).toBeNull();
   });
 
+  it("writes a follow-up read for a saved permanent deletion", async () => {
+    const { result: view } = await setup();
+    mockedInvoke.mockResolvedValueOnce(plan());
+    await act(async () => { await view.current.request("one", ["parent"]); });
+    mockedInvoke.mockResolvedValueOnce({ ...result(), historyId: "history-1" })
+      .mockResolvedValueOnce({ ...initial, records: initial.records.slice(2) })
+      .mockResolvedValueOnce(null);
+    await act(async () => { await view.current.confirm(view.current.operation!.id); });
+    expect(mockedInvoke).toHaveBeenCalledWith("record_maintenance_followup", {
+      id: "history-1",
+      status: "ready",
+      message: null,
+    });
+  });
+
   it("prepares a selected deletion and skips refresh after a preflight cancellation", async () => {
     const { result: view } = await setup();
     mockedInvoke.mockResolvedValueOnce(plan({ kind: "selected", selected: initial.records.slice(0, 2) }));
     await act(async () => { await view.current.request("selected", ["parent", "child"]); });
     mockedInvoke.mockResolvedValueOnce({
+      historyId: "history-2",
       preflightError: "missing child",
       items: [],
       completedIds: [],
-    });
+    }).mockResolvedValueOnce(null);
     await act(async () => { await view.current.confirm(view.current.operation!.id); });
     expect(mockedInvoke).toHaveBeenCalledWith("commit_opencode_deletion", { planId: "plan-1" });
     expect(view.current.outcome).toMatchObject({
       result: { preflightError: "missing child" },
       completedIds: [],
       refresh: { status: "notRequested" },
+    });
+    expect(mockedInvoke).toHaveBeenCalledWith("record_maintenance_followup", {
+      id: "history-2",
+      status: "notRequested",
+      message: null,
     });
     expect(view.current.operation).toBeNull();
   });

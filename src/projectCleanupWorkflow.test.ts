@@ -515,6 +515,7 @@ describe("Project Cleanup workflow", () => {
     workflow.prepareCleanupBatch(["three", "one", "two"]);
 
     const running = workflow.runCleanupBatch();
+    await Promise.resolve();
     expect(cleanupCalls).toEqual(["three"]);
     expect(
       workflow.read().scan.session?.candidates.find(({ candidateId }) => candidateId === "three"),
@@ -539,6 +540,8 @@ describe("Project Cleanup workflow", () => {
         completedCount: 3,
         failedCount: 2,
         cleanedBytes: 350,
+        historyId: null,
+        historyWarning: null,
       },
     });
     expect(workflow.read().batch).toMatchObject({
@@ -584,6 +587,7 @@ describe("Project Cleanup workflow", () => {
     workflow.prepareCleanupBatch(["one", "two", "three"]);
 
     const running = workflow.runCleanupBatch();
+    await Promise.resolve();
     expect(cleanupCalls).toEqual(["one"]);
     expect(workflow.requestCleanupStop()).toEqual({
       kind: "succeeded",

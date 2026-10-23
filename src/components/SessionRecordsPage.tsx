@@ -66,12 +66,14 @@ export function SessionRecordsPage({
   nowMs,
   initialSource = "codex",
   homeDirectory,
+  onShowHistory,
 }: {
   records: ReturnType<typeof useSessionRecords>;
   openCode: ReturnType<typeof useOpenCodeSessions>;
   nowMs?: number;
   initialSource?: SessionSourceId | "opencode";
   homeDirectory: string | null;
+  onShowHistory?: (recordId: string) => void;
 }) {
   const { scan, scanningSources, error, refresh: onRefresh } = records;
   const {
@@ -153,7 +155,7 @@ export function SessionRecordsPage({
             <AlertDialogTitle>确认移入废纸篓</AlertDialogTitle>
             <AlertDialogDescription>
               {pending?.kind === "one"
-                ? singleRemovalConfirmText(pending.title)
+                ? singleRemovalConfirmText(pending.record.title)
                 : pending?.kind === "age"
                   ? bulkRemovalConfirmText(pending.label, pending.days, pending.count)
                   : pending?.kind === "selected"
@@ -303,6 +305,9 @@ export function SessionRecordsPage({
           <AlertDescription className="flex flex-col gap-2">
             {openCodeDeleteResult.error ? <p>{openCodeDeleteResult.error}。请刷新会话记录核对。</p> : null}
             {openCodeDeleteResult.result?.preflightError ? <p>{openCodeDeleteResult.result.preflightError}</p> : null}
+            {openCodeDeleteResult.result?.historyWarning ? <p>维护历史未完整保存：{openCodeDeleteResult.result.historyWarning}</p> : null}
+            {openCodeDeleteResult.followUpWarning ? <p>后续读取未写入历史：{openCodeDeleteResult.followUpWarning}</p> : null}
+            {openCodeDeleteResult.result?.historyId && onShowHistory ? <Button className="w-fit" onClick={() => onShowHistory(openCodeDeleteResult.result!.historyId!)} size="sm" type="button" variant="outline">已保存到维护历史</Button> : null}
             {openCodeDeleteResult.result?.items.length ? (
               <>
                 <p>删除成功 {openCodeDeleteResult.result.items.filter((item) => item.status === "deleted").length} 条，失败 {openCodeDeleteResult.result.items.filter((item) => item.status === "failed").length} 条，未执行 {openCodeDeleteResult.result.items.filter((item) => item.status === "notAttempted").length} 条。</p>
@@ -326,6 +331,9 @@ export function SessionRecordsPage({
           <AlertDescription className="flex flex-col gap-2">
             {result.operationError ? <p>{result.operationError}。请刷新会话记录，核对后再试。</p> : <p>以上为实际移除结果，可能与确认时的条数不同。清空废纸篓前可恢复记录，磁盘空间不会立即释放。</p>}
             {result.message ? <p>{result.message}</p> : null}
+            {result.historyWarning ? <p>维护历史未完整保存：{result.historyWarning}</p> : null}
+            {records.outcome?.followUpWarning ? <p>后续读取未写入历史：{records.outcome.followUpWarning}</p> : null}
+            {result.historyId && onShowHistory ? <Button className="w-fit" onClick={() => onShowHistory(result.historyId!)} size="sm" type="button" variant="outline">已保存到维护历史</Button> : null}
             {records.outcome ? <RefreshNotice value={records.outcome.refresh} onRetry={() => void records.refresh(removalSource)} /> : null}
             {result.items.length ? <details><summary className="cursor-pointer">查看逐条结果（{result.items.length}）</summary><ul className="mt-2 flex max-h-64 flex-col gap-2 overflow-auto">
               {result.items.map((item) => <li key={item.id} className="break-all"><strong>{item.id}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
@@ -377,8 +385,8 @@ export function SessionRecordsPage({
                 onRequestAgeRemoval={(days, count) => {
                   records.request({ kind: "age", source: source.key, label: source.label, days, count });
                 }}
-                onRequestRemoval={(id, title) => {
-                  records.request({ kind: "one", source: source.key, id, title });
+                onRequestRemoval={(record) => {
+                  records.request({ kind: "one", source: source.key, record });
                 }}
                 onRequestSelectedRemoval={(selectedRecords, trigger) => {
                   selectionTrigger.current = trigger;
@@ -640,7 +648,7 @@ function SourceSection({
   onSortChange: (sort: SessionSort) => void;
   onClearSelection: () => void;
   onRequestAgeRemoval: (days: 7 | 30, count: number) => void;
-  onRequestRemoval: (id: string, title: string) => void;
+  onRequestRemoval: (record: SessionRecord) => void;
   onRefresh: () => void;
   onRequestSelectedRemoval: (records: SessionRecord[], trigger: HTMLButtonElement) => void;
   onSelectAll: () => void;
@@ -803,7 +811,7 @@ function SourceSection({
                             <Button
                               aria-label={`将 ${record.title || record.id} 移入废纸篓`}
                               disabled={removing}
-                              onClick={() => onRequestRemoval(record.id, record.title)}
+                              onClick={() => onRequestRemoval(record)}
                               size="icon-sm"
                               title="移入废纸篓"
                               type="button"

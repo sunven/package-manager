@@ -64,9 +64,11 @@ const workspaceKindLabels: Record<VscodeWorkspace["kind"], string> = {
 export function VscodeStoragePage({
   workflow,
   homeDirectory,
+  onShowHistory,
 }: {
   workflow: VscodeStorageWorkflow;
   homeDirectory: string | null;
+  onShowHistory?: (recordId: string) => void;
 }) {
   const {
     scan,
@@ -188,6 +190,9 @@ export function VscodeStoragePage({
               {result?.operationError ? <p>{result.operationError}</p> : null}
               {outcome.error ? <p>{outcome.error}</p> : null}
               {result?.message ? <p>{result.message}</p> : null}
+              {result?.historyWarning ? <p>维护历史未完整保存：{result.historyWarning}</p> : null}
+              {outcome.followUpWarning ? <p>后续读取未写入历史：{outcome.followUpWarning}</p> : null}
+              {result?.historyId && onShowHistory ? <Button className="w-fit" onClick={() => onShowHistory(result.historyId!)} size="sm" type="button" variant="outline">已保存到维护历史</Button> : null}
               {result?.items.length ? (
                 <details className="mt-2">
                   <summary className="cursor-pointer">查看逐项结果</summary>

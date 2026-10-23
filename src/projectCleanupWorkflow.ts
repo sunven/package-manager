@@ -5,6 +5,7 @@ import type {
   ProjectDataCandidate,
   ProjectDataScan,
 } from "./types";
+import { bumpHistoryRevision } from "./historyRevision";
 
 export interface ProjectCleanupEffects {
   readSettings(): Promise<ProjectCleanupSettings>;
@@ -14,7 +15,14 @@ export interface ProjectCleanupEffects {
   updateDepth(id: string, maxDepth: number): Promise<ProjectCleanupSettings>;
   scan(input: { rootId: string; maxDepth: number }): Promise<ProjectDataScan>;
   measure(input: { scanId: string; candidateId: string }): Promise<DirectoryMeasurement>;
-  clean(input: { scanId: string; candidateId: string }): Promise<ProjectCleanupResult>;
+  clean(input: { scanId: string; candidateId: string; historyId?: string | null }): Promise<ProjectCleanupResult>;
+  beginHistory(input: { scanId: string; batchId: string; candidateIds: string[] }): Promise<{ historyId: string | null; historyWarning: string | null }>;
+  finishHistory(input: {
+    historyId: string;
+    finish: "completed" | "stopped";
+    effectFailures: { candidateId: string; message: string }[];
+    message: string | null;
+  }): Promise<string | null>;
   openRoot(rootId: string): Promise<void>;
   openCandidate(input: {
     scanId: string;
@@ -124,6 +132,8 @@ export interface CleanupBatchSummary {
   completedCount: number;
   failedCount: number;
   cleanedBytes: number;
+  historyId: string | null;
+  historyWarning: string | null;
 }
 
 export interface ProjectCleanupView {
@@ -534,6 +544,21 @@ export function createProjectCleanupWorkflow(
         },
       });
 
+      let historyId: string | null = null;
+      let historyWarning: string | null = null;
+      const effectFailures: { candidateId: string; message: string }[] = [];
+      try {
+        const history = await effects.beginHistory({
+          scanId: view.batch.scanId,
+          batchId: view.batch.batchId,
+          candidateIds: view.batch.candidates.map((candidate) => candidate.candidateId),
+        });
+        historyId = history.historyId;
+        historyWarning = history.historyWarning;
+      } catch (error) {
+        historyWarning = errorText(error);
+      }
+
       for (let index = 0; index < view.batch.candidates.length; index += 1) {
         const batch = view.batch;
         const session = view.scan.session;
@@ -573,14 +598,18 @@ export function createProjectCleanupWorkflow(
           const result = await effects.clean({
             scanId: batch.scanId,
             candidateId: item.candidateId,
+            historyId,
           });
+          if (result.historyWarning) historyWarning = joinWarnings(historyWarning, result.historyWarning);
           outcome = { kind: "result", result };
         } catch (error) {
+          const message = errorText(error);
+          effectFailures.push({ candidateId: item.candidateId, message });
           outcome = {
             kind: "effect-failed",
             failure: {
               operation: "clean",
-              message: errorText(error),
+              message,
               candidateId: item.candidateId,
             },
           };
@@ -632,6 +661,19 @@ export function createProjectCleanupWorkflow(
           ? { ...candidate, state: { kind: "stopped" } as const }
           : candidate,
       );
+      if (historyId) {
+        try {
+          historyWarning = joinWarnings(historyWarning, await effects.finishHistory({
+            historyId,
+            finish,
+            effectFailures,
+            message: null,
+          }));
+        } catch (error) {
+          historyWarning = joinWarnings(historyWarning, errorText(error));
+        }
+      }
+      bumpHistoryRevision();
       const summary: CleanupBatchSummary = {
         finish,
         totalCount: candidates.length,
@@ -642,6 +684,8 @@ export function createProjectCleanupWorkflow(
             cleanupOutcomeFailed(candidate.state.outcome),
         ).length,
         cleanedBytes: batch.cleanedBytes,
+        historyId,
+        historyWarning,
       };
       publish({
         ...view,
@@ -721,6 +765,10 @@ export function createProjectCleanupWorkflow(
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function joinWarnings(current: string | null, next: string | null) {
+  return [current, next].filter((value): value is string => Boolean(value)).join("\n") || null;
 }
 
 function candidateView(

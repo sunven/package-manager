@@ -27,10 +27,10 @@ pub(crate) struct VscodeStorageRemovalResult {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VscodeStorageRemovalItem {
-    id: String,
-    status: VscodeStorageRemovalStatus,
-    reason: Option<VscodeStorageRemovalReason>,
-    message: Option<String>,
+    pub(crate) id: String,
+    pub(crate) status: VscodeStorageRemovalStatus,
+    pub(crate) reason: Option<VscodeStorageRemovalReason>,
+    pub(crate) message: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -66,6 +66,20 @@ pub(crate) enum VscodeStorageRemovalProgress {
         skipped: u32,
         failed: u32,
     },
+}
+
+fn record_vscode_item(
+    result: &mut VscodeStorageRemovalResult,
+    on_item: &mut dyn FnMut(&VscodeStorageRemovalItem),
+    id: &str,
+    status: VscodeStorageRemovalStatus,
+    reason: Option<VscodeStorageRemovalReason>,
+    message: Option<String>,
+) {
+    result.record(id, status, reason, message);
+    if let Some(item) = result.items.last() {
+        on_item(item);
+    }
 }
 
 impl VscodeStorageRemovalResult {
@@ -112,28 +126,42 @@ fn editor_status_from_code(code: Option<i32>) -> VscodeEditorStatus {
     }
 }
 
-pub(crate) fn remove_selected_default(
+pub(crate) fn remove_selected_default_with_reporter(
     ids: &[String],
     report: &mut dyn FnMut(VscodeStorageRemovalProgress),
+    on_item: &mut dyn FnMut(&VscodeStorageRemovalItem),
 ) -> Result<VscodeStorageRemovalResult, String> {
     let root = vscode_storage::default_storage_root()?;
     let editor_status = || detect_editor_status();
     let mut trash = |path: &Path| session_records::move_path_to_trash(path);
-    Ok(remove_selected(
+    Ok(remove_selected_with_reporter(
         &root,
         ids,
         &editor_status,
         &mut trash,
         report,
+        on_item,
     ))
 }
 
+#[cfg(test)]
 fn remove_selected(
     root: &Path,
     ids: &[String],
     editor_status: &dyn Fn() -> VscodeEditorStatus,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
     report: &mut dyn FnMut(VscodeStorageRemovalProgress),
+) -> VscodeStorageRemovalResult {
+    remove_selected_with_reporter(root, ids, editor_status, trash, report, &mut |_| {})
+}
+
+fn remove_selected_with_reporter(
+    root: &Path,
+    ids: &[String],
+    editor_status: &dyn Fn() -> VscodeEditorStatus,
+    trash: &mut dyn FnMut(&Path) -> Result<(), String>,
+    report: &mut dyn FnMut(VscodeStorageRemovalProgress),
+    on_item: &mut dyn FnMut(&VscodeStorageRemovalItem),
 ) -> VscodeStorageRemovalResult {
     report(VscodeStorageRemovalProgress::Preparing);
 
@@ -181,7 +209,9 @@ fn remove_selected(
         if editor_status() != VscodeEditorStatus::Stopped {
             let message = format!("VS Code 已启动，剩余 {} 项未处理", total - index);
             for skipped in &unique[index..] {
-                result.record(
+                record_vscode_item(
+                    &mut result,
+                    on_item,
                     skipped,
                     VscodeStorageRemovalStatus::Skipped,
                     Some(VscodeStorageRemovalReason::EditorStarted),
@@ -195,7 +225,9 @@ fn remove_selected(
         let path = match storage_entry(root, id) {
             Ok(path) => path,
             Err((reason, message)) => {
-                result.record(
+                record_vscode_item(
+                    &mut result,
+                    on_item,
                     id,
                     VscodeStorageRemovalStatus::Skipped,
                     Some(reason),
@@ -208,7 +240,9 @@ fn remove_selected(
 
         match vscode_storage::inspect_project_status(&path) {
             ProjectStatus::Available => {
-                result.record(
+                record_vscode_item(
+                    &mut result,
+                    on_item,
                     id,
                     VscodeStorageRemovalStatus::Skipped,
                     Some(VscodeStorageRemovalReason::ProjectAvailable),
@@ -218,7 +252,9 @@ fn remove_selected(
                 continue;
             }
             ProjectStatus::Remote => {
-                result.record(
+                record_vscode_item(
+                    &mut result,
+                    on_item,
                     id,
                     VscodeStorageRemovalStatus::Skipped,
                     Some(VscodeStorageRemovalReason::ProjectRemote),
@@ -228,7 +264,9 @@ fn remove_selected(
                 continue;
             }
             ProjectStatus::Unavailable => {
-                result.record(
+                record_vscode_item(
+                    &mut result,
+                    on_item,
                     id,
                     VscodeStorageRemovalStatus::Skipped,
                     Some(VscodeStorageRemovalReason::ProjectUnavailable),
@@ -241,8 +279,17 @@ fn remove_selected(
         }
 
         match trash(&path) {
-            Ok(()) => result.record(id, VscodeStorageRemovalStatus::Moved, None, None),
-            Err(message) => result.record(
+            Ok(()) => record_vscode_item(
+                &mut result,
+                on_item,
+                id,
+                VscodeStorageRemovalStatus::Moved,
+                None,
+                None,
+            ),
+            Err(message) => record_vscode_item(
+                &mut result,
+                on_item,
                 id,
                 VscodeStorageRemovalStatus::Failed,
                 Some(VscodeStorageRemovalReason::TrashFailed),

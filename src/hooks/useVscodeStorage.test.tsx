@@ -57,6 +57,7 @@ const scan: VscodeStorageScan = {
 };
 
 const removal: VscodeStorageRemovalResult = {
+  historyId: "history-1",
   moved: 1,
   failed: 0,
   skipped: 0,
@@ -87,9 +88,22 @@ describe("useVscodeStorage", () => {
           editorRunning = true;
           const params = args as {
             ids: string[];
+            confirmedWorkspaces: { id: string; name: string; bytes: number | null; usageComplete: boolean }[];
             onProgress: { onmessage: (progress: VscodeStorageRemovalProgress) => void };
           };
           expect(params.ids).toEqual(["missing"]);
+          expect(params.confirmedWorkspaces).toEqual([{
+            id: "missing",
+            name: "missing",
+            projectPath: "/Users/test/missing",
+            storagePath: "/Users/test/workspaceStorage/missing",
+            kind: "Folder",
+            projectStatus: "Missing",
+            removable: true,
+            removalBlockReason: null,
+            bytes: 2048,
+            usageComplete: true,
+          }]);
           params.onProgress.onmessage({ phase: "preparing" });
           params.onProgress.onmessage({ phase: "started", total: 1 });
           params.onProgress.onmessage({
@@ -102,6 +116,8 @@ describe("useVscodeStorage", () => {
           });
           return pendingRemoval;
         }
+        case "record_maintenance_followup":
+          return null;
         default:
           throw new Error(`unexpected command: ${command}`);
       }
@@ -151,6 +167,11 @@ describe("useVscodeStorage", () => {
 
     expect(result.current.outcome?.result).toEqual(removal);
     expect(result.current.outcome?.completedIds).toEqual(["missing"]);
+    expect(mockedInvoke).toHaveBeenCalledWith("record_maintenance_followup", {
+      id: "history-1",
+      status: "ready",
+      message: null,
+    });
     expect(result.current.scan?.workspaces.map((row) => row.id)).toEqual(["available"]);
     expect(result.current.operation).toBeNull();
     expect(scanCalls).toBe(2);

@@ -80,7 +80,7 @@ pub(crate) struct ProjectDataCandidate {
     pub(crate) measurement: DirectoryMeasurement,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum ProjectDataKind {
     RustTarget,
     MavenTarget,
@@ -197,6 +197,16 @@ struct ScanSession {
     root_id: String,
     root_path: PathBuf,
     candidates: HashMap<String, CandidateRecord>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectCleanupHistoryCandidate {
+    pub candidate_id: String,
+    pub kind: ProjectDataKind,
+    pub project_path: String,
+    pub directory_path: String,
+    pub confirmed_bytes: Option<u64>,
+    pub confirmed_complete: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -321,6 +331,21 @@ impl ProjectCleanupState {
         target: ProjectDataOpenTarget,
     ) -> Result<PathBuf, String> {
         self.lock()?.candidate_path(scan_id, candidate_id, target)
+    }
+
+    pub(crate) fn history_scope(
+        &self,
+        scan_id: &str,
+        candidate_ids: &[String],
+    ) -> Result<
+        (
+            String,
+            String,
+            Vec<ProjectCleanupHistoryCandidate>,
+        ),
+        String,
+    > {
+        self.lock()?.history_scope(scan_id, candidate_ids)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Registry>, String> {
@@ -666,6 +691,52 @@ impl Registry {
             ProjectDataOpenTarget::Project => candidate.project_path,
             ProjectDataOpenTarget::Directory => candidate.directory_path,
         })
+    }
+
+    pub(crate) fn history_scope(
+        &self,
+        scan_id: &str,
+        candidate_ids: &[String],
+    ) -> Result<
+        (
+            String,
+            String,
+            Vec<ProjectCleanupHistoryCandidate>,
+        ),
+        String,
+    > {
+        let scan = self.current_scan(scan_id)?;
+        if candidate_ids.is_empty() {
+            return Err("清理批次没有候选".to_string());
+        }
+        let mut seen = HashSet::new();
+        let mut candidates = Vec::with_capacity(candidate_ids.len());
+        for candidate_id in candidate_ids {
+            if !seen.insert(candidate_id.as_str()) {
+                return Err("清理批次包含重复候选".to_string());
+            }
+            let candidate = scan
+                .candidates
+                .get(candidate_id)
+                .ok_or_else(|| "候选不属于当前扫描会话".to_string())?;
+            let confirmed_complete = matches!(
+                candidate.measurement.status,
+                DirectoryMeasurementStatus::Ready | DirectoryMeasurementStatus::Missing
+            ) && candidate.measurement.skipped == 0;
+            candidates.push(ProjectCleanupHistoryCandidate {
+                candidate_id: candidate.id.clone(),
+                kind: candidate.kind,
+                project_path: candidate.project_path.display().to_string(),
+                directory_path: candidate.directory_path.display().to_string(),
+                confirmed_bytes: candidate.measurement.bytes,
+                confirmed_complete,
+            });
+        }
+        Ok((
+            scan.root_id.clone(),
+            scan.root_path.display().to_string(),
+            candidates,
+        ))
     }
 
     fn current_scan(&self, scan_id: &str) -> Result<&ScanSession, String> {

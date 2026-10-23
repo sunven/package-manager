@@ -346,6 +346,7 @@ export interface ProjectDataScan {
 }
 
 export interface ProjectCleanupResult {
+  historyWarning?: string | null;
   candidateId: string;
   status: ProjectCleanupStatus;
   command: CommandEnvelope | null;

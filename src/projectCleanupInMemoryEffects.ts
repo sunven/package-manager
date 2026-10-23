@@ -16,6 +16,8 @@ export function createInMemoryProjectCleanupEffects(
     scan: unexpected,
     measure: unexpected,
     clean: unexpected,
+    beginHistory: async () => ({ historyId: null, historyWarning: null }),
+    finishHistory: async () => null,
     openRoot: unexpected,
     openCandidate: unexpected,
     ...overrides,

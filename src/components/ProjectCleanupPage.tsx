@@ -52,10 +52,12 @@ export function ProjectCleanupPage({
   homeDirectory,
   view,
   workflow,
+  onShowHistory,
 }: {
   homeDirectory: string | null;
   view: ProjectCleanupView;
   workflow: ProjectCleanupWorkflow;
+  onShowHistory?: (recordId: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<ProjectDataSort>("size");
@@ -435,6 +437,7 @@ export function ProjectCleanupPage({
         homeDirectory={homeDirectory}
         report={report}
         workflow={workflow}
+        onShowHistory={onShowHistory}
       />
     </main>
   );
@@ -658,12 +661,15 @@ function ProjectCleanupDialog({
   homeDirectory,
   report,
   workflow,
+  onShowHistory,
 }: {
   batch: CleanupBatchView | null;
   homeDirectory: string | null;
   report: (outcome: WorkflowOutcome<unknown>, title: string) => void;
   workflow: ProjectCleanupWorkflow;
+  onShowHistory?: (recordId: string) => void;
 }) {
+  const [batchHistory, setBatchHistory] = useState<{ id: string; warning: string | null } | null>(null);
   const candidates = batch?.candidates ?? [];
   const rustCount = candidates.filter((candidate) => candidate.kind === "RustTarget").length;
   const mavenCount = candidates.filter((candidate) => candidate.kind === "MavenTarget").length;
@@ -680,10 +686,14 @@ function ProjectCleanupDialog({
   }).length;
 
   const runCleanup = async () => {
+    setBatchHistory(null);
     const outcome = await workflow.runCleanupBatch();
     report(outcome, "项目清理失败");
     if (outcome.kind !== "succeeded") return;
     const summary = outcome.value;
+    if (summary.historyId || summary.historyWarning) {
+      setBatchHistory({ id: summary.historyId ?? "", warning: summary.historyWarning });
+    }
     if (summary.finish === "stopped") {
       toast.warning("项目清理已停止", {
         description: `已处理 ${summary.completedCount}/${summary.totalCount} 项`,
@@ -720,6 +730,13 @@ function ProjectCleanupDialog({
                 : `将永久清理 ${candidateSummary}，目录占用 ${formatBytes(batch?.selectedBytes ?? 0)}。`}
           </AlertDialogDescription>
         </AlertDialogHeader>
+
+        {batch?.phase === "result" && batchHistory ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            {batchHistory.warning ? <p className="text-muted-foreground">维护历史未完整保存：{batchHistory.warning}</p> : null}
+            {batchHistory.id && onShowHistory ? <Button onClick={() => { workflow.closeCleanupBatch(); onShowHistory(batchHistory.id); }} size="sm" type="button" variant="outline">已保存到维护历史</Button> : null}
+          </div>
+        ) : null}
 
         <div className="max-h-64 overflow-y-auto border bg-muted/20">
           {candidates.map((candidate) => {

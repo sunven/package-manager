@@ -40,6 +40,14 @@ const adapter: SessionOperationAdapter<"opencode", OpenCodeSessionScan, OpenCode
       : scans;
   },
   shouldRefresh: (target, result) => target.kind === "age" || !result?.preflightError,
+  recordFollowUp: async (_target, result, refresh) => {
+    if (!result.historyId) return;
+    await invoke("record_maintenance_followup", {
+      id: result.historyId,
+      status: refresh.status,
+      message: refresh.message,
+    });
+  },
 };
 
 type PrepareIntent =
@@ -103,6 +111,7 @@ export function useOpenCodeSessions(active: boolean) {
     error: outcome.error,
     completedIds: outcome.completedIds,
     refresh: outcome.refresh,
+    followUpWarning: outcome.followUpWarning,
   } : null;
 
   return {

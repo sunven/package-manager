@@ -11,9 +11,18 @@ import { errorToString } from "../utils/format";
 import { useSessionOperation, type SessionOperationAdapter, type SessionRead } from "./useSessionOperation";
 
 type PendingRemoval =
-  | { kind: "one"; source: SessionSourceId; id: string; title: string }
+  | { kind: "one"; source: SessionSourceId; record: SessionRecord }
   | { kind: "age"; source: SessionSourceId; label: string; days: 7 | 30; count: number }
   | { kind: "selected"; source: SessionSourceId; label: string; records: SessionRecord[] };
+
+function confirmedRecord(record: SessionRecord) {
+  return {
+    id: record.id,
+    title: record.title,
+    workingDirectory: record.workingDirectory,
+    lastActivityMs: record.lastActivityMs,
+  };
+}
 
 const SESSION_SCOPES = ["codex", "claude"] as const;
 
@@ -83,19 +92,25 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
   scopesFor: (target) => [target.source],
   execute: (target, report) => {
     if (target.kind === "one") {
-      return invoke<SessionRemovalResult>("remove_session_record", { source: target.source, id: target.id });
+      return invoke<SessionRemovalResult>("remove_session_record", {
+        source: target.source,
+        id: target.record.id,
+        confirmedRecord: confirmedRecord(target.record),
+      });
     }
     const onProgress = new Channel<SessionRemovalProgress>(report);
     if (target.kind === "age") {
       return invoke<SessionRemovalResult>("remove_session_records_older_than", {
         source: target.source,
         days: target.days,
+        confirmedCount: target.count,
         onProgress,
       });
     }
     return invoke<SessionRemovalResult>("remove_session_records", {
       source: target.source,
       ids: target.records.map((record) => record.id),
+      confirmedRecords: target.records.map(confirmedRecord),
       onProgress,
     });
   },
@@ -109,6 +124,14 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
       : scans;
   },
   shouldRefresh: () => true,
+  recordFollowUp: async (_target, result, refresh) => {
+    if (!result.historyId) return;
+    await invoke("record_maintenance_followup", {
+      id: result.historyId,
+      status: refresh.status,
+      message: refresh.message,
+    });
+  },
 };
 
 export function useSessionRecords(active: boolean) {
@@ -124,6 +147,7 @@ export function useSessionRecords(active: boolean) {
     result: outcome.result ?? (outcome.error ? abortedResult(outcome.error) : null),
     completedIds: outcome.completedIds,
     refresh: outcome.refresh,
+    followUpWarning: outcome.followUpWarning,
   } : null;
 
   return {

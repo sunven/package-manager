@@ -53,6 +53,8 @@ export type OpenCodeDeletionItem = {
 };
 
 export type OpenCodeDeletionResult = {
+  historyId?: string | null;
+  historyWarning?: string | null;
   preflightError: string | null;
   items: OpenCodeDeletionItem[];
   completedIds: string[];
@@ -94,6 +96,8 @@ export function groupOpenCodeSessions(records: OpenCodeSessionRecord[]) {
 }
 
 export type SessionRemovalResult = {
+  historyId?: string | null;
+  historyWarning?: string | null;
   moved: number;
   failed: number;
   skipped: number;

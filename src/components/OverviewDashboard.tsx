@@ -16,7 +16,7 @@ export function OverviewDashboard({ health, homeDirectory, managerSnapshots, sca
   maintenanceBusy: boolean;
   onRefreshAll: () => void;
   onOpenManager: (manager: ManagerId) => void;
-  onOpenView: (view: "cleanup" | "vscode" | "sessions") => void;
+  onOpenView: (view: "cleanup" | "vscode" | "sessions" | "history") => void;
 }) {
   return (
     <main className="view-grid overview-dashboard" aria-label="开发环境总览">
@@ -64,6 +64,7 @@ export function OverviewDashboard({ health, homeDirectory, managerSnapshots, sca
               <Button variant="outline" onClick={() => onOpenView("cleanup")} type="button">项目清理</Button>
               <Button variant="outline" onClick={() => onOpenView("vscode")} type="button">VS Code 占用</Button>
               <Button variant="outline" onClick={() => onOpenView("sessions")} type="button">会话记录</Button>
+              <Button variant="outline" onClick={() => onOpenView("history")} type="button">历史</Button>
             </CardContent>
           </Card>
         </div>

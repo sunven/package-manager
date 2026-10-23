@@ -31,22 +31,7 @@ export interface SnapshotDraft {
 
 export interface ArchivedSnapshot extends SnapshotDraft { id: string; capturedAt: number }
 
-export interface MaintenanceRecord {
-  id: string;
-  managerId: ManagerId;
-  operation: "cleanupCache" | "uninstallGlobalPackage";
-  target: string | null;
-  startedAt: number;
-  finishedAt: number | null;
-  execution: string;
-  message: string;
-  verification: string;
-  verificationMessage: string | null;
-  beforeSnapshotId: string | null;
-  afterSnapshotId: string | null;
-}
-
-export interface ManagerHistory { snapshots: ArchivedSnapshot[]; operations: MaintenanceRecord[]; warnings: string[] }
+export interface ManagerHistory { snapshots: ArchivedSnapshot[]; warnings: string[] }
 
 // Native scans supply identity; the fallback keeps older/test observations
 // navigable without using a transient row index as an identity.
@@ -117,6 +102,3 @@ export function compareSnapshots(before: ArchivedSnapshot, after: ArchivedSnapsh
   });
   return { issue, packages: changes, paths };
 }
-
-export const executionLabels: Record<string, string> = { succeeded: "已完成", partial: "部分完成", failed: "失败", notExecuted: "未执行", unconfirmed: "结果未确认" };
-export const verificationLabels: Record<string, string> = { succeeded: "核对已完成", failed: "核对未完成", notStarted: "尚未核对", skipped: "无需核对" };

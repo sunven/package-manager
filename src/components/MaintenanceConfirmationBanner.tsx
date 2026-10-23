@@ -10,11 +10,13 @@ export function MaintenanceConfirmationBanner({
   onCancel,
   onConfirm,
   onRetryVerification,
+  onShowHistory,
 }: {
   operation: MaintenanceOperation | null;
   onCancel: () => void;
   onConfirm: () => void;
   onRetryVerification: () => void;
+  onShowHistory?: (recordId: string) => void;
 }) {
   if (!operation) return null;
 
@@ -89,6 +91,9 @@ export function MaintenanceConfirmationBanner({
             <>
               {phase === "finished" && verification.status === "failed" ? (
                 <Button onClick={onRetryVerification} size="sm" type="button" variant="outline">重新读取</Button>
+              ) : null}
+              {phase === "finished" && operation.historyId && onShowHistory ? (
+                <Button onClick={() => { onCancel(); onShowHistory(operation.historyId!); }} size="sm" type="button" variant="outline">已保存到维护历史</Button>
               ) : null}
               <Button disabled={busy} onClick={onCancel} size="sm" type="button" variant="outline">{busy ? "正在核对" : "关闭"}</Button>
             </>

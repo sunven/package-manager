@@ -1,5 +1,6 @@
 import { GlobalSearch } from "./components/GlobalSearch";
-import { EnvironmentPanel, HistoryPanel } from "./components/ObservationTools";
+import { EnvironmentPanel } from "./components/ObservationTools";
+import { HistoryPage, type HistoryRequest } from "./components/HistoryPage";
 import { useObservationTools } from "./hooks/useObservationTools";
 import { locateSearchTarget, type SearchTarget } from "./globalSearch";
 import { toast } from "sonner";
@@ -55,9 +56,10 @@ function initialTheme(): Theme {
 export function App() {
   const state = usePackageManagers();
   const projectCleanup = useProjectCleanup();
-  const [activeView, setActiveView] = useState<"health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
+  const [activeView, setActiveView] = useState<"health" | "history" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
   const [overviewTab, setOverviewTab] = useState("overview");
-  const observations = useObservationTools(activeView === "health" && (overviewTab === "environment" || overviewTab === "history") ? overviewTab : null, state.enabledManagers, state.historyRevision);
+  const [historyRequest, setHistoryRequest] = useState<HistoryRequest | null>(null);
+  const observations = useObservationTools(activeView === "health" && overviewTab === "environment" ? "environment" : null, state.enabledManagers, state.historyRevision);
   const [searchFocus, setSearchFocus] = useState<(SearchTarget & { sequence: number }) | null>(null);
   const focusSequence = useRef(0);
   const locatedSequence = useRef(0);
@@ -110,6 +112,12 @@ export function App() {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [actions]);
+
+  function showHistoryRecord(recordId: string) {
+    actions.closePackageActions();
+    setHistoryRequest({ recordId });
+    setActiveView("history");
+  }
 
   function locate(target: SearchTarget) {
     if (!state.enabledManagers.includes(target.managerId) || locateSearchTarget(target, state.managerSnapshots[target.managerId]) < 0) {
@@ -172,6 +180,10 @@ export function App() {
         actions.closePackageActions();
         setActiveView("health");
       }}
+      onShowHistory={() => {
+        actions.closePackageActions();
+        setActiveView("history");
+      }}
       onShowManagers={() => setActiveView("managers")}
       onShowSettings={() => {
         actions.closePackageActions();
@@ -188,6 +200,7 @@ export function App() {
         onCancel={actions.cancelMaintenance}
         onConfirm={() => void actions.confirmMaintenance()}
         onRetryVerification={() => void actions.retryVerification()}
+        onShowHistory={showHistoryRecord}
       />
       <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
         {activeView === "plugins" ? (
@@ -214,17 +227,33 @@ export function App() {
             homeDirectory={state.homeDirectory}
             records={sessionRecords}
             openCode={openCodeSessions}
+            onShowHistory={showHistoryRecord}
           />
         ) : activeView === "vscode" ? (
           <VscodeStoragePage
             homeDirectory={state.homeDirectory}
             workflow={vscodeStorage}
+            onShowHistory={showHistoryRecord}
           />
         ) : activeView === "cleanup" ? (
           <ProjectCleanupPage
             homeDirectory={state.homeDirectory}
             view={projectCleanup.view}
             workflow={projectCleanup.workflow}
+            onShowHistory={showHistoryRecord}
+          />
+        ) : activeView === "history" ? (
+          <HistoryPage
+            active={activeView === "history"}
+            managers={state.enabledManagers}
+            historyRevision={state.historyRevision}
+            homeDirectory={state.homeDirectory}
+            request={historyRequest}
+            onRequestConsumed={() => setHistoryRequest(null)}
+            onOpenDomain={(domain) => {
+              actions.closePackageActions();
+              setActiveView(domain === "manager" ? "managers" : domain === "projectCleanup" ? "cleanup" : domain === "vscodeStorage" ? "vscode" : "sessions");
+            }}
           />
         ) : activeView === "settings" ? (
           <SettingsPage
@@ -236,9 +265,8 @@ export function App() {
           />
         ) : activeView === "health" ? (
           <Tabs value={overviewTab} onValueChange={setOverviewTab}>
-            <TabsList aria-label="总览视图"><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="environment">环境诊断</TabsTrigger><TabsTrigger value="history">历史</TabsTrigger></TabsList>
+            <TabsList aria-label="总览视图"><TabsTrigger value="overview">概览</TabsTrigger><TabsTrigger value="environment">环境诊断</TabsTrigger></TabsList>
             <TabsContent value="environment"><EnvironmentPanel state={observations} onCopy={(value) => void actions.copyPath(value)} onOpenManager={(manager) => { actions.selectManager(manager); setActiveView("managers"); }} /></TabsContent>
-            <TabsContent value="history"><HistoryPanel state={observations} homeDirectory={state.homeDirectory} /></TabsContent>
             <TabsContent value="overview">
           <OverviewDashboard
             health={developmentHealth}

@@ -36,6 +36,18 @@ const adapter: SessionOperationAdapter<
     const onProgress = new Channel<VscodeStorageRemovalProgress>(report);
     return invoke<VscodeStorageRemovalResult>("remove_vscode_workspace_storage", {
       ids: target.workspaces.map((workspace) => workspace.id),
+      confirmedWorkspaces: target.workspaces.map((workspace) => ({
+        id: workspace.id,
+        name: workspace.name,
+        projectPath: workspace.projectPath,
+        storagePath: workspace.storagePath,
+        kind: workspace.kind,
+        projectStatus: workspace.projectStatus,
+        removable: workspace.removable,
+        removalBlockReason: workspace.removalBlockReason,
+        bytes: workspace.usage.bytes,
+        usageComplete: workspace.usage.complete,
+      })),
       onProgress,
     });
   },
@@ -47,6 +59,14 @@ const adapter: SessionOperationAdapter<
       : scans;
   },
   shouldRefresh: () => true,
+  recordFollowUp: async (_target, result, refresh) => {
+    if (!result.historyId) return;
+    await invoke("record_maintenance_followup", {
+      id: result.historyId,
+      status: refresh.status,
+      message: refresh.message,
+    });
+  },
 };
 
 export function useVscodeStorage(active: boolean) {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { bumpHistoryRevision } from "../historyRevision";
 import type { SessionRefresh } from "../sessionRecords";
 import { errorToString } from "../utils/format";
 
@@ -19,6 +20,7 @@ export interface SessionOperationAdapter<Source extends string, Scan, Target, Re
     completedIds: readonly string[],
   ): Partial<Record<Source, Scan>>;
   shouldRefresh(target: Target, result: Result | null): boolean;
+  recordFollowUp?(target: Target, result: Result, refresh: SessionRefresh): Promise<void>;
 }
 
 export type SessionOperationPhase = "confirming" | "executing" | "refreshing";
@@ -36,6 +38,7 @@ export type SessionOperationOutcome<Target, Result> = {
   error: string | null;
   completedIds: string[];
   refresh: SessionRefresh;
+  followUpWarning: string | null;
 };
 
 export interface SessionOperationOptions<Source extends string> {
@@ -83,7 +86,7 @@ export function useSessionOperation<Source extends string, Scan, Target, Result,
     setScans(next);
   }
 
-  const read = useCallback(async (scopes: readonly Source[]) => {
+  const read = useCallback(async (scopes: readonly Source[]): Promise<SessionRefresh> => {
     const ticket = ++epoch.current;
     for (const scope of scopes) tickets.current[scope] = ticket;
     setScanning((current) => ({ ...current, ...scanningPatch(scopes, true) }));
@@ -105,7 +108,7 @@ export function useSessionOperation<Source extends string, Scan, Target, Result,
           : current);
       }
       if (scopes.every((scope) => tickets.current[scope] === ticket)) setError(message);
-      return;
+      return { status: "failed", message };
     }
 
     const currentScopes = scopes.filter((scope) => tickets.current[scope] === ticket);
@@ -118,14 +121,19 @@ export function useSessionOperation<Source extends string, Scan, Target, Result,
       }
       applyScans(next);
     }
+    let firstFailure: string | null = null;
     for (const scope of scopes) {
       if (tickets.current[scope] !== ticket) continue;
       setScanning((current) => ({ ...current, [scope]: false }));
       const failure = observed.failures[scope] ?? null;
+      if (failure && firstFailure === null) firstFailure = failure;
       setOutcome((current) => current && adapter.scopesFor(current.target).includes(scope)
         ? { ...current, refresh: failure ? { status: "failed", message: failure } : { status: "ready", message: null } }
         : current);
     }
+    return firstFailure
+      ? { status: "failed", message: firstFailure }
+      : { status: "ready", message: null };
   }, [adapter]);
 
   const refresh = useCallback(async (scopes: readonly Source[]) => {
@@ -191,12 +199,24 @@ export function useSessionOperation<Source extends string, Scan, Target, Result,
       error: failure,
       completedIds,
       refresh: shouldRefresh ? { status: "refreshing", message: null } : { status: "notRequested", message: null },
+      followUpWarning: null,
     });
+    let refresh: SessionRefresh = { status: "notRequested", message: null };
     if (shouldRefresh) {
       pending.current = { ...approval, phase: "refreshing" };
       setOperation(pending.current);
-      await read(scopes);
+      refresh = await read(scopes);
     }
+    let followUpWarning: string | null = null;
+    if (adapter.recordFollowUp && result) {
+      try {
+        await adapter.recordFollowUp(target, result, refresh);
+      } catch (caught) {
+        followUpWarning = errorToString(caught);
+      }
+    }
+    setOutcome((current) => current ? { ...current, refresh, followUpWarning } : current);
+    bumpHistoryRevision();
     pending.current = null;
     setOperation(null);
   }

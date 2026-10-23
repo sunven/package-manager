@@ -44,6 +44,8 @@ export interface VscodeStorageRemovalItem {
 }
 
 export interface VscodeStorageRemovalResult {
+  historyId?: string | null;
+  historyWarning?: string | null;
   moved: number;
   failed: number;
   skipped: number;

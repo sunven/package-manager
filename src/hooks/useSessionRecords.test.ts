@@ -81,19 +81,19 @@ describe("Session records adapter", () => {
 
   const removals: { target: Parameters<ReturnType<typeof useSessionRecords>["request"]>[0]; command: string; args: unknown }[] = [
     {
-      target: { kind: "one", source: "codex", id: "record", title: "Record" },
+      target: { kind: "one", source: "codex", record: record("record") },
       command: "remove_session_record",
-      args: { source: "codex", id: "record" },
+      args: { source: "codex", id: "record", confirmedRecord: { id: "record", title: "record", workingDirectory: null, lastActivityMs: 1 } },
     },
     {
       target: { kind: "age", source: "codex", label: "Codex", days: 7, count: 1 },
       command: "remove_session_records_older_than",
-      args: { source: "codex", days: 7, onProgress: expect.anything() },
+      args: { source: "codex", days: 7, confirmedCount: 1, onProgress: expect.anything() },
     },
     {
       target: { kind: "selected", source: "codex", label: "Codex", records: [record("record")] },
       command: "remove_session_records",
-      args: { source: "codex", ids: ["record"], onProgress: expect.anything() },
+      args: { source: "codex", ids: ["record"], confirmedRecords: [{ id: "record", title: "record", workingDirectory: null, lastActivityMs: 1 }], onProgress: expect.anything() },
     },
   ];
 
@@ -114,12 +114,31 @@ describe("Session records adapter", () => {
     expect(result.current.operation).toBeNull();
   });
 
+  it("writes one follow-up read for a saved history record", async () => {
+    const saved = { ...removal, historyId: "history-1" };
+    mockedInvoke.mockImplementation(async (name) => {
+      if (name === "remove_session_record") return saved;
+      if (name === "scan_session_source") return { ...source("after"), records: [] };
+      if (name === "record_maintenance_followup") return null;
+      throw new Error(`Unexpected command ${name}`);
+    });
+    const { result } = renderHook(() => useSessionRecords(false));
+    act(() => result.current.request({ kind: "one", source: "codex", record: record("record") }));
+    await act(async () => { await result.current.confirm(result.current.operation!.id); });
+    expect(mockedInvoke).toHaveBeenCalledWith("record_maintenance_followup", {
+      id: "history-1",
+      status: "ready",
+      message: null,
+    });
+    expect(result.current.outcome?.followUpWarning).toBeNull();
+  });
+
   it("removes only confirmed Moved records from the target source", async () => {
     mockedInvoke.mockResolvedValueOnce(initial);
     const { result } = renderHook(() => useSessionRecords(false));
     await act(async () => { await result.current.refresh(); });
     mockedInvoke.mockResolvedValueOnce(removal).mockResolvedValueOnce({ ...source("after"), records: [] });
-    act(() => result.current.request({ kind: "one", source: "codex", id: "record", title: "Record" }));
+    act(() => result.current.request({ kind: "one", source: "codex", record: record("record") }));
     await act(async () => { await result.current.confirm(result.current.operation!.id); });
     expect(result.current.scan?.codex.records).toEqual([]);
     expect(result.current.scan?.claude.records[0].title).toBe("claude");
@@ -166,7 +185,7 @@ describe("Session records adapter", () => {
       throw new Error(`Unexpected command ${name}`);
     });
     const { result } = renderHook(() => useSessionRecords(false));
-    act(() => result.current.request({ kind: "one", source: "codex", id: "record", title: "Record" }));
+    act(() => result.current.request({ kind: "one", source: "codex", record: record("record") }));
     await act(async () => { await result.current.confirm(result.current.operation!.id); });
     expect(result.current.outcome).toMatchObject({
       result: {

@@ -1,5 +1,6 @@
 import {
   Chats as MessagesSquare,
+  ClockCounterClockwise,
   Code as Code2,
   Cube,
   Gear as Settings,
@@ -12,10 +13,11 @@ import {
 } from "@phosphor-icons/react";
 import type { ManagerId, ManagerSnapshot } from "../types";
 
-type ViewId = "health" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings";
+type ViewId = "health" | "history" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings";
 
 const views: { id: ViewId; label: string; icon: typeof House }[] = [
   { id: "health", label: "总览", icon: House },
+  { id: "history", label: "历史", icon: ClockCounterClockwise },
   { id: "managers", label: "包管理器", icon: Package },
   { id: "cleanup", label: "项目清理", icon: Trash2 },
   { id: "vscode", label: "VS Code 占用", icon: Code2 },
@@ -30,6 +32,7 @@ export function Shell({
   search,
   activeView,
   onShowHealth,
+  onShowHistory,
   onShowProjectCleanup,
   onShowVscodeStorage,
   onShowSessionRecords,
@@ -47,6 +50,7 @@ export function Shell({
   search?: React.ReactNode;
   activeView: ViewId;
   onShowHealth: () => void;
+  onShowHistory: () => void;
   onShowProjectCleanup: () => void;
   onShowVscodeStorage: () => void;
   onShowSessionRecords: () => void;
@@ -62,6 +66,7 @@ export function Shell({
 }) {
   const handlers: Record<ViewId, () => void> = {
     health: onShowHealth,
+    history: onShowHistory,
     managers: onShowManagers,
     cleanup: onShowProjectCleanup,
     vscode: onShowVscodeStorage,

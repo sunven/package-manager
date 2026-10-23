@@ -101,16 +101,43 @@ impl DeletionState {
         Ok(plan)
     }
 
-    pub(crate) fn commit(&self, plan_id: &str) -> Result<OpenCodeDeletionResult, String> {
-        let service = discover()?
-            .ok_or_else(|| "未发现正在运行的 OpenCode 服务，请启动 OpenCode 后重试。".to_string())?;
-        self.commit_with_service(&service, plan_id)
+    pub(crate) fn peek_plan(&self, plan_id: &str) -> Result<DeletionPlan, String> {
+        let state = self
+            .0
+            .lock()
+            .map_err(|_| "OpenCode 删除计划状态不可用。")?;
+        state
+            .prepared
+            .as_ref()
+            .filter(|prepared| prepared.plan.plan_id == plan_id)
+            .map(|prepared| prepared.plan.clone())
+            .ok_or_else(|| "确认已失效，请刷新后重新确认。".to_string())
     }
 
+    pub(crate) fn commit_with_reporter(
+        &self,
+        plan_id: &str,
+        on_item: &mut dyn FnMut(&OpenCodeDeletionItem),
+    ) -> Result<OpenCodeDeletionResult, String> {
+        let service = discover()?
+            .ok_or_else(|| "未发现正在运行的 OpenCode 服务，请启动 OpenCode 后重试。".to_string())?;
+        self.commit_with_service_reporter(&service, plan_id, on_item)
+    }
+
+    #[cfg(test)]
     pub(crate) fn commit_with_service(
         &self,
         service: &Service,
         plan_id: &str,
+    ) -> Result<OpenCodeDeletionResult, String> {
+        self.commit_with_service_reporter(service, plan_id, &mut |_| {})
+    }
+
+    pub(crate) fn commit_with_service_reporter(
+        &self,
+        service: &Service,
+        plan_id: &str,
+        on_item: &mut dyn FnMut(&OpenCodeDeletionItem),
     ) -> Result<OpenCodeDeletionResult, String> {
         let prepared = {
             let mut state = self.0.lock().map_err(|_| "OpenCode 删除计划状态不可用。")?;
@@ -119,7 +146,7 @@ impl DeletionState {
             }
             state.prepared.take().ok_or("确认已失效，请刷新后重新确认。")?
         };
-        commit_plan(service, prepared)
+        commit_plan(service, prepared, on_item)
     }
 }
 
@@ -216,15 +243,23 @@ fn prepare_selected(
     })
 }
 
-fn commit_plan(service: &Service, prepared: PreparedDeletion) -> Result<OpenCodeDeletionResult, String> {
+fn commit_plan(
+    service: &Service,
+    prepared: PreparedDeletion,
+    on_item: &mut dyn FnMut(&OpenCodeDeletionItem),
+) -> Result<OpenCodeDeletionResult, String> {
     match prepared.plan.kind {
-        DeletionKind::One => commit_one(service, &prepared),
-        DeletionKind::Selected => commit_selected(service, &prepared),
-        DeletionKind::Age => commit_age(service, &prepared),
+        DeletionKind::One => commit_one(service, &prepared, on_item),
+        DeletionKind::Selected => commit_selected(service, &prepared, on_item),
+        DeletionKind::Age => commit_age(service, &prepared, on_item),
     }
 }
 
-fn commit_one(service: &Service, prepared: &PreparedDeletion) -> Result<OpenCodeDeletionResult, String> {
+fn commit_one(
+    service: &Service,
+    prepared: &PreparedDeletion,
+    on_item: &mut dyn FnMut(&OpenCodeDeletionItem),
+) -> Result<OpenCodeDeletionResult, String> {
     let root = prepared.selected_ids.first().ok_or("OpenCode 会话标识无效，请刷新后重试。")?;
     check_deletable(service, root)?;
     let records = read_records(service)
@@ -234,13 +269,15 @@ fn commit_one(service: &Service, prepared: &PreparedDeletion) -> Result<OpenCode
         return Err("该 OpenCode 会话已不存在，请刷新会话记录后重试。".into());
     }
     send_delete(service, root)?;
+    let item = OpenCodeDeletionItem {
+        id: root.clone(),
+        status: OpenCodeDeletionStatus::Deleted,
+        message: None,
+    };
+    on_item(&item);
     Ok(OpenCodeDeletionResult {
         preflight_error: None,
-        items: vec![OpenCodeDeletionItem {
-            id: root.clone(),
-            status: OpenCodeDeletionStatus::Deleted,
-            message: None,
-        }],
+        items: vec![item],
         completed_ids: parts.affected.into_iter().map(|record| record.id).collect(),
     })
 }
@@ -248,6 +285,7 @@ fn commit_one(service: &Service, prepared: &PreparedDeletion) -> Result<OpenCode
 fn commit_selected(
     service: &Service,
     prepared: &PreparedDeletion,
+    on_item: &mut dyn FnMut(&OpenCodeDeletionItem),
 ) -> Result<OpenCodeDeletionResult, String> {
     let records = read_records(service)
         .map_err(|message| format!("无法核对当前 OpenCode 会话，未删除任何会话：{message}"))?;
@@ -264,10 +302,14 @@ fn commit_selected(
     let roots = parts.roots.iter().map(|record| record.id.clone()).collect::<Vec<_>>();
     let affected = affected_by_root(&records, &parts.roots);
     let mut policy = SelectedPolicy { service, affected };
-    Ok(run_roots(&roots, &mut policy))
+    Ok(run_roots(&roots, &mut policy, on_item))
 }
 
-fn commit_age(service: &Service, prepared: &PreparedDeletion) -> Result<OpenCodeDeletionResult, String> {
+fn commit_age(
+    service: &Service,
+    prepared: &PreparedDeletion,
+    on_item: &mut dyn FnMut(&OpenCodeDeletionItem),
+) -> Result<OpenCodeDeletionResult, String> {
     let roots = prepared.plan.roots.iter().map(|record| record.id.clone()).collect::<Vec<_>>();
     let cutoff_ms = prepared.plan.cutoff_ms.ok_or("按年龄删除计划缺少门槛，请刷新后重试。")?;
     let expected = prepared
@@ -284,7 +326,7 @@ fn commit_age(service: &Service, prepared: &PreparedDeletion) -> Result<OpenCode
         affected,
         roots: roots.clone(),
     };
-    Ok(run_roots(&roots, &mut policy))
+    Ok(run_roots(&roots, &mut policy, on_item))
 }
 
 fn preflight(message: String) -> OpenCodeDeletionResult {
@@ -301,7 +343,11 @@ trait BatchPolicy {
     fn on_deleted(&mut self, root: &str, completed: &mut Vec<String>, seen: &mut HashSet<String>);
 }
 
-fn run_roots(roots: &[String], policy: &mut impl BatchPolicy) -> OpenCodeDeletionResult {
+fn run_roots(
+    roots: &[String],
+    policy: &mut impl BatchPolicy,
+    on_item: &mut dyn FnMut(&OpenCodeDeletionItem),
+) -> OpenCodeDeletionResult {
     let mut items = Vec::new();
     let mut completed = Vec::new();
     let mut seen = HashSet::new();
@@ -310,16 +356,18 @@ fn run_roots(roots: &[String], policy: &mut impl BatchPolicy) -> OpenCodeDeletio
             if index == 0 {
                 return preflight(format!("未删除任何会话：{message}"));
             }
-            items.push(OpenCodeDeletionItem {
+            push_item(&mut items, OpenCodeDeletionItem {
                 id: root.clone(),
                 status: OpenCodeDeletionStatus::Failed,
                 message: Some(message),
-            });
-            items.extend(roots[index + 1..].iter().map(|id| OpenCodeDeletionItem {
-                id: id.clone(),
-                status: OpenCodeDeletionStatus::NotAttempted,
-                message: Some("前一项复核失败，已停止后续删除。".into()),
-            }));
+            }, on_item);
+            for id in &roots[index + 1..] {
+                push_item(&mut items, OpenCodeDeletionItem {
+                    id: id.clone(),
+                    status: OpenCodeDeletionStatus::NotAttempted,
+                    message: Some("前一项复核失败，已停止后续删除。".into()),
+                }, on_item);
+            }
             return OpenCodeDeletionResult {
                 preflight_error: None,
                 items,
@@ -328,24 +376,26 @@ fn run_roots(roots: &[String], policy: &mut impl BatchPolicy) -> OpenCodeDeletio
         }
         match policy.delete(root) {
             Ok(()) => {
-                items.push(OpenCodeDeletionItem {
+                push_item(&mut items, OpenCodeDeletionItem {
                     id: root.clone(),
                     status: OpenCodeDeletionStatus::Deleted,
                     message: None,
-                });
+                }, on_item);
                 policy.on_deleted(root, &mut completed, &mut seen);
             }
             Err(message) => {
-                items.push(OpenCodeDeletionItem {
+                push_item(&mut items, OpenCodeDeletionItem {
                     id: root.clone(),
                     status: OpenCodeDeletionStatus::Failed,
                     message: Some(message),
-                });
-                items.extend(roots[index + 1..].iter().map(|id| OpenCodeDeletionItem {
-                    id: id.clone(),
-                    status: OpenCodeDeletionStatus::NotAttempted,
-                    message: Some("前一项删除失败，已停止后续删除。".into()),
-                }));
+                }, on_item);
+                for id in &roots[index + 1..] {
+                    push_item(&mut items, OpenCodeDeletionItem {
+                        id: id.clone(),
+                        status: OpenCodeDeletionStatus::NotAttempted,
+                        message: Some("前一项删除失败，已停止后续删除。".into()),
+                    }, on_item);
+                }
                 return OpenCodeDeletionResult {
                     preflight_error: None,
                     items,
@@ -359,6 +409,15 @@ fn run_roots(roots: &[String], policy: &mut impl BatchPolicy) -> OpenCodeDeletio
         items,
         completed_ids: completed,
     }
+}
+
+fn push_item(
+    items: &mut Vec<OpenCodeDeletionItem>,
+    item: OpenCodeDeletionItem,
+    on_item: &mut dyn FnMut(&OpenCodeDeletionItem),
+) {
+    on_item(&item);
+    items.push(item);
 }
 
 struct SelectedPolicy<'a> {

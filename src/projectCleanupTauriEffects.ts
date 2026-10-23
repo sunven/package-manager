@@ -21,6 +21,8 @@ export function createTauriProjectCleanupEffects(): ProjectCleanupEffects {
       invoke<DirectoryMeasurement>("measure_project_data_candidate", input),
     clean: (input) =>
       invoke<ProjectCleanupResult>("clean_project_data_candidate", input),
+    beginHistory: (input) => invoke("begin_project_cleanup_history", input),
+    finishHistory: (input) => invoke<string | null>("finish_project_cleanup_history", input),
     openRoot: (rootId) => invoke("open_project_cleanup_root", { rootId }),
     openCandidate: (input) => invoke("open_project_data_path", input),
   };

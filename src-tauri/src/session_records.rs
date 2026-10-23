@@ -172,21 +172,21 @@ pub(crate) struct SessionRemovalResult {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionRemovalItem {
-    id: String,
-    status: SessionRemovalStatus,
-    reason: Option<SessionRemovalReason>,
-    message: Option<String>,
+    pub(crate) id: String,
+    pub(crate) status: SessionRemovalStatus,
+    pub(crate) reason: Option<SessionRemovalReason>,
+    pub(crate) message: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
-enum SessionRemovalStatus {
+pub(crate) enum SessionRemovalStatus {
     Moved,
     Skipped,
     Failed,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
-enum SessionRemovalReason {
+pub(crate) enum SessionRemovalReason {
     InUse,
     NoLongerRecord,
     ActivityChanged,
@@ -262,10 +262,11 @@ pub(crate) fn remove_default(
     ))
 }
 
-pub(crate) fn remove_older_default(
+pub(crate) fn remove_older_default_with_reporter(
     source: SessionSourceKind,
     days: u64,
     report: &mut dyn FnMut(SessionRemovalProgress),
+    on_item: &mut dyn FnMut(&SessionRemovalItem),
 ) -> Result<SessionRemovalResult, String> {
     if days != 7 && days != 30 {
         return Err("只支持移除 7 天前或 30 天前的会话记录".to_string());
@@ -289,7 +290,7 @@ pub(crate) fn remove_older_default(
         SessionSourceKind::Codex => RecordFormat::Codex,
         SessionSourceKind::Claude => RecordFormat::Claude,
     };
-    Ok(remove_older_than(
+    Ok(remove_older_than_with_reporter(
         &directory,
         days,
         now_ms,
@@ -297,9 +298,11 @@ pub(crate) fn remove_older_default(
         format,
         &mut move_path_to_trash,
         report,
+        on_item,
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn remove_older_than(
     directory: &Path,
     days: u64,
@@ -308,6 +311,28 @@ pub(crate) fn remove_older_than(
     format: RecordFormat,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
     report: &mut dyn FnMut(SessionRemovalProgress),
+) -> SessionRemovalResult {
+    remove_older_than_with_reporter(
+        directory,
+        days,
+        now_ms,
+        is_open,
+        format,
+        trash,
+        report,
+        &mut |_| {},
+    )
+}
+
+pub(crate) fn remove_older_than_with_reporter(
+    directory: &Path,
+    days: u64,
+    now_ms: i64,
+    is_open: &dyn Fn(&Path) -> bool,
+    format: RecordFormat,
+    trash: &mut dyn FnMut(&Path) -> Result<(), String>,
+    report: &mut dyn FnMut(SessionRemovalProgress),
+    on_item: &mut dyn FnMut(&SessionRemovalItem),
 ) -> SessionRemovalResult {
     let cutoff = now_ms.saturating_sub(i64::try_from(days).unwrap_or(0).saturating_mul(86_400_000));
     let scan = match list_records(directory, is_open, format) {
@@ -325,7 +350,11 @@ pub(crate) fn remove_older_than(
     report(SessionRemovalProgress::Started { total });
     let mut result = SessionRemovalResult::default();
     for (index, record) in candidates.into_iter().enumerate() {
+        let previous = result.items.len();
         remove_older_record(directory, &record, cutoff, is_open, format, trash, &mut result);
+        if result.items.len() > previous {
+            on_item(&result.items[previous]);
+        }
         report(SessionRemovalProgress::Advanced {
             processed: index + 1,
             total,
@@ -409,10 +438,20 @@ fn remove_older_record(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn remove_selected_default(
     source: SessionSourceKind,
     ids: &[String],
     report: &mut dyn FnMut(SessionRemovalProgress),
+) -> Result<SessionRemovalResult, String> {
+    remove_selected_default_with_reporter(source, ids, report, &mut |_| {})
+}
+
+pub(crate) fn remove_selected_default_with_reporter(
+    source: SessionSourceKind,
+    ids: &[String],
+    report: &mut dyn FnMut(SessionRemovalProgress),
+    on_item: &mut dyn FnMut(&SessionRemovalItem),
 ) -> Result<SessionRemovalResult, String> {
     if ids.is_empty() {
         return Ok(SessionRemovalResult::default());
@@ -428,21 +467,34 @@ pub(crate) fn remove_selected_default(
             return Ok(SessionRemovalResult::aborted(message));
         }
     };
-    Ok(remove_selected(
+    Ok(remove_selected_with_reporter(
         &directory,
         ids,
         &|path| open_paths.contains(path),
         &mut move_path_to_trash,
         report,
+        on_item,
     ))
 }
 
+#[cfg(test)]
 pub(crate) fn remove_selected(
     directory: &Path,
     ids: &[String],
     is_open: &dyn Fn(&Path) -> bool,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
     report: &mut dyn FnMut(SessionRemovalProgress),
+) -> SessionRemovalResult {
+    remove_selected_with_reporter(directory, ids, is_open, trash, report, &mut |_| {})
+}
+
+pub(crate) fn remove_selected_with_reporter(
+    directory: &Path,
+    ids: &[String],
+    is_open: &dyn Fn(&Path) -> bool,
+    trash: &mut dyn FnMut(&Path) -> Result<(), String>,
+    report: &mut dyn FnMut(SessionRemovalProgress),
+    on_item: &mut dyn FnMut(&SessionRemovalItem),
 ) -> SessionRemovalResult {
     let mut seen = HashSet::new();
     let mut unique = Vec::new();
@@ -457,6 +509,7 @@ pub(crate) fn remove_selected(
     for (index, id) in unique.into_iter().enumerate() {
         let next = remove_one(directory, id, is_open, trash);
         for item in next.items {
+            on_item(&item);
             result.record(&item.id, item.status, item.reason, item.message);
         }
         report(SessionRemovalProgress::Advanced {
