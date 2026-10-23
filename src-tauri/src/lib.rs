@@ -24,6 +24,7 @@ mod observed_file;
 mod opencode_deletion;
 mod opencode_sessions;
 mod project_cleanup;
+mod project_cleanup_batch;
 mod project_scan_history;
 mod scan_diagnostics;
 mod session_records;
@@ -40,8 +41,8 @@ use crate::managers::{
     run_pnpm_maintenance_with_runner, scan_manager_snapshot,
 };
 use crate::project_cleanup::{
-    discover_project_data, measure_project_data, run_project_cleanup_with_runner,
-    DirectoryMeasurement, ProjectCleanupResult, ProjectCleanupSettings, ProjectCleanupState,
+    discover_project_data, measure_project_data, DirectoryMeasurement, ProjectCleanupSettings,
+    ProjectCleanupState,
     ProjectDataOpenTarget, ProjectDataScan, ToolAvailability,
 };
 use crate::types::{
@@ -669,130 +670,37 @@ async fn measure_project_data_candidate(
     state.apply_measurement(&scan_id, &candidate_id, measurement)
 }
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct MaintenanceHistoryBegin {
-    history_id: Option<String>,
-    history_warning: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectCleanupEffectFailure {
-    candidate_id: String,
-    message: String,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CleanProjectDataCandidateReceipt {
-    #[serde(flatten)]
-    result: ProjectCleanupResult,
-    history_warning: Option<String>,
-}
-
 #[tauri::command]
-fn begin_project_cleanup_history(
+async fn run_project_cleanup_batch(
     scan_id: String,
     batch_id: String,
     candidate_ids: Vec<String>,
+    on_progress: tauri::ipc::Channel<project_cleanup_batch::ProjectCleanupBatchProgress>,
     state: tauri::State<'_, ProjectCleanupState>,
     history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
-) -> MaintenanceHistoryBegin {
-    let (root_id, root_path, candidates) = match state.history_scope(&scan_id, &candidate_ids) {
-        Ok(scope) => scope,
-        Err(warning) => {
-            return MaintenanceHistoryBegin {
-                history_id: None,
-                history_warning: Some(warning),
-            }
-        }
-    };
-    let detail = maintenance_history::MaintenanceDetail::ProjectCleanup(
-        maintenance_history::ProjectCleanupDetail {
-            scope: maintenance_history::ProjectCleanupScope {
-                scan_id,
-                scan_root_id: root_id,
-                scan_root_path: root_path,
-                batch_id,
-                candidates: candidates
-                    .into_iter()
-                    .enumerate()
-                    .map(|(order, candidate)| maintenance_history::ProjectCleanupCandidateSnapshot {
-                        candidate_id: candidate.candidate_id,
-                        kind: candidate.kind,
-                        project_path: candidate.project_path,
-                        directory_path: candidate.directory_path,
-                        order,
-                        confirmed_bytes: candidate.confirmed_bytes,
-                        confirmed_complete: candidate.confirmed_complete,
-                    })
-                    .collect(),
-            },
-            finish: maintenance_history::ProjectCleanupFinish::Completed,
-            results: Vec::new(),
-        },
-    );
-    match history.begin(
-        maintenance_history::MaintenanceDomain::ProjectCleanup,
-        maintenance_history::MaintenanceOperation::CleanBatch,
-        detail,
-        None,
-    ) {
-        Ok(history_id) => MaintenanceHistoryBegin {
-            history_id: Some(history_id),
-            history_warning: None,
-        },
-        Err(warning) => MaintenanceHistoryBegin {
-            history_id: None,
-            history_warning: Some(warning),
-        },
-    }
-}
-
-#[tauri::command]
-async fn clean_project_data_candidate(
-    scan_id: String,
-    candidate_id: String,
-    history_id: Option<String>,
-    state: tauri::State<'_, ProjectCleanupState>,
-    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
-) -> Result<CleanProjectDataCandidateReceipt, String> {
-    let (root_path, candidate) = state.cleanup_context(&scan_id, &candidate_id)?;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        run_project_cleanup_with_runner(&root_path, &candidate, &run_command_owned)
+) -> Result<project_cleanup_batch::ProjectCleanupBatchSummary, String> {
+    let state = state.inner().clone();
+    let history = history.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut report = |progress| {
+            let _ = on_progress.send(progress);
+        };
+        project_cleanup_batch::run_batch(
+            &state,
+            &history,
+            &scan_id,
+            &batch_id,
+            &candidate_ids,
+            &mut report,
+        )
     })
     .await
-    .map_err(|err| format!("Project cleanup failed: {err}"))?;
-    state.apply_cleanup_result(&scan_id, &result)?;
-    let history_warning = history_id.and_then(|id| {
-        maintenance_adapters::append_project_result(&history, &id, &result).err()
-    });
-    Ok(CleanProjectDataCandidateReceipt {
-        result,
-        history_warning,
-    })
+    .map_err(|error| format!("项目清理批次执行失败：{error}"))?
 }
 
 #[tauri::command]
-fn finish_project_cleanup_history(
-    history_id: String,
-    finish: maintenance_history::ProjectCleanupFinish,
-    effect_failures: Vec<ProjectCleanupEffectFailure>,
-    message: Option<String>,
-    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
-) -> Option<String> {
-    maintenance_adapters::finish_project(
-        &history,
-        &history_id,
-        finish,
-        effect_failures
-            .into_iter()
-            .map(|failure| (failure.candidate_id, failure.message))
-            .collect(),
-        message.unwrap_or_else(|| "项目清理批次已结束".into()),
-    )
-    .err()
+fn request_project_cleanup_stop(batch_id: String, state: tauri::State<'_, ProjectCleanupState>) {
+    state.request_stop(&batch_id);
 }
 
 #[tauri::command]
@@ -1074,9 +982,8 @@ pub fn run() {
             record_project_scan_history,
             scan_project_data,
             measure_project_data_candidate,
-            begin_project_cleanup_history,
-            clean_project_data_candidate,
-            finish_project_cleanup_history,
+            run_project_cleanup_batch,
+            request_project_cleanup_stop,
             open_project_cleanup_root,
             open_project_data_path,
             inspect_environment,

@@ -433,3 +433,17 @@ export interface ProjectCleanupResult {
   message: string | null;
   failure: CommandFailure | null;
 }
+
+export type ProjectCleanupBatchOutcome =
+  | { kind: "result"; result: ProjectCleanupResult }
+  | { kind: "effect-failed"; candidateId: string; message: string };
+
+export type ProjectCleanupBatchProgress =
+  | { phase: "started"; total: number }
+  | {
+      phase: "advanced";
+      candidateId: string;
+      outcome: ProjectCleanupBatchOutcome;
+      completedCount: number;
+      cleanedBytes: number;
+    };

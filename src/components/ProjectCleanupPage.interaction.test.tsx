@@ -4,12 +4,46 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProjectCleanupPage } from "./ProjectCleanupPage";
-import { createProjectCleanupWorkflow } from "../projectCleanupWorkflow";
+import {
+  createProjectCleanupWorkflow,
+  type CleanupBatchSummary,
+  type ProjectCleanupEffects,
+} from "../projectCleanupWorkflow";
 import { createInMemoryProjectCleanupEffects } from "../projectCleanupInMemoryEffects";
 import { presetSettings } from "../test/fixtures";
-import type { DirectoryMeasurement, ProjectDataCandidate, ProjectScanRecord } from "../types";
+import type {
+  DirectoryMeasurement,
+  ProjectCleanupBatchProgress,
+  ProjectCleanupResult,
+  ProjectDataCandidate,
+  ProjectScanRecord,
+} from "../types";
 
 afterEach(cleanup);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function cleanupResult(candidateId: string, cleanedBytes: number): ProjectCleanupResult {
+  return {
+    candidateId,
+    status: "Succeeded",
+    command: null,
+    beforeBytes: cleanedBytes,
+    afterBytes: 0,
+    cleanedBytes,
+    measurement: { status: "Ready", bytes: 0, human: "0 B", files: 0, directories: 0, skipped: 0, latestModifiedMs: null, message: null },
+    stdout: "",
+    stderr: "",
+    message: null,
+    failure: null,
+  };
+}
 
 function scanRecord(overrides: Partial<ProjectScanRecord> = {}): ProjectScanRecord {
   return {
@@ -189,4 +223,78 @@ it("does not present another depth as the current-depth scan", async () => {
   expect(screen.getByText(/当前深度（8）尚未扫描/)).toBeTruthy();
   expect(screen.getByText(/该预设其他深度有 1 条记录/)).toBeTruthy();
   expect(screen.queryByText(/较基线/)).toBeNull();
+});
+
+it("renders cleanup batch progress and the final summary", async () => {
+  const user = userEvent.setup();
+  const measurement: DirectoryMeasurement = { status: "Ready", bytes: 1024, human: "1 KiB", files: 1, directories: 1, skipped: 0, latestModifiedMs: null, message: null };
+  const candidates: ProjectDataCandidate[] = ["one", "two"].map((id) => ({
+    candidateId: id,
+    kind: "NodeModules" as const,
+    projectPath: `/code/${id}`,
+    directoryPath: `/code/${id}/node_modules`,
+    status: "Ready" as const,
+    message: null,
+    measurement,
+  }));
+  const completion = deferred<CleanupBatchSummary>();
+  let onProgress!: (progress: ProjectCleanupBatchProgress) => void;
+  const runBatch = vi.fn((input: Parameters<ProjectCleanupEffects["runBatch"]>[0]) => {
+    onProgress = input.onProgress;
+    return completion.promise;
+  });
+  const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
+    readSettings: async () => presetSettings(),
+    scan: async () => ({
+      rootId: "root-1",
+      scanId: "scan-1",
+      rootPath: "/code",
+      maxDepth: 8,
+      status: "Ready",
+      projects: { total: 2, rust: 0, node: 2, maven: 0 },
+      candidates,
+      skipped: 0,
+      errors: [],
+      cargoAvailable: true,
+      cargoMessage: null,
+      mavenAvailable: true,
+      mavenMessage: null,
+    }),
+    measure: async () => measurement,
+    runBatch,
+  }));
+  await workflow.initialize();
+  await workflow.startScan();
+  workflow.setSelected(["one", "two"], true);
+  workflow.prepareCleanupBatch(["one", "two"]);
+  function Page() {
+    const view = useSyncExternalStore(workflow.subscribe, workflow.read);
+    return <ProjectCleanupPage homeDirectory={null} view={view} workflow={workflow} />;
+  }
+  render(<Page />);
+
+  expect(screen.getByText("确认项目清理")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "清理选中项" }));
+  await waitFor(() => expect(screen.getByText("正在清理项目目录")).toBeTruthy());
+
+  onProgress({
+    phase: "advanced",
+    candidateId: "one",
+    outcome: { kind: "result", result: cleanupResult("one", 1024) },
+    completedCount: 1,
+    cleanedBytes: 1024,
+  });
+  await waitFor(() => expect(screen.getByText(/正在处理第 2\/2 项/)).toBeTruthy());
+
+  completion.resolve({
+    finish: "completed",
+    totalCount: 2,
+    completedCount: 2,
+    failedCount: 0,
+    cleanedBytes: 1024,
+    historyId: null,
+    historyWarning: null,
+  });
+  await waitFor(() => expect(screen.getByText("项目清理结果")).toBeTruthy());
+  expect(screen.getByText(/已处理 2\/2 项/)).toBeTruthy();
 });

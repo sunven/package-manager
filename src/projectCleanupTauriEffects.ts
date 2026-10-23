@@ -1,8 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
-import type { ProjectCleanupEffects } from "./projectCleanupWorkflow";
+import { Channel, invoke } from "@tauri-apps/api/core";
+import type { CleanupBatchSummary, ProjectCleanupEffects } from "./projectCleanupWorkflow";
 import type {
   DirectoryMeasurement,
-  ProjectCleanupResult,
+  ProjectCleanupBatchProgress,
   ProjectCleanupSettings,
   ProjectDataScan,
   ProjectScanHistoryRead,
@@ -21,10 +21,17 @@ export function createTauriProjectCleanupEffects(): ProjectCleanupEffects {
     scan: (input) => invoke<ProjectDataScan>("scan_project_data", input),
     measure: (input) =>
       invoke<DirectoryMeasurement>("measure_project_data_candidate", input),
-    clean: (input) =>
-      invoke<ProjectCleanupResult>("clean_project_data_candidate", input),
-    beginHistory: (input) => invoke("begin_project_cleanup_history", input),
-    finishHistory: (input) => invoke<string | null>("finish_project_cleanup_history", input),
+    runBatch: ({ scanId, batchId, candidateIds, onProgress }) => {
+      const progress = new Channel<ProjectCleanupBatchProgress>(onProgress);
+      return invoke<CleanupBatchSummary>("run_project_cleanup_batch", {
+        scanId,
+        batchId,
+        candidateIds,
+        onProgress: progress,
+      });
+    },
+    requestStop: (batchId) =>
+      invoke("request_project_cleanup_stop", { batchId }),
     openRoot: (rootId) => invoke("open_project_cleanup_root", { rootId }),
     openCandidate: (input) => invoke("open_project_data_path", input),
     readScanHistory: (presetIds) =>
