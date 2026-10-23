@@ -49,6 +49,16 @@ afterEach(() => {
 });
 
 describe("persistent observations and maintenance receipts", () => {
+  it("reports operation qualification reasons before opening maintenance confirmation", async () => {
+    const { workflow } = setup(["Npm"]);
+    const cleanupRequest = { kind: "cleanupCache" as const, managerId: "Npm" as const };
+    expect(workflow.maintenanceBlockReason(cleanupRequest)).toContain("尚未读取 npm 清单");
+    await workflow.refresh("Npm");
+    expect(workflow.maintenanceBlockReason(cleanupRequest)).toBeNull();
+    expect(workflow.requestCacheCleanup("Npm")).toBe(true);
+    expect(workflow.maintenanceBlockReason(cleanupRequest)).toContain("另一项维护操作");
+  });
+
   it("records manager completion and keeps the last success on a failed read", async () => {
     const { effects, workflow } = setup(["Npm"]);
     await workflow.refresh("Npm");

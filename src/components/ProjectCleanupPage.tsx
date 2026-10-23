@@ -119,6 +119,7 @@ export function ProjectCleanupPage({
   const selectableVisibleIds = visibleCandidates
     .filter((candidate) => candidate.cleanability.kind === "cleanable")
     .map((candidate) => candidate.candidateId);
+  const noVisibleEligibleCandidates = visibleCandidates.length > 0 && selectableVisibleIds.length === 0;
   const allVisibleSelected = Boolean(selectableVisibleIds.length)
     && selectableVisibleIds.every((candidateId) =>
       candidates.find((candidate) => candidate.candidateId === candidateId)?.selected,
@@ -346,6 +347,7 @@ export function ProjectCleanupPage({
               value={query}
             />
             <Button
+            aria-describedby={noVisibleEligibleCandidates ? "project-cleanup-selection-status" : undefined}
             disabled={!selectableVisibleIds.length || allVisibleSelected || Boolean(view.batch)}
             onClick={() => report(workflow.setSelected(selectableVisibleIds, true), "无法选择可清理候选")}
             size="sm"
@@ -381,6 +383,7 @@ export function ProjectCleanupPage({
             <Trash2 data-icon="inline-start" />
             清理 {view.totals.selectedCount} 项
           </Button>
+          {noVisibleEligibleCandidates ? <p className="basis-full text-xs text-muted-foreground" id="project-cleanup-selection-status" role="status">当前筛选中没有可清理项；请查看各行状态及资格原因。</p> : null}
         </div>
 
         {view.scan.phase === "discovering" && !view.scan.session ? (
@@ -396,6 +399,7 @@ export function ProjectCleanupPage({
                 <TableHead className="w-10">
                   <Checkbox
                     aria-label="选择当前可见的可清理项"
+                    aria-describedby={noVisibleEligibleCandidates ? "project-cleanup-selection-status" : undefined}
                     checked={allVisibleSelected}
                     disabled={!selectableVisibleIds.length || Boolean(view.batch)}
                     onCheckedChange={(checked) => {
@@ -675,6 +679,8 @@ function ProjectDataRow({
 }) {
   const selectable = candidate.cleanability.kind === "cleanable";
   const displayName = rowProjectName(candidate);
+  const blockedReason = candidateCleanabilityMessage(candidate);
+  const blockedReasonId = `project-candidate-${encodeURIComponent(candidate.candidateId)}-eligibility`;
   const active = batch?.phase === "running"
     && batch.candidates.some(
       (item) => item.candidateId === candidate.candidateId && item.state.kind === "running",
@@ -685,6 +691,7 @@ function ProjectDataRow({
       <TableCell>
         <Checkbox
           aria-label={`选择 ${displayName}`}
+          aria-describedby={!selectable ? blockedReasonId : undefined}
           checked={candidate.selected}
           disabled={!selectable || Boolean(batch)}
           onCheckedChange={(checked) => report(
@@ -705,10 +712,8 @@ function ProjectDataRow({
         {formatModified(candidate.measurement.latestModifiedMs)}
       </TableCell>
       <TableCell>
-        <CandidateStatusBadge
-          active={active}
-          candidate={candidate}
-        />
+        <CandidateStatusBadge active={active} candidate={candidate} />
+        {blockedReason ? <p className="mt-1 max-w-64 text-xs text-muted-foreground" id={blockedReasonId}>{blockedReason}</p> : null}
       </TableCell>
       <TableCell>
         <div className="flex justify-end gap-1">
@@ -736,6 +741,31 @@ function ProjectDataRow({
       </TableCell>
     </TableRow>
   );
+}
+
+function candidateCleanabilityMessage(candidate: ProjectCleanupCandidateView): string | null {
+  if (candidate.cleanability.kind === "cleanable") return null;
+  if (candidate.cleanability.kind === "measuring") return "正在测量目录占用，完成后可选择清理。";
+  if (candidate.cleanability.kind === "requires-rescan") return "该候选已尝试清理；重新扫描后才能再次选择。";
+
+  if (candidate.cleanability.reason === "identity-not-verified") {
+    if (candidate.status === "Symlink") return candidate.message ? `目标是符号链接，未验证实际目录身份。${candidate.message}` : "目标是符号链接，未验证实际目录身份。";
+    if (candidate.status === "NotDirectory") return candidate.message ? `目标不是目录，无法清理。${candidate.message}` : "目标不是目录，无法清理。";
+    return candidate.message ? `目录身份尚未验证；请重新扫描复核。${candidate.message}` : "目录身份尚未验证；请重新扫描复核。";
+  }
+
+  if (candidate.cleanability.reason === "directory-footprint-incomplete") {
+    const evidence = candidate.measurement.message
+      ? `${candidate.measurement.message}。`
+      : candidate.measurement.skipped > 0
+        ? `仍有 ${candidate.measurement.skipped} 项未能测量。`
+        : "目录占用尚未完整测量。";
+    return `${evidence}完整测量后才能选择；可刷新扫描重试。`;
+  }
+
+  const tool = candidate.kind === "RustTarget" ? "Cargo" : "Maven";
+  const target = candidate.kind === "RustTarget" ? "Rust target" : "Maven target";
+  return `${target} 清理需要可用的 ${tool}；请安装或恢复 ${tool} 后重新扫描。`;
 }
 
 function CandidateStatusBadge({

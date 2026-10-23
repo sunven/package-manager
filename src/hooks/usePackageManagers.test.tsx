@@ -22,6 +22,41 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("manager scan lifecycle", () => {
+  it("shows a qualification message when cleanup is requested before a manager scan", () => {
+    const { result } = renderHook(usePackageManagers);
+
+    act(() => result.current.actions.requestCacheCleanup());
+
+    expect(result.current.uiMessage).toMatchObject({
+      tone: "warn",
+      title: "暂时无法准备清理",
+      message: "尚未读取 npm 清单；请刷新后重试。",
+    });
+  });
+
+  it("explains when a package disappears before an uninstall request", async () => {
+    const packageRow = { name: "@scope/tool", version: "1", source: "global", kind: "Generic" as const, path: null, actions: [], signals: [] };
+    let scans = 0;
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "scan_manager") {
+        const packages = scans++ === 0 ? [packageRow] : [];
+        return { manager: managerFixture("Npm", { packages }), scanDurationMs: 1 };
+      }
+      return { id: "snapshot-1" };
+    });
+    const { result } = renderHook(usePackageManagers);
+
+    await act(async () => { await result.current.actions.refresh("Npm"); });
+    await act(async () => { await result.current.actions.refresh("Npm"); });
+    act(() => result.current.actions.requestPackageUninstall(0));
+
+    expect(result.current.uiMessage).toMatchObject({
+      tone: "warn",
+      title: "暂时无法卸载全局包",
+      message: "清单中的软件包已不存在；请刷新后重新选择。",
+    });
+  });
+
   it("retains pip supplement failure details and clears them on a targeted retry", async () => {
     const command = { program: "python3", args: ["-m", "pip", "list", "--outdated", "--format=json"], preview: "python3 -m pip list --outdated --format=json", timeoutMs: 30000 };
     const failure = { kind: "Timeout", message: "index timed out", command, stdout: "", stderr: "network unavailable" };

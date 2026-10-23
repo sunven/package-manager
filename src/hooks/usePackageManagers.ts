@@ -5,6 +5,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { createManagerMaintenanceWorkflow } from "../managerMaintenanceWorkflow";
 import { createManagerMaintenanceTauriEffects } from "../managerMaintenanceTauriEffects";
 import type { HomebrewFilter, ManagerId, MavenFilter, PackageRow, PipFilter, UiMessage } from "../types";
+import type { MaintenanceRequest } from "../state";
 import { actionFailureTitle, countedSizePath, errorToString, formatBytes, formatHomePathsInText, managerLabel } from "../utils/format";
 
 export interface PackageManagerActions {
@@ -307,12 +308,29 @@ export function usePackageManagers() {
   const requestPackageUninstall = useCallback((index: number) => {
     const managerId = selectedManagerRef.current;
     const pkg = packageAt(index);
-    if (!pkg || (managerId !== "Npm" && managerId !== "Pnpm")) return;
+    if (!pkg) {
+      setUiMessage({ tone: "warn", title: "暂时无法卸载全局包", message: "清单中的软件包已不存在；请刷新后重新选择。" });
+      return;
+    }
+    if (managerId !== "Npm" && managerId !== "Pnpm") return;
+    const request: MaintenanceRequest = { kind: "uninstallGlobalPackage", managerId, packageName: pkg.name, packageIndex: index };
+    const blocked = workflow.maintenanceBlockReason(request);
+    if (blocked) {
+      setUiMessage({ tone: "warn", title: "暂时无法卸载全局包", message: blocked });
+      return;
+    }
     if (workflow.requestPackageUninstall(managerId, pkg.name)) setOpenPackageActionMenuIndex(null);
   }, [packageAt, workflow]);
 
   const requestCacheCleanupAction = useCallback(() => {
-    workflow.requestCacheCleanup(selectedManagerRef.current);
+    const managerId = selectedManagerRef.current;
+    const request: MaintenanceRequest = { kind: "cleanupCache", managerId };
+    const blocked = workflow.maintenanceBlockReason(request);
+    if (blocked) {
+      setUiMessage({ tone: "warn", title: "暂时无法准备清理", message: blocked });
+      return;
+    }
+    workflow.requestCacheCleanup(managerId);
   }, [workflow]);
 
   // Capture the rendered operation ID so callbacks from an old dialog cannot

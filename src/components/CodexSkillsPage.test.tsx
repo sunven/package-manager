@@ -52,6 +52,9 @@ describe("Codex skills workflow", () => {
     expect(calls("scan_codex_skills")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "卸载 research" })).toBeNull();
     expect(screen.queryByRole("button", { name: "禁用 writer:docs" })).toBeNull();
+    expect(screen.getByText("插件技能只读")).toBeTruthy();
+    expect(screen.getByText("内置技能只读")).toBeTruthy();
+    expect(screen.queryByText("只读", { exact: true })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "writer@team-tools" })); expect(navigate).toHaveBeenCalledWith("writer@team-tools");
     fireEvent.change(screen.getByLabelText("来源", { exact: true }), { target: { value: "managed" } });
     expect(screen.queryByRole("button", { name: /research.*查看技能说明/ })).toBeNull();

@@ -306,9 +306,9 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
   }
 
   function requestMaintenance(request: MaintenanceRequest) {
+    if (maintenanceBlockReason(request)) return false;
     const manager = view.managerSnapshots[request.managerId];
-    if (view.maintenanceBusy || view.scanningManagers.has(request.managerId) || !view.enabledManagers.includes(request.managerId) || !manager) return false;
-    if (request.kind === "cleanupCache" ? !cleanupReady(manager) : !manager.packages.some((pkg) => pkg.name === request.packageName)) return false;
+    if (!manager) return false;
     confirmationRevision = revisions[request.managerId] ?? 0;
     publish({ maintenance: {
       id: ++sequence, request: { ...request }, phase: "confirming",
@@ -317,6 +317,29 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
       execution: null, verification: { status: "notStarted", message: null }, invalidation: null,
     } });
     return true;
+  }
+
+  function maintenanceBlockReason(request: MaintenanceRequest): string | null {
+    if (view.maintenanceBusy) return "另一项维护操作正在确认或执行；完成后请重试。";
+    if (view.scanningManagers.has(request.managerId)) return `正在扫描 ${managerLabel(request.managerId)}；扫描完成后请重试。`;
+    if (!view.enabledManagers.includes(request.managerId)) return `${managerLabel(request.managerId)} 来源未启用；请在设置中启用后重试。`;
+
+    const manager = view.managerSnapshots[request.managerId];
+    if (!manager) return `尚未读取 ${managerLabel(request.managerId)} 清单；请刷新后重试。`;
+    if (request.kind === "cleanupCache") {
+      if (!cleanupReady(manager)) {
+        if (manager.status === "Missing") return `${managerLabel(request.managerId)} 尚未安装，无法执行清理。`;
+        if (request.managerId === "Homebrew") {
+          const preview = manager.homebrew?.cleanup;
+          return preview?.message ?? "Homebrew 清理预演尚未就绪；预演完成后请重试。";
+        }
+        return `${managerLabel(request.managerId)} 清理方案当前不可用；请刷新后重试。`;
+      }
+      return null;
+    }
+    return manager.packages.some((pkg) => pkg.name === request.packageName)
+      ? null
+      : `清单中已不存在 ${request.packageName}；请刷新后重新选择。`;
   }
 
   function requestCacheCleanup(manager: ManagerId) {
@@ -418,6 +441,6 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
     read: () => view,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     refresh, refreshEnabled, retrySupplement, setManagerEnabled,
-    requestCacheCleanup, requestPackageUninstall, confirmMaintenance, cancelMaintenance, retryVerification,
+    requestCacheCleanup, requestPackageUninstall, maintenanceBlockReason, confirmMaintenance, cancelMaintenance, retryVerification,
   };
 }

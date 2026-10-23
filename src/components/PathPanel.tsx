@@ -3,7 +3,7 @@ import { ArrowSquareOut as ExternalLink, Copy, Info, Trash as Trash2 } from "@ph
 import { pathKindLabels } from "../constants";
 import type { HomebrewMaintenance, ManagerSnapshot, PathInfo } from "../types";
 import type { MaintenanceRequest } from "../state";
-import { cleanupCopyForPath, cleanupReady } from "../cleanupCopy";
+import { cleanupCopyForPath, cleanupReady, hasCleanupPlan } from "../cleanupCopy";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel, trimTail } from "../utils/format";
 import { EmptyState, IconButton, StatusBadge, TextButton } from "./ui";
 import { Button } from "../../components/ui/button";
@@ -55,6 +55,16 @@ export function PathPanel({
   }
 
   const { inlinePaths, stackedPaths } = splitPaths(manager);
+  const cleanupAvailable = hasCleanupPlan(manager.id);
+  const cleanupBlockReason = scanning
+    ? "管理器正在扫描；扫描完成后可准备清理。"
+    : manager.status === "Missing"
+      ? `${manager.label} 尚未安装，无法执行清理。`
+      : manager.status === "Failed"
+        ? manager.unsupportedReason ?? "管理器状态不可用；请刷新并核对状态后重试。"
+        : manager.id === "Homebrew" && manager.homebrew?.cleanup.status !== "Ready"
+          ? manager.homebrew?.cleanup.message ?? "清理预演尚未就绪；预演完成后可执行清理。"
+          : null;
 
   return (
     <div className="@container flex flex-col gap-2">
@@ -65,6 +75,7 @@ export function PathPanel({
       {manager.id === "Homebrew" ? (
         <HomebrewCleanupCard
           cleanupReady={cleanupReady(manager) && !scanning}
+          cleanupBlockReason={cleanupBlockReason}
           homeDirectory={homeDirectory}
           maintenance={manager.homebrew}
           onCopyCleanupCommand={onCopyCleanupCommand}
@@ -77,7 +88,8 @@ export function PathPanel({
         <>
           {inlinePaths.length ? (
             <InlinePathCard
-              cleanupAvailable={manager.status !== "Missing" && !scanning}
+              cleanupAvailable={cleanupAvailable}
+              cleanupBlockReason={cleanupBlockReason}
               homeDirectory={homeDirectory}
               managerId={manager.id}
               onCopyPath={onCopyPath}
@@ -92,7 +104,8 @@ export function PathPanel({
             <div className="grid grid-cols-1 gap-2 @xl:grid-cols-2">
               {stackedPaths.map((path) => (
                 <PathCard
-                  cleanupAvailable={manager.status !== "Missing" && !scanning}
+                  cleanupAvailable={cleanupAvailable}
+                  cleanupBlockReason={cleanupBlockReason}
                   homeDirectory={homeDirectory}
                   key={`${path.kind}-${path.path}`}
                   managerId={manager.id}
@@ -151,6 +164,7 @@ function splitPaths(manager: ManagerSnapshot | null): { inlinePaths: PathInfo[];
 
 function InlinePathCard({
   cleanupAvailable,
+  cleanupBlockReason,
   homeDirectory,
   managerId,
   onCopyPath,
@@ -161,6 +175,7 @@ function InlinePathCard({
   pendingMaintenance,
 }: {
   cleanupAvailable: boolean;
+  cleanupBlockReason: string | null;
   homeDirectory: string | null;
   managerId: ManagerSnapshot["id"];
   onCopyPath: (path: string) => void;
@@ -183,6 +198,7 @@ function InlinePathCard({
       {paths.map((path) => (
         <InlinePathCell
           cleanupAvailable={cleanupAvailable}
+          cleanupBlockReason={cleanupBlockReason}
           homeDirectory={homeDirectory}
           key={`${path.kind}-${path.path}`}
           managerId={managerId}
@@ -201,6 +217,7 @@ function InlinePathCard({
 function InlinePathCell({
   className = "min-w-0",
   cleanupAvailable,
+  cleanupBlockReason,
   homeDirectory,
   managerId,
   note,
@@ -212,6 +229,7 @@ function InlinePathCell({
 }: {
   className?: string;
   cleanupAvailable: boolean;
+  cleanupBlockReason: string | null;
   homeDirectory: string | null;
   managerId: ManagerSnapshot["id"];
   note?: string;
@@ -226,6 +244,7 @@ function InlinePathCell({
   const detail = size.status === "Pending" ? "等待占用扫描" : `${size.files} 文件${size.skipped ? " · 已测下限" : ""}`;
   const cleanupCopy = cleanupAvailable ? cleanupCopyForPath(managerId, path.kind) : null;
   const pendingCleanup = pendingMaintenance?.kind === "cleanupCache" && pendingMaintenance.managerId === managerId;
+  const cleanupBlockId = `cleanup-block-${managerId.toLowerCase()}-${path.kind.toLowerCase()}`;
 
   return (
     <div className={`${className} telemetry-cell border bg-background p-2`}>
@@ -249,11 +268,12 @@ function InlinePathCell({
           <ExternalLink />
         </IconButton>
         {cleanupCopy ? (
-          <IconButton className="size-6 shrink-0" disabled={pendingCleanup} label={pendingCleanup ? "清理中" : cleanupCopy.action} onClick={onRequestCacheCleanup}>
+          <IconButton ariaDescribedBy={cleanupBlockReason ? cleanupBlockId : undefined} className="size-6 shrink-0" disabled={pendingCleanup || Boolean(cleanupBlockReason)} label={pendingCleanup ? "清理中" : cleanupCopy.action} onClick={onRequestCacheCleanup}>
             <Trash2 />
           </IconButton>
         ) : null}
       </div>
+      {cleanupCopy && cleanupBlockReason ? <p className="mt-1 text-xs text-muted-foreground" id={cleanupBlockId}>{cleanupBlockReason}</p> : null}
       {size.message ? <p className="mt-1 truncate text-xs text-muted-foreground">{formatHomePathsInText(displayMessage(size.message), homeDirectory)}</p> : null}
     </div>
   );
@@ -278,6 +298,7 @@ function PathNoteTooltip({ label, note }: { label: string; note: string }) {
 
 function PathCard({
   cleanupAvailable,
+  cleanupBlockReason,
   homeDirectory,
   managerId,
   onCopyPath,
@@ -287,6 +308,7 @@ function PathCard({
   pendingMaintenance,
 }: {
   cleanupAvailable: boolean;
+  cleanupBlockReason: string | null;
   homeDirectory: string | null;
   managerId: ManagerSnapshot["id"];
   onCopyPath: (path: string) => void;
@@ -297,6 +319,7 @@ function PathCard({
 }) {
   const cleanupCopy = cleanupAvailable ? cleanupCopyForPath(managerId, path.kind) : null;
   const pendingCleanup = pendingMaintenance?.kind === "cleanupCache" && pendingMaintenance.managerId === managerId;
+  const cleanupBlockId = `cleanup-block-${managerId.toLowerCase()}-${path.kind.toLowerCase()}`;
   const size = path.size;
   const sizeValue = size.status === "Ready" ? (size.human ? `${size.skipped > 0 ? "≥ " : ""}${size.human}` : null) : null;
   const detail =
@@ -335,11 +358,12 @@ function PathCard({
             <ExternalLink />
           </IconButton>
           {cleanupCopy ? (
-            <IconButton disabled={pendingCleanup} label={pendingCleanup ? "清理中" : cleanupCopy.action} onClick={onRequestCacheCleanup}>
+            <IconButton ariaDescribedBy={cleanupBlockReason ? cleanupBlockId : undefined} disabled={pendingCleanup || Boolean(cleanupBlockReason)} label={pendingCleanup ? "清理中" : cleanupCopy.action} onClick={onRequestCacheCleanup}>
               <Trash2 />
             </IconButton>
           ) : null}
         </div>
+        {cleanupCopy && cleanupBlockReason ? <p className="mt-2 text-xs text-muted-foreground" id={cleanupBlockId}>{cleanupBlockReason}</p> : null}
       </CardContent>
     </Card>
   );
@@ -347,6 +371,7 @@ function PathCard({
 
 function HomebrewCleanupCard({
   cleanupReady,
+  cleanupBlockReason,
   homeDirectory,
   maintenance,
   onCopyCleanupCommand,
@@ -355,6 +380,7 @@ function HomebrewCleanupCard({
   pendingCleanup,
 }: {
   cleanupReady: boolean;
+  cleanupBlockReason: string | null;
   homeDirectory: string | null;
   maintenance: HomebrewMaintenance | null;
   onCopyCleanupCommand: () => void;
@@ -384,14 +410,17 @@ function HomebrewCleanupCard({
             <Copy data-icon="inline-start" />
             复制预演命令
           </TextButton>
-          {/* Withheld until the dry-run lands: without it the dialog would have
-              no itemised list to show, which is the whole safety argument. */}
-          {cleanupReady ? (
-            <IconButton disabled={pendingCleanup} label={pendingCleanup ? "清理中" : "执行 Homebrew 清理"} onClick={onRequestCacheCleanup}>
-              <Trash2 />
-            </IconButton>
-          ) : null}
+          {/* Keep the action visible, but disabled until its itemised preview is ready. */}
+          <IconButton
+            ariaDescribedBy={!cleanupReady ? "homebrew-cleanup-block" : undefined}
+            disabled={pendingCleanup || !cleanupReady}
+            label={pendingCleanup ? "清理中" : "执行 Homebrew 清理"}
+            onClick={onRequestCacheCleanup}
+          >
+            <Trash2 />
+          </IconButton>
         </div>
+        {!cleanupReady ? <p className="mt-2 text-xs text-muted-foreground" id="homebrew-cleanup-block">{cleanupBlockReason ?? "清理预演尚未就绪。"}</p> : null}
       </CardContent>
     </Card>
   );

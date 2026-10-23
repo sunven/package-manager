@@ -91,6 +91,7 @@ export function SignalBadge({ tone, children }: { tone: "neutral" | "warn" | "pa
 }
 
 export function IconButton({
+  ariaDescribedBy,
   children,
   className,
   disabled,
@@ -98,6 +99,7 @@ export function IconButton({
   onClick,
   type = "button",
 }: {
+  ariaDescribedBy?: string;
   children: ReactNode;
   className?: string;
   disabled?: boolean;
@@ -108,6 +110,7 @@ export function IconButton({
   return (
     <Button
       aria-label={label}
+      aria-describedby={ariaDescribedBy}
       className={className}
       disabled={disabled}
       onClick={onClick}

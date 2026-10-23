@@ -466,6 +466,36 @@ describe("session selection boundaries", () => {
     await waitFor(() => expect(age).toHaveBeenCalledWith("codex", 7));
   });
 
+  it("explains zero eligible age targets and associates in-use status with selection", async () => {
+    const nowMs = new Date(2026, 9, 21, 12).getTime();
+    const records = [
+      { ...scan.codex.records[0], lastActivityMs: nowMs },
+      { ...scan.codex.records[1], lastActivityMs: null },
+      { ...scan.codex.records[2], lastActivityMs: 1 },
+    ];
+    await setup({ nowMs, scan: { ...scan, codex: { ...scan.codex, records } } });
+    const inUseCheckbox = screen.getByRole("checkbox", { name: "选择 Busy project" });
+    expect(inUseCheckbox.getAttribute("aria-describedby")).toBeTruthy();
+    expect(screen.getByText("使用中，暂不移除")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "移除 7 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "移除 30 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/当前没有符合 7 天或 30 天门槛的记录/)).toBeTruthy();
+    expect(screen.getByText(/缺少最后活动时间，无法按年龄判断/)).toBeTruthy();
+  });
+
+  it("explains OpenCode age eligibility and disables thresholds with no targets", async () => {
+    const nowMs = new Date(2026, 9, 21, 12).getTime();
+    const recent = { ...openCodeScan.records[0], lastActivityMs: nowMs };
+    await setup({
+      initialSource: "opencode",
+      nowMs,
+      openCodeScan: { ...openCodeScan, records: [recent], activeSessionIds: [] },
+    });
+    expect((screen.getByRole("button", { name: "永久删除 7 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "永久删除 30 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/当前没有符合 7 天或 30 天门槛的会话/)).toBeTruthy();
+  });
+
   it("shows batch removal progress inside the confirmation dialog", async () => {
     let finish!: (value: SessionRemovalResult) => void;
     const onRemoveSelected = vi.fn().mockImplementation(() =>

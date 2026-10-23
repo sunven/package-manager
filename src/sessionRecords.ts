@@ -165,6 +165,29 @@ export function bulkRemovalRequest(
   return { days, count };
 }
 
+export function openCodeAgeEligibleCount(
+  records: OpenCodeSessionRecord[],
+  days: 7 | 30,
+  nowMs: number,
+  activeSessionIds: readonly string[],
+) {
+  const cutoffMs = nowMs - days * DAY_MS;
+  const active = new Set(activeSessionIds);
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const blocked = new Set<string>();
+
+  for (const record of records) {
+    if (record.lastActivityMs < cutoffMs && !active.has(record.id)) continue;
+    let current: OpenCodeSessionRecord | undefined = record;
+    while (current && !blocked.has(current.id)) {
+      blocked.add(current.id);
+      current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+  }
+
+  return records.filter((record) => !blocked.has(record.id)).length;
+}
+
 export function bulkRemovalConfirmText(sourceLabel: string, days: number, count: number) {
   return `将整个 ${sourceLabel} 来源中最后活动时间早于 ${days} 天前的会话记录移入废纸篓。当前符合条件的有 ${count} 条，不受搜索和状态筛选限制。使用中或无法读取最后活动时间的记录会跳过；移除前会再次检查。`;
 }

@@ -100,6 +100,33 @@ it("filters candidate types by keyboard while retaining the selected candidates"
   expect(screen.queryByRole("checkbox", { name: "选择 node-app" })).toBeNull();
 });
 
+it("shows candidate qualification reasons beside disabled checkboxes", async () => {
+  const measurement: DirectoryMeasurement = { status: "Ready", bytes: 1024, human: "1 KiB", files: 1, directories: 1, skipped: 0, latestModifiedMs: null, message: null };
+  const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
+    readSettings: async () => presetSettings(),
+    scan: async () => ({
+      rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8,
+      status: "Ready", projects: { total: 1, rust: 1, node: 0, maven: 0 },
+      candidates: [{ candidateId: "rust-link", kind: "RustTarget", projectPath: "/code/rust-app", directoryPath: "/code/rust-app/target", status: "Symlink", message: "链接目标未经扫描", measurement }],
+      skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null, mavenAvailable: true, mavenMessage: null,
+    }),
+    measure: async () => measurement,
+  }));
+  await workflow.initialize();
+  await workflow.startScan();
+  function Page() {
+    const view = useSyncExternalStore(workflow.subscribe, workflow.read);
+    return <ProjectCleanupPage homeDirectory={null} view={view} workflow={workflow} />;
+  }
+  render(<Page />);
+
+  const checkbox = screen.getByRole("checkbox", { name: "选择 rust-app" });
+  expect((checkbox as HTMLButtonElement).disabled).toBe(true);
+  expect(checkbox.getAttribute("aria-describedby")).toBeTruthy();
+  expect(screen.getByText(/目标是符号链接，未验证实际目录身份/)).toBeTruthy();
+  expect(screen.getByText(/链接目标未经扫描/)).toBeTruthy();
+});
+
 it("shows the current-depth scan summary and opens all retained records", async () => {
   const user = userEvent.setup();
   const current = scanRecord({

@@ -68,7 +68,7 @@ function homebrewMaintenance(cleanupStatus: "Pending" | "Ready" | "Failed") {
   };
 }
 
-function render(snapshot: ManagerSnapshot) {
+function render(snapshot: ManagerSnapshot, scanning = false) {
   return renderToStaticMarkup(
     <PathPanel
       homeDirectory="/Users/sunven"
@@ -79,7 +79,7 @@ function render(snapshot: ManagerSnapshot) {
       onOpenPath={noop}
       pendingHomebrewCleanup={false}
       pendingMaintenance={null}
-      scanning={false}
+      scanning={scanning}
     />,
   );
 }
@@ -103,18 +103,23 @@ describe("PathPanel", () => {
     expect(html).toContain("清理 Yarn 缓存");
   });
 
-  it("offers no cleanup when the manager is not installed", () => {
-    expect(render(manager("Yarn", "Cache", "Cache", "Missing"))).not.toContain("清理 Yarn 缓存");
-    expect(render(manager("Bun", "BunCache", "Bun cache", "Missing"))).not.toContain("清理 Bun 缓存");
+  it("keeps supported cleanup discoverable when its manager is missing", () => {
+    const yarn = render(manager("Yarn", "Cache", "Cache", "Missing"));
+    const bun = render(manager("Bun", "BunCache", "Bun cache", "Missing"));
+
+    expect(yarn).toContain("清理 Yarn 缓存");
+    expect(yarn).toContain("Yarn 尚未安装，无法执行清理。");
+    expect(bun).toContain("清理 Bun 缓存");
+    expect(bun).toContain("Bun 尚未安装，无法执行清理。");
   });
 
-  it("offers Homebrew cleanup on the dry-run card once the preview has landed", () => {
+  it("keeps Homebrew cleanup visible while its dry-run is pending", () => {
     const ready = { ...manager("Homebrew", "Cache", "Cache"), homebrew: homebrewMaintenance("Ready") };
     const pending = { ...manager("Homebrew", "Cache", "Cache"), homebrew: homebrewMaintenance("Pending") };
 
     expect(render(ready)).toContain("执行 Homebrew 清理");
-    // No dry-run yet means no itemised list to confirm against, so no button.
-    expect(render(pending)).not.toContain("执行 Homebrew 清理");
+    expect(render(pending)).toContain("执行 Homebrew 清理");
+    expect(render(pending)).toContain("清理预演正在后台加载");
   });
 
   it("puts the Homebrew button on the dry-run card, next to the itemised list", () => {
@@ -144,8 +149,11 @@ describe("PathPanel", () => {
     expect(html).toContain("清理 pip 缓存");
   });
 
-  it("offers no pip cleanup when Python is not installed", () => {
-    expect(render(manager("Pip", "Cache", "pip cache", "Missing"))).not.toContain("清理 pip 缓存");
+  it("keeps pip cleanup discoverable when Python is not installed", () => {
+    const html = render(manager("Pip", "Cache", "pip cache", "Missing"));
+
+    expect(html).toContain("清理 pip 缓存");
+    expect(html).toContain("Pip 尚未安装，无法执行清理。");
   });
 
   it("offers no cleanup on stacked cards for managers that have no plan", () => {
@@ -155,6 +163,14 @@ describe("PathPanel", () => {
 
     expect(html).toContain("本地仓库");
     expect(html).not.toContain("清理");
+  });
+
+  it("keeps supported cleanup visible with an accessible reason during a scan", () => {
+    const html = render(manager("Pnpm", "Store", "Store"), true);
+
+    expect(html).toContain("清理 pnpm store");
+    expect(html).toContain("管理器正在扫描；扫描完成后可准备清理。");
+    expect(html).toContain("aria-describedby=\"cleanup-block-pnpm-store\"");
   });
 
   it("offers no cleanup for managers that have no plan", () => {

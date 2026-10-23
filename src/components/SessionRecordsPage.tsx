@@ -22,6 +22,7 @@ import { formatBytes, formatHomePath } from "../utils/format";
 import {
   bulkRemovalConfirmText,
   bulkRemovalRequest,
+  openCodeAgeEligibleCount,
   formatSessionActivity,
   removableSessionRecords,
   removalProgressBreakdown,
@@ -427,6 +428,7 @@ export function SessionRecordsPage({
             onRefresh={openCode.refresh}
             scan={openCodeScan}
             scanning={openCodeScanning}
+            nowMs={nowMs ?? Date.now()}
           />
         </TabsContent>
       </Tabs>
@@ -446,6 +448,7 @@ function RefreshNotice({ value, onRetry }: { value: SessionRefresh; onRetry: () 
 function OpenCodeSection({
   scan,
   scanning,
+  nowMs,
   preparing,
   error,
   prepareError,
@@ -463,6 +466,7 @@ function OpenCodeSection({
 }: {
   scan: OpenCodeSessionScan | null;
   scanning: boolean;
+  nowMs: number;
   preparing: boolean;
   error: string | null;
   prepareError: string | null;
@@ -486,6 +490,12 @@ function OpenCodeSection({
   const groups = useMemo(() => groupOpenCodeSessions(records), [records]);
   const selectedSet = new Set(selectedIds);
   const selectedRecords = records.filter((record) => selectedSet.has(record.id));
+  const eligibleAge7 = scan?.status === "ready" && scan.activeSessionIds
+    ? openCodeAgeEligibleCount(scan.records, 7, nowMs, scan.activeSessionIds)
+    : null;
+  const eligibleAge30 = scan?.status === "ready" && scan.activeSessionIds
+    ? openCodeAgeEligibleCount(scan.records, 30, nowMs, scan.activeSessionIds)
+    : null;
 
   return (
     <Panel className="overflow-hidden">
@@ -504,8 +514,8 @@ function OpenCodeSection({
         </Button>
         {([7, 30] as const).map((days) => (
           <Button
-            aria-describedby="opencode-age-deletion-help"
-            disabled={scanning || preparing || deletingId !== null || openingId !== null || scan?.status !== "ready" || scan.activeSessionIds === null}
+            aria-describedby="opencode-age-deletion-help opencode-age-deletion-eligibility"
+            disabled={scanning || preparing || deletingId !== null || openingId !== null || scan?.status !== "ready" || scan.activeSessionIds === null || (days === 7 ? eligibleAge7 : eligibleAge30) === 0}
             key={days}
             onClick={() => onRequestAgeDelete(days)}
             size="sm"
@@ -515,6 +525,15 @@ function OpenCodeSection({
         ))}
       </div>
       <p className="px-3 py-2 text-xs text-muted-foreground" id="opencode-age-deletion-help">按天数永久删除以最后活动时间为准，作用于整个 OpenCode 来源，不受搜索和归档筛选限制。有近期或运行中后代的父会话保留；删除不会移入废纸篓，无法恢复。</p>
+      <p className="px-3 pb-2 text-xs text-muted-foreground" id="opencode-age-deletion-eligibility" role="status">{eligibleAge7 === null || eligibleAge30 === null
+        ? scan?.activityMessage ?? scan?.message ?? "读取会话及运行状态后显示当前符合年龄条件的数量。"
+        : eligibleAge7 === 0 && eligibleAge30 === 0
+          ? "当前没有符合 7 天或 30 天门槛的会话；近期或运行中的会话及其父会话会保留。"
+          : eligibleAge7 === 0
+            ? `当前没有符合 7 天门槛的会话；30 天门槛符合 ${eligibleAge30} 条。`
+            : eligibleAge30 === 0
+              ? `当前没有符合 30 天门槛的会话；7 天门槛符合 ${eligibleAge7} 条。`
+              : `当前符合年龄门槛：7 天 ${eligibleAge7} 条、30 天 ${eligibleAge30} 条。`}</p>
       {preparing ? <p className="px-3 pb-2 text-xs text-muted-foreground" role="status">正在准备删除计划…</p> : null}
       {prepareError ? <Alert className="m-3" variant="destructive"><AlertTitle>无法准备 OpenCode 删除计划</AlertTitle><AlertDescription>{prepareError}</AlertDescription></Alert> : null}
       {scan?.activityMessage ? <Alert className="m-3"><AlertTitle>OpenCode 运行状态暂不可读取</AlertTitle><AlertDescription>{scan.activityMessage} 请刷新重试。</AlertDescription></Alert> : null}
@@ -549,6 +568,7 @@ function OpenCodeSection({
                   <li className="flex min-w-0 flex-wrap items-start justify-between gap-3 px-4 py-3" key={record.id}>
                     <Checkbox
                       aria-label={`选择 ${record.title}`}
+                      aria-describedby={openingId !== null || deletingId !== null || scanning || preparing || scan?.status !== "ready" ? "opencode-selection-blocked" : undefined}
                       checked={selectedSet.has(record.id)}
                       disabled={openingId !== null || deletingId !== null || scanning || preparing || scan?.status !== "ready"}
                       onCheckedChange={(checked) => onSetSelected(record.id, checked === true)}
@@ -602,6 +622,7 @@ function OpenCodeSection({
           ))}
         </div>
       ) : null}
+      {scan?.status !== "ready" || scanning || preparing || deletingId !== null || openingId !== null ? <p className="sr-only" id="opencode-selection-blocked">{scanning ? "正在读取 OpenCode 会话，暂不能选择。" : preparing ? "正在准备删除计划，暂不能选择。" : deletingId !== null ? "正在删除 OpenCode 会话，暂不能选择。" : openingId !== null ? "正在打开会话，暂不能选择。" : scan?.message ?? "OpenCode 服务不可用，暂不能选择。"}</p> : null}
     </Panel>
   );
 }
@@ -660,10 +681,18 @@ function SourceSection({
   sort: SessionSort;
 }) {
   const records = view?.groups.flatMap((group) => group.records) ?? [];
+  const allSourceRecords = source?.records ?? [];
   const removable = removableSessionRecords(records);
   const selected = selectedRemovalRequest(records, selectedIds);
   const selectedCount = selected?.count ?? 0;
   const selectedSet = new Set(selected?.ids ?? []);
+  const eligibleAge7 = bulkRemovalRequest(allSourceRecords, 7, nowMs)?.count ?? 0;
+  const eligibleAge30 = bulkRemovalRequest(allSourceRecords, 30, nowMs)?.count ?? 0;
+  const inUseCount = allSourceRecords.filter((record) => record.inUse).length;
+  const unknownActivityCount = allSourceRecords.filter((record) => record.lastActivityMs === null).length;
+  const recentAge7Count = allSourceRecords.filter((record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs >= nowMs - 7 * 24 * 60 * 60 * 1000).length;
+  const recentAge30Count = allSourceRecords.filter((record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs >= nowMs - 30 * 24 * 60 * 60 * 1000).length;
+  const ageEligibilityId = `${sourceKey}-age-removal-eligibility`;
   return (
     <Panel className="overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b p-3">
@@ -694,7 +723,7 @@ function SourceSection({
             const request = bulkRemovalRequest(source?.records ?? [], days, nowMs);
             return (
               <Button
-                aria-describedby={`${sourceKey}-age-removal-help`}
+                aria-describedby={`${sourceKey}-age-removal-help ${ageEligibilityId}`}
                 disabled={scanning || removing || request === null}
                 key={days}
                 onClick={() => {
@@ -712,6 +741,7 @@ function SourceSection({
       </div>
       <CardContent className="flex flex-col gap-2 p-3">
         <p className="text-xs text-muted-foreground" id={`${sourceKey}-age-removal-help`}>按天数移除以最后活动时间为准，作用于整个 {label} 来源，不受搜索和状态筛选限制。使用中的记录会跳过。</p>
+        <p className="text-xs text-muted-foreground" id={ageEligibilityId} role="status">{!source ? "读取会话记录后显示当前符合年龄条件的数量。" : eligibleAge7 === 0 && eligibleAge30 === 0 ? `当前没有符合 7 天或 30 天门槛的记录；近 7 天 ${recentAge7Count} 条、近 30 天 ${recentAge30Count} 条未达门槛` : eligibleAge7 === 0 ? `当前没有符合 7 天门槛的记录；近 7 天 ${recentAge7Count} 条未达门槛` : eligibleAge30 === 0 ? `当前没有符合 30 天门槛的记录；近 30 天 ${recentAge30Count} 条未达门槛` : `当前符合年龄门槛：7 天 ${eligibleAge7} 条、30 天 ${eligibleAge30} 条`}{inUseCount ? `；${inUseCount} 条使用中的记录会跳过` : ""}{unknownActivityCount ? `；${unknownActivityCount} 条缺少最后活动时间，无法按年龄判断` : ""}。</p>
         <div className="grid gap-2 sm:grid-cols-2">
           <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
           <StatCard label="当前结果的记录占用" value={view ? formatBytes(view.bytes) : "—"} />
@@ -768,6 +798,7 @@ function SourceSection({
                 <div className="flex items-center gap-3 border-b bg-muted/40 px-4 py-2">
                   <Checkbox
                     aria-label={`选择${group.label}的可移除会话记录`}
+                    aria-describedby={groupRemovable.length === 0 ? ageEligibilityId : undefined}
                     checked={groupAllSelected}
                     disabled={removing || groupRemovable.length === 0}
                     onCheckedChange={(checked) => onSetGroupSelected(group.records, checked === true)}
@@ -790,6 +821,7 @@ function SourceSection({
                       <li className="grid items-center gap-3 px-4 py-3 sm:grid-cols-[auto_minmax(0,1.4fr)_minmax(0,1fr)_auto]" key={record.id}>
                         <Checkbox
                           aria-label={`选择 ${record.title}`}
+                          aria-describedby={record.inUse ? `${sourceKey}-in-use-${encodeURIComponent(record.id)}` : undefined}
                           checked={!record.inUse && selectedSet.has(record.id)}
                           disabled={removing || record.inUse}
                           onCheckedChange={(checked) => onSetRecordSelected(record.id, checked === true)}
@@ -807,7 +839,7 @@ function SourceSection({
                           <span className="font-medium tabular-nums text-foreground">{formatBytes(record.bytes)}</span>
                         </span>
                         <span className="flex items-center justify-end">
-                          {record.inUse ? <Badge variant="outline">使用中，暂不移除</Badge> : (
+                          {record.inUse ? <span className="text-xs text-muted-foreground" id={`${sourceKey}-in-use-${encodeURIComponent(record.id)}`}>使用中，暂不移除</span> : (
                             <Button
                               aria-label={`将 ${record.title || record.id} 移入废纸篓`}
                               disabled={removing}
