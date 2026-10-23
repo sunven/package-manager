@@ -5,6 +5,8 @@ import type {
   ProjectCleanupResult,
   ProjectCleanupSettings,
   ProjectDataScan,
+  ProjectScanHistoryRead,
+  ProjectScanRecord,
 } from "./types";
 
 export function createTauriProjectCleanupEffects(): ProjectCleanupEffects {
@@ -25,5 +27,9 @@ export function createTauriProjectCleanupEffects(): ProjectCleanupEffects {
     finishHistory: (input) => invoke<string | null>("finish_project_cleanup_history", input),
     openRoot: (rootId) => invoke("open_project_cleanup_root", { rootId }),
     openCandidate: (input) => invoke("open_project_data_path", input),
+    readScanHistory: (presetIds) =>
+      invoke<ProjectScanHistoryRead>("list_project_scan_history", { presetIds }),
+    recordScanHistory: (draft) =>
+      invoke<ProjectScanRecord>("record_project_scan_history", { draft }),
   };
 }

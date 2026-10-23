@@ -1,5 +1,5 @@
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "../../components/ui/dropdown-menu";
-import { ArrowClockwise as RefreshCw, ArrowDown, ArrowSquareOut as ExternalLink, ArrowUp, CaretUpDown, Copy, FolderOpen, Square, Trash as Trash2, X } from "@phosphor-icons/react";
+import { ArrowClockwise as RefreshCw, ArrowDown, ArrowSquareOut as ExternalLink, ArrowUp, CaretUpDown, ClockCounterClockwise, Copy, FolderOpen, Square, Trash as Trash2, X } from "@phosphor-icons/react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
@@ -19,7 +19,14 @@ import type {
   WorkflowFailure,
   WorkflowOutcome,
 } from "../projectCleanupWorkflow";
-import type { ProjectCleanupResult, UiMessage } from "../types";
+import {
+  formatScanTime,
+  latestRecordForDepth,
+  otherDepthRecordCount,
+  projectDelta,
+  scanChangeCounts,
+} from "../projectScanHistory";
+import type { ProjectCleanupResult, ProjectScanRecord, UiMessage } from "../types";
 import { formatBytes, formatHomePath } from "../utils/format";
 import {
   AlertDialog,
@@ -47,6 +54,7 @@ import {
 } from "../../components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { EmptyState, IconButton, Panel, PanelHead } from "./ui";
+import { ProjectScanHistoryDialog } from "./ProjectScanHistoryDialog";
 
 export function ProjectCleanupPage({
   homeDirectory,
@@ -64,14 +72,30 @@ export function ProjectCleanupPage({
   const [sortDir, setSortDir] = useState<ProjectDataSortDir>("desc");
   const [kind, setKind] = useState<ProjectDataKind>("RustTarget");
   const [message, setMessage] = useState<UiMessage | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [depthDraft, setDepthDraft] = useState(String(view.settings.maxDepth));
   useEffect(() => {
     setDepthDraft(String(view.settings.maxDepth));
   }, [view.settings.activePresetId, view.settings.maxDepth]);
+  useEffect(() => {
+    setHistoryOpen(false);
+  }, [view.settings.activePresetId]);
   const depthChanged = depthDraft !== String(view.settings.maxDepth);
   const draftDepth = Number(depthDraft);
   const depthValid = depthDraft.trim() !== "" && Number.isInteger(draftDepth) && draftDepth >= 0 && draftDepth <= 32;
   const candidates = view.scan.session?.candidates ?? [];
+  const activePreset = view.settings.presets.find(
+    (preset) => preset.id === view.settings.activePresetId,
+  ) ?? null;
+  const activePresetRecords = activePreset
+    ? view.history.byPreset[activePreset.id] ?? []
+    : [];
+  const latestAtDepth = activePreset
+    ? latestRecordForDepth(activePresetRecords, view.settings.maxDepth)
+    : null;
+  const otherDepthCount = activePreset
+    ? otherDepthRecordCount(activePresetRecords, view.settings.maxDepth)
+    : 0;
   const rustTotal = useMemo(
     () => candidates.filter((candidate) => candidate.kind === "RustTarget").length,
     [candidates],
@@ -143,6 +167,18 @@ export function ProjectCleanupPage({
         <Alert variant="destructive">
           <AlertTitle>{displayedMessage.title}</AlertTitle>
           <AlertDescription>{displayedMessage.message}</AlertDescription>
+        </Alert>
+      ) : null}
+      {view.history.warning ? (
+        <Alert>
+          <AlertTitle>扫描记录不可用</AlertTitle>
+          <AlertDescription>{view.history.warning}。扫描和清理仍可正常使用。</AlertDescription>
+        </Alert>
+      ) : null}
+      {view.history.recordWarning ? (
+        <Alert>
+          <AlertTitle>本次扫描记录未保存</AlertTitle>
+          <AlertDescription>{view.history.recordWarning}。扫描结果和清理不受影响；下次扫描会重新记录。</AlertDescription>
         </Alert>
       ) : null}
 
@@ -228,14 +264,34 @@ export function ProjectCleanupPage({
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button disabled={settingsBusy || scanBusy || Boolean(view.batch) || !view.settings.presets.length} variant="outline" size="sm" type="button">选择目录预设（{view.settings.presets.length}）</Button></DropdownMenuTrigger>
             <DropdownMenuContent><DropdownMenuGroup>
-              {view.settings.presets.map((preset) => <DropdownMenuItem key={preset.id} onSelect={() => void workflow.selectPreset(preset.id).then((outcome) => report(outcome, "无法切换目录预设"))}>
-                {formatHomePath(preset.path, homeDirectory)} · 深度 {preset.maxDepth}{preset.id === view.settings.activePresetId ? " · 当前" : ""}
-              </DropdownMenuItem>)}
+              {view.settings.presets.map((preset) => {
+                const latest = latestRecordForDepth(
+                  view.history.byPreset[preset.id] ?? [],
+                  preset.maxDepth,
+                );
+                return (
+                  <DropdownMenuItem key={preset.id} onSelect={() => void workflow.selectPreset(preset.id).then((outcome) => report(outcome, "无法切换目录预设"))}>
+                    <div className="flex max-w-96 flex-col gap-0.5 whitespace-normal">
+                      <span>{formatHomePath(preset.path, homeDirectory)} · 深度 {preset.maxDepth}{preset.id === view.settings.activePresetId ? " · 当前" : ""}</span>
+                      <span className="text-xs text-muted-foreground">{presetHistoryLabel(view.history, latest)}</span>
+                    </div>
+                  </DropdownMenuItem>
+                );
+              })}
             </DropdownMenuGroup></DropdownMenuContent>
           </DropdownMenu>
           {view.settings.activePresetId ? <Button disabled={settingsBusy || scanBusy || Boolean(view.batch)} variant="outline" size="sm" type="button" onClick={() => void workflow.removePreset(view.settings.activePresetId!).then((outcome) => report(outcome, "无法移除目录预设"))}>移除当前预设（不删除目录）</Button> : null}
           <span className="text-xs text-muted-foreground">预设只保存扫描根目录和深度，切换后需要重新扫描。</span>
         </div>
+        {activePreset ? (
+          <ProjectScanSummary
+            depth={view.settings.maxDepth}
+            history={view.history}
+            latest={latestAtDepth}
+            onOpen={() => setHistoryOpen(true)}
+            otherDepthCount={otherDepthCount}
+          />
+        ) : null}
         <p className="px-3 pb-3 text-xs text-muted-foreground" id="project-cleanup-depth-range">扫描深度为 0–32 的整数；0 只检查根目录，每增加 1 多检查一层子目录。</p>
         {!depthValid ? <p className="px-3 pb-3 text-sm text-destructive" role="alert">请输入 0 到 32 之间的整数，再保存深度。</p> : null}
         {view.settings.rootMessage ? <Alert><AlertTitle>扫描目录不可用</AlertTitle><AlertDescription>{view.settings.rootMessage}。目录恢复后可重新选择此预设验证。</AlertDescription></Alert> : null}
@@ -432,6 +488,19 @@ export function ProjectCleanupPage({
         </div>
       </Panel>
 
+      {activePreset ? (
+        <ProjectScanHistoryDialog
+          homeDirectory={homeDirectory}
+          onCopyPath={(path) => void copyPath(path)}
+          onOpenChange={setHistoryOpen}
+          open={historyOpen}
+          presetDepth={view.settings.maxDepth}
+          presetPath={activePreset.path}
+          records={activePresetRecords}
+          warning={view.history.warning}
+        />
+      ) : null}
+
       <ProjectCleanupDialog
         batch={view.batch}
         homeDirectory={homeDirectory}
@@ -441,6 +510,94 @@ export function ProjectCleanupPage({
       />
     </main>
   );
+}
+
+function ProjectScanSummary({
+  depth,
+  history,
+  latest,
+  onOpen,
+  otherDepthCount,
+}: {
+  depth: number;
+  history: ProjectCleanupView["history"];
+  latest: ProjectScanRecord | null;
+  onOpen: () => void;
+  otherDepthCount: number;
+}) {
+  const loading = history.phase === "idle" || history.phase === "loading";
+  const unavailable = history.phase === "failed" || Boolean(history.warning);
+  const changes = latest ? scanChangeCounts(latest) : null;
+  const delta = latest ? projectDelta(latest) : null;
+  let text: string;
+  if (loading) {
+    text = "正在读取扫描记录…";
+  } else if (unavailable) {
+    text = "扫描记录不可用";
+  } else if (!latest) {
+    text = `当前深度（${depth}）尚未扫描${otherDepthCount ? `；该预设其他深度有 ${otherDepthCount} 条记录` : ""}`;
+  } else {
+    const parts = [
+      `上次扫描 ${formatScanTime(latest.finishedAt)}`,
+      `深度 ${latest.maxDepth}`,
+      `项目 ${latest.projects.total}`,
+      `候选 ${latest.candidates.total}`,
+    ];
+    if (latest.measurement === "stopped") parts.push("测量已取消");
+    if (!latest.discovery.complete) {
+      parts.push(`发现不完整（跳过 ${latest.discovery.skipped} 个目录），未比较`);
+    } else if (latest.changes) {
+      if (changes && (changes.added > 0 || changes.removed > 0)) {
+        parts.push(`较基线 +${changes.added}/−${changes.removed} 候选`);
+      } else {
+        parts.push("较基线候选无变化");
+      }
+      if (delta) parts.push(`项目 ${delta > 0 ? "+" : ""}${delta}`);
+      if (latest.baseline) parts.push(`基线 ${formatScanTime(latest.baseline.finishedAt)}`);
+    } else if (latest.baseline) {
+      parts.push("本次记录未比较变化");
+    } else {
+      parts.push("首次可比较扫描，暂无基线");
+    }
+    text = parts.join(" · ");
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-3 py-2 text-xs text-muted-foreground">
+      <span className="flex min-w-0 items-center gap-1.5">
+        <ClockCounterClockwise aria-hidden="true" className="shrink-0" />
+        <span className="min-w-0 break-words">{text}</span>
+      </span>
+      <Button
+        className="ml-auto shrink-0"
+        disabled={loading}
+        onClick={onOpen}
+        size="sm"
+        type="button"
+        variant="ghost"
+      >
+        查看扫描记录
+      </Button>
+    </div>
+  );
+}
+
+function presetHistoryLabel(
+  history: ProjectCleanupView["history"],
+  latest: ProjectScanRecord | null,
+) {
+  if (history.phase === "idle" || history.phase === "loading") return "正在读取扫描记录…";
+  if (history.phase === "failed" || history.warning) return "扫描记录不可用";
+  if (!latest) return "当前深度未扫描";
+  const changes = latest.changes
+    ? latest.changes.added.length || latest.changes.removed.length
+      ? ` · +${latest.changes.added.length}/−${latest.changes.removed.length}`
+      : " · 候选无变化"
+    : latest.discovery.complete
+      ? latest.baseline
+        ? " · 未比较"
+        : ""
+      : " · 发现不完整";
+  return `上次扫描 ${formatScanTime(latest.finishedAt)} · 项目 ${latest.projects.total} · 候选 ${latest.candidates.total}${changes}`;
 }
 
 function ProjectDataScanNotice({ view }: { view: ProjectCleanupView }) {

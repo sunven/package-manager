@@ -330,12 +330,20 @@ export interface ProjectDataScanError {
   message: string;
 }
 
+export interface ProjectCounts {
+  total: number;
+  rust: number;
+  node: number;
+  maven: number;
+}
+
 export interface ProjectDataScan {
   rootId: string;
   scanId: string;
   rootPath: string;
   maxDepth: number;
   status: ProjectDataScanStatus;
+  projects: ProjectCounts;
   candidates: ProjectDataCandidate[];
   skipped: number;
   errors: ProjectDataScanError[];
@@ -343,6 +351,72 @@ export interface ProjectDataScan {
   cargoMessage: string | null;
   mavenAvailable: boolean;
   mavenMessage: string | null;
+}
+
+export interface ProjectScanCandidateKey {
+  kind: ProjectDataKind;
+  directoryPath: string;
+}
+
+export type ProjectScanMeasurement = "finished" | "stopped";
+
+export interface ProjectScanDiscovery {
+  complete: boolean;
+  skipped: number;
+}
+
+export interface ProjectScanCandidateCounts {
+  total: number;
+  rustTarget: number;
+  mavenTarget: number;
+  nodeModules: number;
+}
+
+export interface ProjectScanBaseline {
+  finishedAt: number;
+  projects: ProjectCounts;
+  candidates: ProjectScanCandidateCounts;
+}
+
+export interface ProjectScanCandidateChanges {
+  added: ProjectScanCandidateKey[];
+  removed: ProjectScanCandidateKey[];
+}
+
+export interface ProjectScanRecord {
+  id: string;
+  presetId: string;
+  scanId: string;
+  rootPath: string;
+  maxDepth: number;
+  finishedAt: number;
+  discovery: ProjectScanDiscovery;
+  measurement: ProjectScanMeasurement;
+  projects: ProjectCounts;
+  candidates: ProjectScanCandidateCounts;
+  baseline: ProjectScanBaseline | null;
+  changes: ProjectScanCandidateChanges | null;
+}
+
+export interface ProjectScanRecordDraft {
+  presetId: string;
+  scanId: string;
+  rootPath: string;
+  maxDepth: number;
+  finishedAt: number;
+  skipped: number;
+  measurement: ProjectScanMeasurement;
+  projects: ProjectCounts;
+  candidates: ProjectScanCandidateKey[];
+}
+
+export interface PresetScanHistory {
+  records: ProjectScanRecord[];
+}
+
+export interface ProjectScanHistoryRead {
+  histories: Record<string, PresetScanHistory>;
+  warning: string | null;
 }
 
 export interface ProjectCleanupResult {

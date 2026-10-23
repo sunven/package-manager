@@ -22,6 +22,7 @@ mod observed_file;
 mod opencode_deletion;
 mod opencode_sessions;
 mod project_cleanup;
+mod project_scan_history;
 mod scan_diagnostics;
 mod session_records;
 mod skill_installation_copy;
@@ -909,8 +910,13 @@ fn select_project_cleanup_preset(
 fn remove_project_cleanup_preset(
     preset_id: String,
     state: tauri::State<'_, ProjectCleanupState>,
+    scan_history: tauri::State<'_, project_scan_history::ProjectScanHistoryState>,
 ) -> Result<ProjectCleanupSettings, String> {
-    state.remove_preset(&preset_id)
+    let settings = state.remove_preset(&preset_id)?;
+    // Preset removal must still succeed if the history file is unreadable;
+    // orphaned entries are pruned on the next launch.
+    let _ = scan_history.remove_preset(&preset_id);
+    Ok(settings)
 }
 
 #[tauri::command]
@@ -920,6 +926,28 @@ fn update_project_cleanup_depth(
     state: tauri::State<'_, ProjectCleanupState>,
 ) -> Result<ProjectCleanupSettings, String> {
     state.update_depth(&preset_id, max_depth)
+}
+
+#[tauri::command]
+async fn list_project_scan_history(
+    preset_ids: Vec<String>,
+    state: tauri::State<'_, project_scan_history::ProjectScanHistoryState>,
+) -> Result<project_scan_history::ProjectScanHistoryRead, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.list(&preset_ids))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn record_project_scan_history(
+    draft: project_scan_history::ProjectScanRecordDraft,
+    state: tauri::State<'_, project_scan_history::ProjectScanHistoryState>,
+) -> Result<project_scan_history::ProjectScanRecord, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.record(draft))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -1315,7 +1343,15 @@ pub fn run() {
                 .app_config_dir()
                 .map_err(|err| format!("Could not resolve app config directory: {err}"))?
                 .join("build-artifacts.json");
-            app.manage(ProjectCleanupState::load(settings_path));
+            let project_cleanup_state = ProjectCleanupState::load(settings_path);
+            let preset_ids = project_cleanup_state.settings().ok().map(|settings| {
+                settings
+                    .presets
+                    .into_iter()
+                    .map(|preset| preset.id)
+                    .collect::<Vec<_>>()
+            });
+            app.manage(project_cleanup_state);
             let data_directory = app.path().app_data_dir()?;
             let history_directory = data_directory.join("manager-history");
             app.manage(manager_history::HistoryState::new(history_directory.clone()));
@@ -1323,6 +1359,13 @@ pub fn run() {
             app.manage(observation_ledger::ObservationLedgerState::new(
                 data_directory.join("observation-ledger.json"),
             ));
+            let project_scan_history = project_scan_history::ProjectScanHistoryState::new(
+                data_directory.join("project-scan-history.json"),
+            );
+            if let Some(preset_ids) = preset_ids {
+                let _ = project_scan_history.prune_presets(&preset_ids);
+            }
+            app.manage(project_scan_history);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1369,6 +1412,8 @@ pub fn run() {
             select_project_cleanup_preset,
             remove_project_cleanup_preset,
             update_project_cleanup_depth,
+            list_project_scan_history,
+            record_project_scan_history,
             scan_project_data,
             measure_project_data_candidate,
             begin_project_cleanup_history,

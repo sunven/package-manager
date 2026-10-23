@@ -39,6 +39,7 @@ function projectSession(overrides: Partial<ProjectCleanupScanSessionView> = {}):
     rootPath: "/dev",
     maxDepth: 8,
     status: "Ready",
+    projects: { total: 0, rust: 0, node: 0, maven: 0 },
     candidates: [],
     skipped: 0,
     errors: [],
@@ -80,6 +81,7 @@ function projectView(overrides: {
     },
     totals: { verifiedBytes: 0, reviewBytes: 0, reviewCount: 0, selectedCount: 0, selectedBytes: 0, cleanedBytes: 0 },
     batch: null,
+    history: { phase: "ready", byPreset: {}, warning: null, recordWarning: null },
   };
 }
 
@@ -144,7 +146,7 @@ describe("observation facts", () => {
 
   it("maps project ready, stopped, failed and no-root scopes", () => {
     const ready = projectObservationFacts(projectView({ phase: "ready", session: projectSession() }));
-    expect(ready.success).toMatchObject({ completeness: "complete", scope: "root\n/dev\n8" });
+    expect(ready.success).toMatchObject({ completeness: "complete", scope: "/dev\n8" });
     const stopped = projectObservationFacts(projectView({
       phase: "stopped",
       session: projectSession({ status: "Partial", errors: [{ path: "/dev/x", message: "no access" }] }),

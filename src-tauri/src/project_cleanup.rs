@@ -38,6 +38,15 @@ pub(crate) struct ToolAvailability {
     pub(crate) maven_message: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectCounts {
+    pub(crate) total: usize,
+    pub(crate) rust: usize,
+    pub(crate) node: usize,
+    pub(crate) maven: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectDataScan {
@@ -46,6 +55,7 @@ pub(crate) struct ProjectDataScan {
     pub(crate) root_path: String,
     pub(crate) max_depth: u8,
     pub(crate) status: ProjectDataScanStatus,
+    pub(crate) projects: ProjectCounts,
     pub(crate) candidates: Vec<ProjectDataCandidate>,
     pub(crate) skipped: usize,
     pub(crate) errors: Vec<ProjectDataScanError>,
@@ -80,7 +90,7 @@ pub(crate) struct ProjectDataCandidate {
     pub(crate) measurement: DirectoryMeasurement,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub(crate) enum ProjectDataKind {
     RustTarget,
     MavenTarget,
@@ -591,6 +601,7 @@ impl Registry {
         } else {
             ProjectDataScanStatus::Partial
         };
+        let projects = discovery.projects;
         self.scan = Some(ScanSession {
             id: scan_id.clone(),
             root_id: root_id.to_string(),
@@ -605,6 +616,7 @@ impl Registry {
             root_path: root_path.display().to_string(),
             max_depth,
             status,
+            projects,
             candidates: response_candidates,
             skipped: discovery.skipped,
             errors: discovery.errors,
@@ -815,6 +827,7 @@ impl CandidateRecord {
 
 #[derive(Debug)]
 pub(crate) struct Discovery {
+    projects: ProjectCounts,
     candidates: Vec<DiscoveredCandidate>,
     skipped: usize,
     errors: Vec<ProjectDataScanError>,
@@ -831,6 +844,7 @@ struct DiscoveredCandidate {
 
 pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
     let mut discovery = Discovery {
+        projects: ProjectCounts::default(),
         candidates: Vec::new(),
         skipped: 0,
         errors: Vec::new(),
@@ -838,17 +852,26 @@ pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
     let mut pending = vec![(root.to_path_buf(), 0_u8)];
 
     while let Some((directory, depth)) = pending.pop() {
-        if is_cargo_project(&directory) {
+        let is_rust = is_cargo_project(&directory);
+        let is_maven = is_maven_project(&directory);
+        let is_node = is_node_project(&directory);
+        if is_rust || is_maven || is_node {
+            discovery.projects.total = discovery.projects.total.saturating_add(1);
+        }
+        if is_rust {
+            discovery.projects.rust = discovery.projects.rust.saturating_add(1);
             if let Some(candidate) = inspect_rust_candidate(&directory) {
                 discovery.candidates.push(candidate);
             }
         }
-        if is_maven_project(&directory) {
+        if is_maven {
+            discovery.projects.maven = discovery.projects.maven.saturating_add(1);
             if let Some(candidate) = inspect_maven_candidate(&directory) {
                 discovery.candidates.push(candidate);
             }
         }
-        if is_node_project(&directory) {
+        if is_node {
+            discovery.projects.node = discovery.projects.node.saturating_add(1);
             if let Some(candidate) = inspect_node_candidate(&directory) {
                 discovery.candidates.push(candidate);
             }
@@ -1844,6 +1867,15 @@ mod tests {
 
         let discovery = discover_project_data(&root, 8);
 
+        assert_eq!(
+            discovery.projects,
+            ProjectCounts {
+                total: 2,
+                rust: 2,
+                node: 0,
+                maven: 0,
+            }
+        );
         assert_eq!(discovery.candidates.len(), 2);
         assert_eq!(
             discovery.candidates[0].status,
@@ -1868,6 +1900,15 @@ mod tests {
 
         let discovery = discover_project_data(&root, 0);
 
+        assert_eq!(
+            discovery.projects,
+            ProjectCounts {
+                total: 1,
+                rust: 1,
+                node: 0,
+                maven: 0,
+            }
+        );
         assert_eq!(discovery.candidates.len(), 1);
         assert_eq!(discovery.candidates[0].project_path, root);
     }
@@ -1898,6 +1939,28 @@ mod tests {
     }
 
     #[test]
+    fn counts_multi_marker_project_once_in_total() {
+        let root = temp_dir("multi-marker");
+        let _guard = TempDirGuard(root.clone());
+        let project = root.join("project");
+        create_project(&project, Some("CACHEDIR.TAG"));
+        create_node_project(&project);
+
+        let discovery = discover_project_data(&root, 8);
+
+        assert_eq!(
+            discovery.projects,
+            ProjectCounts {
+                total: 1,
+                rust: 1,
+                node: 1,
+                maven: 0,
+            }
+        );
+        assert_eq!(discovery.candidates.len(), 2);
+    }
+
+    #[test]
     fn discovers_node_modules_without_entering_installed_dependencies() {
         let root = temp_dir("discover-node");
         let _guard = TempDirGuard(root.clone());
@@ -1909,6 +1972,15 @@ mod tests {
 
         let discovery = discover_project_data(&root, 8);
 
+        assert_eq!(
+            discovery.projects,
+            ProjectCounts {
+                total: 2,
+                rust: 1,
+                node: 1,
+                maven: 0,
+            }
+        );
         assert_eq!(discovery.candidates.len(), 2);
         assert!(discovery.candidates.iter().any(|candidate| {
             candidate.kind == ProjectDataKind::RustTarget
@@ -1933,6 +2005,15 @@ mod tests {
 
         let discovery = discover_project_data(&root, 8);
 
+        assert_eq!(
+            discovery.projects,
+            ProjectCounts {
+                total: 4,
+                rust: 0,
+                node: 0,
+                maven: 4,
+            }
+        );
         assert!(discovery.has_maven_candidates());
         assert_eq!(discovery.candidates.len(), 3);
         assert_eq!(
@@ -1981,6 +2062,15 @@ mod tests {
 
         let discovery = discover_project_data(&root, 8);
 
+        assert_eq!(
+            discovery.projects,
+            ProjectCounts {
+                total: 1,
+                rust: 0,
+                node: 1,
+                maven: 0,
+            }
+        );
         assert_eq!(discovery.candidates.len(), 1);
         assert_eq!(discovery.candidates[0].kind, ProjectDataKind::NodeModules);
         assert_eq!(

@@ -7,9 +7,27 @@ import { ProjectCleanupPage } from "./ProjectCleanupPage";
 import { createProjectCleanupWorkflow } from "../projectCleanupWorkflow";
 import { createInMemoryProjectCleanupEffects } from "../projectCleanupInMemoryEffects";
 import { presetSettings } from "../test/fixtures";
-import type { DirectoryMeasurement, ProjectDataCandidate } from "../types";
+import type { DirectoryMeasurement, ProjectDataCandidate, ProjectScanRecord } from "../types";
 
 afterEach(cleanup);
+
+function scanRecord(overrides: Partial<ProjectScanRecord> = {}): ProjectScanRecord {
+  return {
+    id: "record-1",
+    presetId: "preset-1",
+    scanId: "scan-1",
+    rootPath: "/code",
+    maxDepth: 8,
+    finishedAt: 100,
+    discovery: { complete: true, skipped: 0 },
+    measurement: "finished",
+    projects: { total: 3, rust: 1, node: 2, maven: 0 },
+    candidates: { total: 2, rustTarget: 1, mavenTarget: 0, nodeModules: 1 },
+    baseline: null,
+    changes: null,
+    ...overrides,
+  };
+}
 
 it("lets a user edit a multi-digit depth before saving it for the next scan", async () => {
   const user = userEvent.setup();
@@ -42,7 +60,7 @@ it("filters candidate types by keyboard while retaining the selected candidates"
   ];
   const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
     readSettings: async () => presetSettings(),
-    scan: async () => ({ rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8, status: "Ready", candidates, skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null, mavenAvailable: true, mavenMessage: null }),
+    scan: async () => ({ rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8, status: "Ready", projects: { total: 0, rust: 0, node: 0, maven: 0 }, candidates, skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null, mavenAvailable: true, mavenMessage: null }),
     measure: async () => measurement,
   }));
   await workflow.initialize();
@@ -80,4 +98,68 @@ it("filters candidate types by keyboard while retaining the selected candidates"
   expect(rust.getAttribute("aria-checked")).toBe("true");
   expect(screen.getByRole("checkbox", { name: "选择 rust-app" }).getAttribute("aria-checked")).toBe("true");
   expect(screen.queryByRole("checkbox", { name: "选择 node-app" })).toBeNull();
+});
+
+it("shows the current-depth scan summary and opens all retained records", async () => {
+  const user = userEvent.setup();
+  const current = scanRecord({
+    id: "current",
+    finishedAt: 300,
+    projects: { total: 4, rust: 1, node: 3, maven: 0 },
+    candidates: { total: 3, rustTarget: 1, mavenTarget: 0, nodeModules: 2 },
+    baseline: {
+      finishedAt: 200,
+      projects: { total: 3, rust: 1, node: 2, maven: 0 },
+      candidates: { total: 2, rustTarget: 1, mavenTarget: 0, nodeModules: 1 },
+    },
+    changes: {
+      added: [{ kind: "NodeModules", directoryPath: "/code/b/node_modules" }],
+      removed: [{ kind: "RustTarget", directoryPath: "/code/a/target" }],
+    },
+  });
+  const otherDepth = scanRecord({ id: "other-depth", finishedAt: 200, maxDepth: 6 });
+  const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
+    readSettings: async () => presetSettings({ maxDepth: 8 }),
+    readScanHistory: async () => ({
+      histories: { "preset-1": { records: [current, otherDepth] } },
+      warning: null,
+    }),
+  }));
+  await workflow.initialize();
+  function Page() {
+    const view = useSyncExternalStore(workflow.subscribe, workflow.read);
+    return <ProjectCleanupPage homeDirectory={null} view={view} workflow={workflow} />;
+  }
+  render(<Page />);
+
+  expect(screen.getByText(/较基线 \+1\/−1 候选/)).toBeTruthy();
+  expect(screen.getByText(/项目 \+1/)).toBeTruthy();
+  expect(screen.queryByText(/深度 6/)).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "查看扫描记录" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText("扫描记录")).toBeTruthy();
+  expect(within(dialog).getByText("b/node_modules")).toBeTruthy();
+  expect(within(dialog).getByText("a/target")).toBeTruthy();
+  expect(within(dialog).getAllByText(/深度 6/).length).toBeGreaterThan(0);
+});
+
+it("does not present another depth as the current-depth scan", async () => {
+  const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
+    readSettings: async () => presetSettings({ maxDepth: 8 }),
+    readScanHistory: async () => ({
+      histories: { "preset-1": { records: [scanRecord({ maxDepth: 6 })] } },
+      warning: null,
+    }),
+  }));
+  await workflow.initialize();
+  function Page() {
+    const view = useSyncExternalStore(workflow.subscribe, workflow.read);
+    return <ProjectCleanupPage homeDirectory={null} view={view} workflow={workflow} />;
+  }
+  render(<Page />);
+
+  expect(screen.getByText(/当前深度（8）尚未扫描/)).toBeTruthy();
+  expect(screen.getByText(/该预设其他深度有 1 条记录/)).toBeTruthy();
+  expect(screen.queryByText(/较基线/)).toBeNull();
 });

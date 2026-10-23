@@ -59,8 +59,8 @@ function notes(...values: (string | null | undefined)[]) {
   return unique.length ? unique.join("；").slice(0, 500) : null;
 }
 
-export function projectScopeKey(rootId: string, rootPath: string, maxDepth: number) {
-  return `${rootId}\n${rootPath}\n${maxDepth}`;
+export function projectScopeKey(rootPath: string, maxDepth: number) {
+  return `${rootPath}\n${maxDepth}`;
 }
 
 export function managerObservationFacts(
@@ -141,7 +141,7 @@ export function projectObservationFacts(view: ProjectCleanupView): ObservationFa
     const partial = scan.phase === "stopped" || session.status === "Partial";
     success = {
       at: null,
-      scope: projectScopeKey(session.rootId, session.rootPath, session.maxDepth),
+      scope: projectScopeKey(session.rootPath, session.maxDepth),
       scopeLabel: `${session.rootPath} · 深度 ${session.maxDepth}`,
       completeness: partial ? "partial" : "complete",
       note: notes(
@@ -155,9 +155,9 @@ export function projectObservationFacts(view: ProjectCleanupView): ObservationFa
     success,
     failure,
     invalidated: null,
-    currentScope: settings.rootId && settings.rootPath
+    currentScope: settings.rootPath
       ? {
-          key: projectScopeKey(settings.rootId, settings.rootPath, settings.maxDepth),
+          key: projectScopeKey(settings.rootPath, settings.maxDepth),
           label: `${settings.rootPath} · 深度 ${settings.maxDepth}`,
         }
       : null,

@@ -4,6 +4,10 @@ import type {
   ProjectCleanupSettings,
   ProjectDataCandidate,
   ProjectDataScan,
+  ProjectScanHistoryRead,
+  ProjectScanMeasurement,
+  ProjectScanRecord,
+  ProjectScanRecordDraft,
 } from "./types";
 import { bumpHistoryRevision } from "./historyRevision";
 import { projectScopeKey } from "./observationFacts";
@@ -31,6 +35,8 @@ export interface ProjectCleanupEffects {
     candidateId: string;
     target: "Project" | "Directory";
   }): Promise<void>;
+  readScanHistory(presetIds: string[]): Promise<ProjectScanHistoryRead>;
+  recordScanHistory(draft: ProjectScanRecordDraft): Promise<ProjectScanRecord>;
 }
 
 export interface WorkflowFailure {
@@ -138,11 +144,19 @@ export interface CleanupBatchSummary {
   historyWarning: string | null;
 }
 
+export interface ProjectScanHistoryView {
+  phase: "idle" | "loading" | "ready" | "failed";
+  byPreset: Record<string, ProjectScanRecord[]>;
+  warning: string | null;
+  recordWarning: string | null;
+}
+
 export interface ProjectCleanupView {
   settings: ProjectCleanupSettingsView;
   scan: ProjectCleanupScanView;
   totals: ProjectCleanupTotalsView;
   batch: CleanupBatchView | null;
+  history: ProjectScanHistoryView;
 }
 
 export interface ProjectCleanupWorkflow {
@@ -189,7 +203,7 @@ function recordProjectObservation(
     kind: "success",
     itemId: "project-scan",
     at: Date.now(),
-    scope: projectScopeKey(session.rootId, session.rootPath, session.maxDepth),
+    scope: projectScopeKey(session.rootPath, session.maxDepth),
     scopeLabel: `${session.rootPath} · 深度 ${session.maxDepth}`,
     completeness,
     note,
@@ -222,6 +236,12 @@ export function createProjectCleanupWorkflow(
     },
     totals: emptyTotals(),
     batch: null,
+    history: {
+      phase: "idle",
+      byPreset: {},
+      warning: null,
+      recordWarning: null,
+    },
   };
 
   const publish = (next: ProjectCleanupView) => {
@@ -260,6 +280,75 @@ export function createProjectCleanupWorkflow(
     }
   };
 
+  const ensurePresetHistories = () => {
+    const byPreset = { ...view.history.byPreset };
+    let changed = false;
+    for (const preset of view.settings.presets) {
+      if (!(preset.id in byPreset)) {
+        byPreset[preset.id] = [];
+        changed = true;
+      }
+    }
+    if (changed) {
+      publish({ ...view, history: { ...view.history, byPreset } });
+    }
+  };
+
+  const removePresetHistory = (presetId: string) => {
+    if (!(presetId in view.history.byPreset)) return;
+    const byPreset = { ...view.history.byPreset };
+    delete byPreset[presetId];
+    publish({ ...view, history: { ...view.history, byPreset } });
+  };
+
+  const recordScan = async (
+    session: ProjectCleanupScanSessionView,
+    measurement: ProjectScanMeasurement,
+    presetId: string | null,
+    finishedAt: number,
+  ) => {
+    if (!presetId) return;
+    try {
+      const record = await effects.recordScanHistory({
+        presetId,
+        scanId: session.scanId,
+        rootPath: session.rootPath,
+        maxDepth: session.maxDepth,
+        finishedAt,
+        skipped: session.skipped,
+        measurement,
+        projects: session.projects,
+        candidates: session.candidates.map((candidate) => ({
+          kind: candidate.kind,
+          directoryPath: candidate.directoryPath,
+        })),
+      });
+      if (!view.settings.presets.some((preset) => preset.id === presetId)) return;
+      const current = view.history;
+      const records = [record, ...(current.byPreset[presetId] ?? [])]
+        .sort((left, right) => right.finishedAt - left.finishedAt)
+        .slice(0, 20);
+      publish({
+        ...view,
+        history: {
+          ...current,
+          phase: "ready",
+          byPreset: { ...current.byPreset, [presetId]: records },
+          warning: null,
+          recordWarning: null,
+        },
+      });
+    } catch (error) {
+      publish({
+        ...view,
+        history: {
+          ...view.history,
+          recordWarning: errorText(error),
+        },
+      });
+    }
+  };
+
   return {
     read: () => view,
     subscribe: (listener) => {
@@ -270,6 +359,45 @@ export function createProjectCleanupWorkflow(
       if (disposed) return { kind: "unavailable", reason: "disposed" };
       try {
         const settings = await effects.readSettings();
+        let history: ProjectScanHistoryView;
+        if (settings.presets.length) {
+          try {
+            const read = await effects.readScanHistory(
+              settings.presets.map((preset) => preset.id),
+            );
+            const byPreset: Record<string, ProjectScanRecord[]> = Object.fromEntries(
+              Object.entries(read.histories).map(([presetId, entry]) => [
+                presetId,
+                entry.records,
+              ]),
+            );
+            for (const preset of settings.presets) {
+              if (!(preset.id in byPreset)) {
+                byPreset[preset.id] = [];
+              }
+            }
+            history = {
+              phase: "ready",
+              byPreset,
+              warning: read.warning,
+              recordWarning: null,
+            };
+          } catch (error) {
+            history = {
+              phase: "failed",
+              byPreset: {},
+              warning: errorText(error),
+              recordWarning: null,
+            };
+          }
+        } else {
+          history = {
+            phase: "ready",
+            byPreset: {},
+            warning: null,
+            recordWarning: null,
+          };
+        }
         publish({
           ...view,
           settings: {
@@ -277,6 +405,7 @@ export function createProjectCleanupWorkflow(
             ...settings,
             failure: null,
           },
+          history,
         });
         return { kind: "succeeded", value: undefined };
       } catch (error) {
@@ -305,16 +434,23 @@ export function createProjectCleanupWorkflow(
     },
     chooseRoot: async () => {
       const outcome = await changeSettings(effects.chooseRoot, true);
+      if (outcome.kind === "succeeded") ensurePresetHistories();
       return outcome.kind === "succeeded" ? { kind: "succeeded", value: { rootId: view.settings.rootId! } } : outcome;
     },
     selectPreset: (id) => changeSettings(() => effects.selectPreset(id), true),
-    removePreset: (id) => changeSettings(() => effects.removePreset(id), id === view.settings.activePresetId),
+    removePreset: async (id) => {
+      const wasActive = id === view.settings.activePresetId;
+      const outcome = await changeSettings(() => effects.removePreset(id), wasActive);
+      if (outcome.kind === "succeeded") removePresetHistory(id);
+      return outcome;
+    },
     startScan: async () => {
       if (view.settings.phase === "loading") return { kind: "unavailable", reason: "settings-busy" };
       if (disposed) return { kind: "unavailable", reason: "disposed" };
       if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
       const rootId = view.settings.rootId;
       if (!rootId) return { kind: "unavailable", reason: "no-root" };
+      const presetId = view.settings.activePresetId;
       if (view.scan.phase === "discovering" || view.scan.phase === "measuring") {
         return { kind: "unavailable", reason: "scan-active" };
       }
@@ -328,6 +464,10 @@ export function createProjectCleanupWorkflow(
           session: null,
           pendingMeasurements: 0,
           failure: null,
+        },
+        history: {
+          ...view.history,
+          recordWarning: null,
         },
       });
 
@@ -398,6 +538,7 @@ export function createProjectCleanupWorkflow(
           Array.from({ length: Math.min(4, candidates.length) }, () => measureNext()),
         );
         if (generation !== scanGeneration) return { kind: "cancelled" };
+        const finishedAt = Date.now();
         publish({
           ...view,
           scan: {
@@ -406,6 +547,7 @@ export function createProjectCleanupWorkflow(
           },
         });
         recordProjectObservation(session, "ready");
+        await recordScan(session, "finished", presetId, finishedAt);
         return {
           kind: "succeeded",
           value: { scanId: session.scanId, finish: "completed" },
@@ -425,8 +567,8 @@ export function createProjectCleanupWorkflow(
             failure,
           },
         });
-        const scope = view.settings.rootId && view.settings.rootPath
-          ? projectScopeKey(view.settings.rootId, view.settings.rootPath, view.settings.maxDepth)
+        const scope = view.settings.rootPath
+          ? projectScopeKey(view.settings.rootPath, view.settings.maxDepth)
           : null;
         recordObservation({
           kind: "attempt",
@@ -444,6 +586,9 @@ export function createProjectCleanupWorkflow(
       if (view.scan.phase !== "discovering" && view.scan.phase !== "measuring") {
         return { kind: "unavailable", reason: "scan-inactive" };
       }
+      const stoppedSession = view.scan.session;
+      const presetId = view.settings.activePresetId;
+      const finishedAt = Date.now();
       scanGeneration += 1;
       publish({
         ...view,
@@ -453,7 +598,10 @@ export function createProjectCleanupWorkflow(
           pendingMeasurements: 0,
         },
       });
-      if (view.scan.session) recordProjectObservation(view.scan.session, "stopped");
+      if (stoppedSession) {
+        recordProjectObservation(stoppedSession, "stopped");
+        void recordScan(stoppedSession, "stopped", presetId, finishedAt);
+      }
       return { kind: "succeeded", value: undefined };
     },
     setSelected: (candidateIds, selected) => {

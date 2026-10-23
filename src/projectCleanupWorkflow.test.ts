@@ -9,6 +9,8 @@ import type {
   ProjectDataCandidate,
   ProjectDataScan,
   ProjectCleanupSettings,
+  ProjectScanRecord,
+  ProjectScanRecordDraft,
 } from "./types";
 
 function settings(rootId = "root-1", rootPath = "/code", maxDepth = 6) {
@@ -71,13 +73,17 @@ function measurement(bytes: number): DirectoryMeasurement {
   };
 }
 
-function scan(candidates: ProjectDataCandidate[]): ProjectDataScan {
+function scan(
+  candidates: ProjectDataCandidate[],
+  projects: ProjectDataScan["projects"] = { total: 0, rust: 0, node: 0, maven: 0 },
+): ProjectDataScan {
   return {
     rootId: "root-1",
     scanId: "scan-1",
     rootPath: "/code",
     maxDepth: 6,
     status: "Ready",
+    projects,
     candidates,
     skipped: 0,
     errors: [],
@@ -85,6 +91,33 @@ function scan(candidates: ProjectDataCandidate[]): ProjectDataScan {
     cargoMessage: null,
     mavenAvailable: true,
     mavenMessage: null,
+  };
+}
+
+function recordFromDraft(
+  draft: ProjectScanRecordDraft,
+  overrides: Partial<ProjectScanRecord> = {},
+): ProjectScanRecord {
+  const candidates = {
+    total: draft.candidates.length,
+    rustTarget: draft.candidates.filter((candidate) => candidate.kind === "RustTarget").length,
+    mavenTarget: draft.candidates.filter((candidate) => candidate.kind === "MavenTarget").length,
+    nodeModules: draft.candidates.filter((candidate) => candidate.kind === "NodeModules").length,
+  };
+  return {
+    id: `record-${draft.finishedAt}`,
+    presetId: draft.presetId,
+    scanId: draft.scanId,
+    rootPath: draft.rootPath,
+    maxDepth: draft.maxDepth,
+    finishedAt: draft.finishedAt,
+    discovery: { complete: draft.skipped === 0, skipped: draft.skipped },
+    measurement: draft.measurement,
+    projects: draft.projects,
+    candidates,
+    baseline: null,
+    changes: null,
+    ...overrides,
   };
 }
 
@@ -120,7 +153,7 @@ describe("Project Cleanup workflow", () => {
     await completed.startScan();
     expect(getObservationLedgerSnapshot().records["project-scan"]?.lastSuccess).toMatchObject({
       completeness: "complete",
-      scope: "root-1\n/code\n6",
+      scope: "/code\n6",
     });
 
     resetObservationLedgerForTests();
@@ -151,7 +184,7 @@ describe("Project Cleanup workflow", () => {
     expect(getObservationLedgerSnapshot().records["project-scan"]?.lastAttempt).toMatchObject({
       outcome: "failed",
       reason: "offline",
-      scope: "root-1\n/code\n6",
+      scope: "/code\n6",
     });
   });
 
@@ -745,5 +778,210 @@ describe("Project Cleanup workflow", () => {
         session: null,
       },
     });
+  });
+
+  it("records completed and stopped scans with their terminal measurement state", async () => {
+    const completedDrafts: ProjectScanRecordDraft[] = [];
+    const completed = createProjectCleanupWorkflow(
+      effects({
+        readSettings: async () => settings(),
+        scan: async () => scan(
+          [pendingCandidate("candidate")],
+          { total: 3, rust: 1, node: 2, maven: 0 },
+        ),
+        measure: async () => measurement(100),
+        recordScanHistory: async (draft) => {
+          completedDrafts.push(draft);
+          return recordFromDraft(draft);
+        },
+      }),
+    );
+    await completed.initialize();
+    await completed.startScan();
+
+    expect(completedDrafts).toHaveLength(1);
+    expect(completedDrafts[0]).toMatchObject({
+      presetId: "preset-1",
+      scanId: "scan-1",
+      rootPath: "/code",
+      maxDepth: 6,
+      skipped: 0,
+      measurement: "finished",
+      projects: { total: 3, rust: 1, node: 2, maven: 0 },
+      candidates: [{ kind: "NodeModules", directoryPath: "/code/candidate/node_modules" }],
+    });
+    expect(completed.read().history.byPreset["preset-1"]).toHaveLength(1);
+    expect(completed.read().history.byPreset["preset-1"][0]).toMatchObject({
+      measurement: "finished",
+      candidates: { total: 1, nodeModules: 1 },
+    });
+
+    const stoppedDrafts: ProjectScanRecordDraft[] = [];
+    const measuring = deferred<DirectoryMeasurement>();
+    const stopped = createProjectCleanupWorkflow(
+      effects({
+        readSettings: async () => settings(),
+        scan: async () => scan(
+          [pendingCandidate("candidate")],
+          { total: 1, rust: 0, node: 1, maven: 0 },
+        ),
+        measure: async () => measuring.promise,
+        recordScanHistory: async (draft) => {
+          stoppedDrafts.push(draft);
+          return recordFromDraft(draft);
+        },
+      }),
+    );
+    await stopped.initialize();
+    const running = stopped.startScan();
+    await waitFor(() => stopped.read().scan.phase === "measuring");
+    stopped.requestScanStop();
+    await waitFor(() => stoppedDrafts.length === 1);
+    measuring.resolve(measurement(100));
+    await running;
+    await waitFor(() => stopped.read().history.byPreset["preset-1"]?.length === 1);
+    expect(stoppedDrafts[0].measurement).toBe("stopped");
+    expect(stopped.read().history.byPreset["preset-1"][0].measurement).toBe("stopped");
+  });
+
+  it("does not record failed or discovery-stage stopped scans", async () => {
+    const failedDrafts: ProjectScanRecordDraft[] = [];
+    const failed = createProjectCleanupWorkflow(
+      effects({
+        readSettings: async () => settings(),
+        scan: async () => { throw new Error("offline"); },
+        recordScanHistory: async (draft) => {
+          failedDrafts.push(draft);
+          return recordFromDraft(draft);
+        },
+      }),
+    );
+    await failed.initialize();
+    await failed.startScan();
+    expect(failedDrafts).toHaveLength(0);
+    expect(failed.read().history.recordWarning).toBeNull();
+
+    const discovery = deferred<ProjectDataScan>();
+    const stoppedDrafts: ProjectScanRecordDraft[] = [];
+    const stopped = createProjectCleanupWorkflow(
+      effects({
+        readSettings: async () => settings(),
+        scan: async () => discovery.promise,
+        recordScanHistory: async (draft) => {
+          stoppedDrafts.push(draft);
+          return recordFromDraft(draft);
+        },
+      }),
+    );
+    await stopped.initialize();
+    const running = stopped.startScan();
+    await waitFor(() => stopped.read().scan.phase === "discovering");
+    stopped.requestScanStop();
+    discovery.resolve(scan([]));
+    await running;
+    expect(stoppedDrafts).toHaveLength(0);
+  });
+
+  it("keeps the scan result when the history record cannot be saved", async () => {
+    const workflow = createProjectCleanupWorkflow(
+      effects({
+        readSettings: async () => settings(),
+        scan: async () => scan([pendingCandidate("candidate")]),
+        measure: async () => measurement(100),
+        recordScanHistory: async () => { throw new Error("disk full"); },
+      }),
+    );
+    await workflow.initialize();
+    await expect(workflow.startScan()).resolves.toEqual({
+      kind: "succeeded",
+      value: { scanId: "scan-1", finish: "completed" },
+    });
+    expect(workflow.read().scan.phase).toBe("ready");
+    expect(workflow.read().history.recordWarning).toContain("disk full");
+    expect(workflow.read().history.byPreset["preset-1"]).toEqual([]);
+  });
+
+  it("loads persisted scan histories and keeps settings usable when history is unavailable", async () => {
+    const persisted = recordFromDraft({
+      presetId: "preset-1",
+      scanId: "scan-1",
+      rootPath: "/code",
+      maxDepth: 6,
+      finishedAt: 100,
+      skipped: 0,
+      measurement: "finished",
+      projects: { total: 2, rust: 1, node: 1, maven: 0 },
+      candidates: [],
+    });
+    const loaded = createProjectCleanupWorkflow(
+      effects({
+        readSettings: async () => settings(),
+        readScanHistory: async (presetIds) => ({
+          histories: Object.fromEntries(
+            presetIds.map((presetId) => [
+              presetId,
+              { records: presetId === "preset-1" ? [persisted] : [] },
+            ]),
+          ),
+          warning: null,
+        }),
+      }),
+    );
+    await loaded.initialize();
+    expect(loaded.read().history.phase).toBe("ready");
+    expect(loaded.read().history.byPreset["preset-1"]).toHaveLength(1);
+    expect(loaded.read().history.byPreset["preset-1"][0].id).toBe(persisted.id);
+
+    const unavailable = createProjectCleanupWorkflow(
+      effects({
+        readSettings: async () => settings(),
+        readScanHistory: async () => { throw new Error("history offline"); },
+      }),
+    );
+    await expect(unavailable.initialize()).resolves.toEqual({
+      kind: "succeeded",
+      value: undefined,
+    });
+    expect(unavailable.read().settings.phase).toBe("ready");
+    expect(unavailable.read().history).toMatchObject({
+      phase: "failed",
+      warning: "history offline",
+    });
+  });
+
+  it("tracks preset history entries when presets are added or removed", async () => {
+    const workflow = createProjectCleanupWorkflow(
+      effects({
+        readSettings: async () => settings(),
+        readScanHistory: async (presetIds) => ({
+          histories: Object.fromEntries(
+            presetIds.map((presetId) => [presetId, { records: [] }]),
+          ),
+          warning: null,
+        }),
+        chooseRoot: async () => ({
+          ...settings("root-2", "/work", 8),
+          presets: [
+            { id: "preset-1", path: "/code", maxDepth: 6 },
+            { id: "preset-2", path: "/work", maxDepth: 8 },
+          ],
+          activePresetId: "preset-2",
+        }),
+        removePreset: async () => ({
+          ...settings("root-1", "/code", 6),
+          presets: [{ id: "preset-1", path: "/code", maxDepth: 6 }],
+          activePresetId: null,
+          rootId: null,
+          rootPath: null,
+        }),
+      }),
+    );
+    await workflow.initialize();
+    expect(workflow.read().history.byPreset["preset-1"]).toEqual([]);
+    await workflow.chooseRoot();
+    expect(workflow.read().history.byPreset["preset-2"]).toEqual([]);
+    await workflow.removePreset("preset-2");
+    expect(workflow.read().history.byPreset["preset-2"]).toBeUndefined();
+    expect(workflow.read().history.byPreset["preset-1"]).toEqual([]);
   });
 });
