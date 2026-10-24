@@ -5,6 +5,7 @@ import { CodexMarketplacesPage } from "./CodexMarketplacesPage";
 import { useCodexExtensions } from "../hooks/useCodexExtensions";
 import { codexMarketplaceFixture } from "../test/codexMarketplaceFixtures";
 import { codexPluginFixture } from "../test/codexPluginFixtures";
+import { observationCoverageItem } from "../test/observationFixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (command: string, args?: unknown) => command === "scan_codex_plugins"
   ? Promise.resolve({ ...codexPluginFixture(), plugins: [] }) : mockedInvoke(command, args) }));
@@ -14,7 +15,13 @@ beforeEach(() => { vi.resetAllMocks(); });
 
 function Harness() {
   const workflow = useCodexExtensions(true, "marketplaces");
-  return <CodexMarketplacesPage workflow={workflow} />;
+  return <CodexMarketplacesPage
+    coverage={{
+      marketplaces: observationCoverageItem("codex:marketplaces"),
+      plugins: observationCoverageItem("codex:plugins"),
+    }}
+    workflow={workflow}
+  />;
 }
 
 function setup() {
@@ -26,6 +33,8 @@ function setup() {
 describe("Codex marketplace management", () => {
   it("shows all sources, limits writes by ownership, and keeps local sources free of Git refresh", async () => {
     await setup();
+    expect(document.querySelector('[data-observation-item="codex:marketplaces"]')).toBeTruthy();
+    expect(document.querySelector('[data-observation-item="codex:plugins"]')).toBeTruthy();
     expect(screen.getByRole("button", { name: "移除市场 local-tools" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "同步市场 local-tools" })).toBeNull();
     expect(screen.queryByRole("button", { name: "移除市场 managed-tools" })).toBeNull();

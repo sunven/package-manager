@@ -6,10 +6,12 @@ import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { claudeHookHandler, claudeHookSummary } from "../claudeCode";
 import type { ClaudeWorkflowState } from "../hooks/useClaudeWorkflow";
+import type { ObservationCoverageItem } from "../observationCoverage";
 import { ClaudeHookEditor, type ClaudeHookSelection } from "./ClaudeHookEditor";
+import { ObservationState } from "./ObservationState";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
-export function ClaudeHooksPage({ state }: { state: ClaudeWorkflowState }) {
+export function ClaudeHooksPage({ state, coverageItem }: { state: ClaudeWorkflowState; coverageItem: ObservationCoverageItem }) {
   const scan = state.hooks;
   const [expanded, setExpanded] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -23,6 +25,7 @@ export function ClaudeHooksPage({ state }: { state: ClaudeWorkflowState }) {
     <Panel><PanelHead title="Claude Code Hooks" action={<Button ref={readButton} disabled={state.busy} onClick={() => void state.refresh("hooks")} variant="outline" size="sm"><ArrowsClockwise aria-hidden="true" data-icon="inline-start" />{state.busy ? "正在处理…" : "重新读取"}</Button>} />
       <div className="grid gap-2 p-4 text-sm"><p>维护用户 Hook 定义，查看已安装市场插件的声明，包含禁用插件。</p><p className="text-xs text-muted-foreground">这份定义清单不代表会话正在执行的 Hook。插件声明只读；Claude 不提供保留定义的单项启停。</p>
         <p className="break-all font-mono text-xs text-muted-foreground">{scan?.configPath ?? "尚未读取用户配置"}</p>
+        <ObservationState item={coverageItem} live showNote={false} variant="strip" />
         {scan?.disableAllHooks === true ? <Alert><AlertDescription>用户配置已关闭 Hooks，仍可编辑定义；保存不会打开总开关。项目可能覆盖此选择，托管 Hook 另有规则。</AlertDescription></Alert> : null}
         {scan?.writeBlockedReason ? <Alert><AlertDescription>{scan.writeBlockedReason}</AlertDescription></Alert> : null}
         {scan?.messages.length ? <Alert><AlertDescription><ul className="grid gap-1">{scan.messages.map((message, index) => <li key={index}>{message}</li>)}</ul></AlertDescription></Alert> : null}

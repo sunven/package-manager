@@ -3,6 +3,9 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { useVscodeStorage } from "../hooks/useVscodeStorage";
+import { vscodeObservationFacts } from "../observationFacts";
+import { requireCoverageItem } from "../observationCoverage";
+import { coverageIndexFromFacts } from "../test/observationFixtures";
 import type {
   VscodeEditorStatus,
   VscodeStorageRemovalProgress,
@@ -127,7 +130,13 @@ async function setup(options: SetupOptions = {}) {
   let workflow!: ReturnType<typeof useVscodeStorage>;
   function Harness() {
     workflow = useVscodeStorage(true);
-    return <VscodeStoragePage workflow={workflow} homeDirectory="/Users/test" />;
+    const coverageItem = requireCoverageItem(
+      coverageIndexFromFacts({
+        "vscode-storage": vscodeObservationFacts(workflow.scan, workflow.scanning, workflow.error),
+      }),
+      "vscode-storage",
+    );
+    return <VscodeStoragePage coverageItem={coverageItem} workflow={workflow} homeDirectory="/Users/test" />;
   }
 
   render(<Harness />);

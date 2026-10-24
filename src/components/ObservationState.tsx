@@ -88,6 +88,7 @@ export function ObservationState({
     return (
       <div
         className={cn("flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground", className)}
+        data-observation-item={item.id}
         {...(live ? { role: "status", "aria-live": "polite" } : {})}
       >
         <ObservationStateBadge item={item} now={now} />

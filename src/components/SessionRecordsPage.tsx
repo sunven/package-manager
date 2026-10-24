@@ -76,7 +76,7 @@ export function SessionRecordsPage({
   nowMs?: number;
   initialSource?: SessionSourceId | "opencode";
   homeDirectory: string | null;
-  coverageItems?: Partial<Record<SessionSourceId | "opencode", ObservationCoverageItem>>;
+  coverageItems: Record<SessionSourceId | "opencode", ObservationCoverageItem>;
   onShowHistory?: (recordId: string) => void;
 }) {
   const { scan, scanningSources, error, refresh: onRefresh } = records;
@@ -407,7 +407,7 @@ export function SessionRecordsPage({
                 selectedIds={selection.selectedIds}
                 sort={sorts[source.key]}
                 source={data ?? null}
-                coverageItem={coverageItems?.[source.key]}
+                coverageItem={coverageItems[source.key]}
                 sourceKey={source.key}
                 view={view ?? null}
               />
@@ -416,7 +416,7 @@ export function SessionRecordsPage({
         })}
         <TabsContent className="min-w-0" value="opencode">
           <OpenCodeSection
-            coverageItem={coverageItems?.opencode}
+            coverageItem={coverageItems.opencode}
             error={openCodeError}
             preparing={openCodePreparing}
             prepareError={openCodePrepareError}
@@ -473,7 +473,7 @@ function OpenCodeSection({
   preparing: boolean;
   error: string | null;
   prepareError: string | null;
-  coverageItem?: ObservationCoverageItem;
+  coverageItem: ObservationCoverageItem;
   onRefresh: () => void;
   onOpen: (sessionId: string) => Promise<string | null>;
   onRequestDelete: (id: string) => void;
@@ -510,13 +510,11 @@ function OpenCodeSection({
         </ToggleGroup>
         <div className="grid min-w-0 gap-0.5">
           <span className="text-xs text-muted-foreground" role="status">{scan?.status === "ready" ? `匹配 ${records.length} / 已读取 ${scan.records.length} 条` : "OpenCode 服务不可用"}</span>
-          {coverageItem ? (
-            <ObservationState
-              item={coverageItem}
-              showNote={coverageItem.status !== "failed" && coverageItem.status !== "unavailable"}
-              variant="strip"
-            />
-          ) : null}
+          <ObservationState
+            item={coverageItem}
+            showNote={coverageItem.status !== "failed" && coverageItem.status !== "unavailable"}
+            variant="strip"
+          />
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2 border-b px-3 py-2">
@@ -678,7 +676,7 @@ function SourceSection({
   homeDirectory: string | null;
   collapsed: Record<string, boolean>;
   sourceKey: string;
-  coverageItem?: ObservationCoverageItem;
+  coverageItem: ObservationCoverageItem;
   onToggle: (groupKey: string) => void;
   nowMs: number;
   onSortChange: (sort: SessionSort) => void;
@@ -719,13 +717,11 @@ function SourceSection({
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
         <div className="grid min-w-0 basis-48 grow gap-0.5">
-          {coverageItem ? (
-            <ObservationState
-              item={coverageItem}
-              showNote={coverageItem.status !== "failed" && coverageItem.status !== "partial"}
-              variant="strip"
-            />
-          ) : null}
+          <ObservationState
+            item={coverageItem}
+            showNote={coverageItem.status !== "failed" && coverageItem.status !== "partial"}
+            variant="strip"
+          />
           <p className="break-all text-xs text-muted-foreground">
             {source ? formatHomePath(source.directory, homeDirectory) : fallbackPath}
           </p>

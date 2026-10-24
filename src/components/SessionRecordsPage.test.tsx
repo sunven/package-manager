@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 import { SessionRecordsPage as Page } from "./SessionRecordsPage";
 import { useSessionRecords } from "../hooks/useSessionRecords";
 import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
-import { buildObservationCoverage, type ObservationCoverageItem } from "../observationCoverage";
+import {
+  buildObservationCoverage,
+  indexObservationCoverage,
+  requireCoverageItem,
+  type ObservationCoverageItem,
+} from "../observationCoverage";
 import { openCodeObservationFacts, sessionObservationFacts } from "../observationFacts";
 import type { ObservationRecord } from "../observationLedger";
 import type {
@@ -20,11 +25,11 @@ function SessionRecordsPage({
   scan: SessionRecordScan;
   homeDirectory: string | null;
   initialSource?: "codex" | "claude" | "opencode";
-  coverageItems?: Partial<Record<"codex" | "claude" | "opencode", ObservationCoverageItem>>;
+  coverageItems?: Record<"codex" | "claude" | "opencode", ObservationCoverageItem>;
 }) {
   const records = useSessionRecords(false);
   const openCode = useOpenCodeSessions(false);
-  return <Page {...props} coverageItems={coverageItems} records={{ ...records, scan }} openCode={openCode} />;
+  return <Page {...props} coverageItems={coverageItems ?? observationCoverageItems(scan)} records={{ ...records, scan }} openCode={openCode} />;
 }
 
 function observationCoverageItems(
@@ -34,7 +39,7 @@ function observationCoverageItems(
     records?: Partial<Record<"session:codex" | "session:claude" | "session:opencode", ObservationRecord>>;
     openCode?: OpenCodeSessionScan | null;
   } = {},
-): Partial<Record<"codex" | "claude" | "opencode", ObservationCoverageItem>> {
+): Record<"codex" | "claude" | "opencode", ObservationCoverageItem> {
   const coverage = buildObservationCoverage({
     facts: {
       "session:codex": sessionObservationFacts("codex", scan.codex, options.scanning?.codex ?? false, null),
@@ -45,10 +50,11 @@ function observationCoverageItems(
     scopes: {},
     enabledManagers: [],
   });
+  const index = indexObservationCoverage(coverage);
   return {
-    codex: coverage.items.find((item) => item.id === "session:codex"),
-    claude: coverage.items.find((item) => item.id === "session:claude"),
-    opencode: coverage.items.find((item) => item.id === "session:opencode"),
+    codex: requireCoverageItem(index, "session:codex"),
+    claude: requireCoverageItem(index, "session:claude"),
+    opencode: requireCoverageItem(index, "session:opencode"),
   };
 }
 

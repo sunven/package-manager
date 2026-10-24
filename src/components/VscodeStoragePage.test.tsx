@@ -61,7 +61,11 @@ function render(
   editorStatus: VscodeEditorStatus = "Stopped",
 ) {
   return renderToStaticMarkup(
-    <VscodeStoragePage workflow={workflow(snapshot, error, scanning, editorStatus)} homeDirectory="/Users/test" />,
+    <VscodeStoragePage
+      coverageItem={coverageItem(snapshot, error, scanning)}
+      workflow={workflow(snapshot, error, scanning, editorStatus)}
+      homeDirectory="/Users/test"
+    />,
   );
 }
 

@@ -8,12 +8,15 @@ import { ClaudeHookEditor } from "./ClaudeHookEditor";
 import { useClaudeCode } from "../hooks/useClaudeCode";
 import type { ClaudeWorkflowState } from "../hooks/useClaudeWorkflow";
 import { claudeExtensionFixture, claudeHookFixture } from "../test/claudeCodeFixtures";
+import { observationCoverageItem } from "../test/observationFixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 afterEach(cleanup);
 beforeEach(() => vi.resetAllMocks());
 const mockedInvoke = vi.mocked(invoke);
 const success = { status: "Succeeded" as const, message: "已完成", executed: true };
+const marketCoverage = observationCoverageItem("claude:extensions");
+const hookCoverage = observationCoverageItem("claude:hooks");
 function state(): ClaudeWorkflowState {
   return { revision: 0, invalidate: vi.fn(), extensions: claudeExtensionFixture(), hooks: claudeHookFixture(),
     extensionsView: { scan: claudeExtensionFixture(), current: true, revision: 0, scanning: false, error: null, result: null },
@@ -26,23 +29,24 @@ function state(): ClaudeWorkflowState {
 describe("Claude market and plugin interface", () => {
   it("opens the owning plugin and explains a missing plugin destination", async () => {
     const value = state();
-    const view = render(<ClaudeMarketplacesPage state={value} focusedPluginId="reviewer@team-tools" onShowHooks={vi.fn()} />);
+    const view = render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} focusedPluginId="reviewer@team-tools" onShowHooks={vi.fn()} />);
+    expect(document.querySelector('[data-observation-item="claude:extensions"]')).toBeTruthy();
     const target = await screen.findByRole("button", { name: /reviewer收起详情/ });
     await waitFor(() => expect(document.activeElement).toBe(target));
     expect(screen.getByText("技能声明")).toBeTruthy();
-    view.rerender(<ClaudeMarketplacesPage state={value} focusedPluginId="external@skills-dir" onShowHooks={vi.fn()} />);
+    view.rerender(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} focusedPluginId="external@skills-dir" onShowHooks={vi.fn()} />);
     expect(screen.getByText(/当前市场清单未找到插件 external@skills-dir/)).toBeTruthy();
   });
 
   it("blocks cross-scope market removal and shows the reason", () => {
-    render(<ClaudeMarketplacesPage state={state()} onShowHooks={vi.fn()} />);
+    render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={state()} onShowHooks={vi.fn()} />);
     const row = screen.getByText("project-shared").closest("tr")!;
     expect((within(row).getByRole("button", { name: "移除" }) as HTMLButtonElement).disabled).toBe(true);
     expect(within(row).getByText(/存在项目或其他作用域/)).toBeTruthy();
   });
 
   it("previews cascading market removal and cancels without executing", async () => {
-    const value = state(); render(<ClaudeMarketplacesPage state={value} onShowHooks={vi.fn()} />);
+    const value = state(); render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} onShowHooks={vi.fn()} />);
     const trigger = within(screen.getByText("team-tools").closest("tr")!).getByRole("button", { name: "移除" });
     fireEvent.click(trigger);
     const dialog = screen.getByRole("alertdialog");
@@ -54,7 +58,7 @@ describe("Claude market and plugin interface", () => {
   });
 
   it("filters plugins, keeps remote details incomplete and confirms the selected identity", async () => {
-    const value = state(); render(<ClaudeMarketplacesPage state={value} onShowHooks={vi.fn()} />);
+    const value = state(); render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} onShowHooks={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /team-tools/ }));
     fireEvent.change(screen.getByLabelText("搜索此市场"), { target: { value: "笔记" } });
     fireEvent.click(screen.getByRole("button", { name: /notes查看详情/ }));
@@ -67,7 +71,7 @@ describe("Claude market and plugin interface", () => {
 
   it("retains an add form on native failure and submits ref and sparse through confirmation", async () => {
     const value = state(); vi.mocked(value.change).mockResolvedValue({ status: "Failed", message: "无权限", executed: true });
-    render(<ClaudeMarketplacesPage state={value} onShowHooks={vi.fn()} />);
+    render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} onShowHooks={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "添加市场" }));
     fireEvent.change(screen.getByLabelText("市场来源"), { target: { value: "org/plugins" } });
     fireEvent.change(screen.getByLabelText("分支或标签（可选）"), { target: { value: "v2" } });
@@ -83,7 +87,8 @@ describe("Claude market and plugin interface", () => {
 describe("Claude Hook interface", () => {
   it("does not present the first failed read as an empty Hook inventory", () => {
     const value = state(); value.hooks = null; value.error = "offline";
-    render(<ClaudeHooksPage state={value} />);
+    render(<ClaudeHooksPage coverageItem={hookCoverage} state={value} />);
+    expect(document.querySelector('[data-observation-item="claude:hooks"]')).toBeTruthy();
     expect(screen.getByText("定义读取未完成，请使用「重新读取」重试。")).toBeTruthy();
     expect(screen.queryByText(/尚未发现用户或已安装插件/)).toBeNull();
     expect((screen.getByRole("button", { name: "新增 Hook" }) as HTMLButtonElement).disabled).toBe(true);
@@ -92,7 +97,7 @@ describe("Claude Hook interface", () => {
   it.each([null, "invalid", ["invalid"]])("renders malformed handler %j as read-only with its original JSON", (handler) => {
     const value = state();
     value.hooks!.hooks = [{ ...value.hooks!.hooks[0], handler, readOnlyReason: "未知处理程序，仅供查看。" }];
-    render(<ClaudeHooksPage state={value} />);
+    render(<ClaudeHooksPage coverageItem={hookCoverage} state={value} />);
     expect(screen.getByText("未知处理程序")).toBeTruthy();
     expect((screen.getByRole("button", { name: /^编辑 / }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /PreToolUse\s*未知/ }));
@@ -120,7 +125,7 @@ describe("Claude Hook interface", () => {
   });
 
   it("shows disabled plugin definitions and permits editing with the user switch off", () => {
-    render(<ClaudeHooksPage state={state()} />);
+    render(<ClaudeHooksPage coverageItem={hookCoverage} state={state()} />);
     expect(screen.getByText(/用户配置已关闭 Hooks/)).toBeTruthy();
     expect(screen.getByText(/插件当前配置禁用/)).toBeTruthy();
     expect((screen.getByRole("button", { name: "新增 Hook" }) as HTMLButtonElement).disabled).toBe(false);

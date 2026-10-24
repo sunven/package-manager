@@ -62,6 +62,7 @@ describe("ObservationState", () => {
     const status = screen.getByRole("status");
     expect(status.getAttribute("aria-live")).toBe("polite");
     expect(status.getAttribute("aria-busy")).toBeNull();
+    expect(status.getAttribute("data-observation-item")).toBe("vscode-storage");
     expect(status.querySelector('[data-observation-status="observed"]')).toBeTruthy();
     expect(status.querySelector('[data-status="Ready"]')).toBeTruthy();
     expect(screen.getByText(/读取完整/)).toBeTruthy();

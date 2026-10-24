@@ -77,6 +77,8 @@ function expand(name: string) {
 describe("installed plugins organized by marketplace", () => {
   it("opens the merged tab, reads both inventories once, and scopes same-named plugins to their markets", async () => {
     await openPage();
+    expect(document.querySelector('[data-observation-item="codex:marketplaces"]')).toBeTruthy();
+    expect(document.querySelector('[data-observation-item="codex:plugins"]')).toBeTruthy();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["插件市场", "Hooks", "Skills"]);
     expect(screen.getByRole("tab", { name: "插件市场" }).getAttribute("aria-selected")).toBe("true");
     expect(reads("scan_codex_marketplaces")).toBe(1);

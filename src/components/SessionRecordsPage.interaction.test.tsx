@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { useSessionRecords } from "../hooks/useSessionRecords";
 import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
+import { openCodeObservationFacts, sessionObservationFacts } from "../observationFacts";
+import { requireCoverageItem } from "../observationCoverage";
+import { coverageIndexFromFacts } from "../test/observationFixtures";
 import { SessionRecordsPage } from "./SessionRecordsPage";
 import { removalResult } from "../test/fixtures";
 import type {
@@ -165,7 +168,23 @@ async function setup(overrides: Options = {}) {
   function Harness({ visible = true }: { visible?: boolean }) {
     records = useSessionRecords(true);
     openCode = useOpenCodeSessions(true);
-    return visible ? <SessionRecordsPage records={records} openCode={openCode} homeDirectory={fixtures.homeDirectory ?? null} initialSource={fixtures.initialSource} nowMs={fixtures.nowMs} /> : null;
+    const index = coverageIndexFromFacts({
+      "session:codex": sessionObservationFacts("codex", records.scan?.codex ?? null, records.scanningSources.codex, records.error),
+      "session:claude": sessionObservationFacts("claude", records.scan?.claude ?? null, records.scanningSources.claude, records.error),
+      "session:opencode": openCodeObservationFacts(openCode.scan, openCode.scanning, openCode.error),
+    });
+    return visible ? <SessionRecordsPage
+      coverageItems={{
+        codex: requireCoverageItem(index, "session:codex"),
+        claude: requireCoverageItem(index, "session:claude"),
+        opencode: requireCoverageItem(index, "session:opencode"),
+      }}
+      records={records}
+      openCode={openCode}
+      homeDirectory={fixtures.homeDirectory ?? null}
+      initialSource={fixtures.initialSource}
+      nowMs={fixtures.nowMs}
+    /> : null;
   }
   const { rerender } = render(<Harness />);
   await waitFor(() => expect(records.scan).not.toBeNull());

@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
-import { statusLabels } from "../constants";
 import type { DisplayStatus } from "../types";
 import type { ManagerId, ManagerSnapshot } from "../types";
 import { managerLabel } from "../utils/format";
+import type { ObservationCoverageItem } from "../observationCoverage";
+import { managerTabPresentation } from "../managerObservationPresentation";
 import { ManagerMark } from "./OverviewDashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 
@@ -10,6 +11,7 @@ export function ManagerTabs({
   children,
   managerIds,
   managerSnapshots,
+  coverageByManager,
   onSelect,
   scanningManagers,
   selectedManager,
@@ -17,6 +19,7 @@ export function ManagerTabs({
   children: ReactNode;
   managerIds: ManagerId[];
   managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
+  coverageByManager: Record<ManagerId, ObservationCoverageItem>;
   onSelect: (managerId: ManagerId) => void;
   scanningManagers: Set<ManagerId>;
   selectedManager: ManagerId;
@@ -35,8 +38,12 @@ export function ManagerTabs({
             const manager = managerSnapshots[managerId];
             const managerName = manager?.label ?? managerLabel(managerId);
             const scanning = scanningManagers.has(managerId);
-            const status = scanning ? "Scanning" : manager?.status ?? "Not scanned";
-            const version = manager?.version?.trim() || statusLabels[status];
+            const presentation = managerTabPresentation(coverageByManager[managerId], {
+              managerName,
+              snapshot: manager,
+              scanning,
+            });
+            const version = manager?.version?.trim() || presentation.label;
             return (
               <TabsTrigger className="studio-manager-tab" key={managerId} value={managerId}>
                 <ManagerMark id={managerId} />
@@ -44,7 +51,12 @@ export function ManagerTabs({
                   <strong>{managerName}</strong>
                   <small>{version}</small>
                 </span>
-                <StatusDot status={status} />
+                <StatusDot
+                  dataObservationStatus={presentation.observationStatus}
+                  label={presentation.label}
+                  status={presentation.status}
+                  title={presentation.title}
+                />
               </TabsTrigger>
             );
           })}
@@ -59,14 +71,25 @@ export function ManagerTabs({
   );
 }
 
-function StatusDot({ status }: { status: DisplayStatus }) {
+function StatusDot({
+  status,
+  label,
+  title,
+  dataObservationStatus,
+}: {
+  status: DisplayStatus;
+  label: string;
+  title: string;
+  dataObservationStatus: ObservationCoverageItem["status"];
+}) {
   return (
     <span
-      aria-label={statusLabels[status]}
+      aria-label={label}
       className="status-dot size-2.5 shrink-0"
+      data-observation-status={dataObservationStatus}
       data-status={status}
       role="img"
-      title={statusLabels[status]}
+      title={title}
     />
   );
 }

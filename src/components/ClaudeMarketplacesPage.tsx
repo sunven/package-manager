@@ -8,12 +8,19 @@ import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { claudeOperationLabel, claudeSourceLabel, type ClaudeChangeRequest, type ClaudeMarketplace, type ClaudeOperation, type ClaudePlugin } from "../claudeCode";
 import type { ClaudeCodeState } from "../hooks/useClaudeCode";
+import type { ObservationCoverageItem } from "../observationCoverage";
 import { errorToString } from "../utils/format";
+import { ObservationState } from "./ObservationState";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
 const control = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50";
 
-export function ClaudeMarketplacesPage({ state, onShowHooks, focusedPluginId }: { state: ClaudeCodeState; focusedPluginId?: string; onShowHooks: () => void }) {
+export function ClaudeMarketplacesPage({ state, coverageItem, onShowHooks, focusedPluginId }: {
+  state: ClaudeCodeState;
+  coverageItem: ObservationCoverageItem;
+  focusedPluginId?: string;
+  onShowHooks: () => void;
+}) {
   const { extensions: scan, busy } = state;
   const [expanded, setExpanded] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -54,6 +61,12 @@ export function ClaudeMarketplacesPage({ state, onShowHooks, focusedPluginId }: 
         <p>展开市场，浏览插件、查看详情并管理当前用户的安装与启用选择。</p>
         <p className="text-xs text-muted-foreground">更新市场目录后，可单独更新已安装插件。插件变更请在 Claude 中重新加载或开启新会话验证。</p>
         <p className="break-all text-xs text-muted-foreground">Claude Code 目录 <code className="ml-2 text-foreground">{scan?.directory ?? "尚未读取"}</code>{scan?.version ? ` · CLI ${scan.version}` : ""}</p>
+        <ObservationState
+          item={coverageItem}
+          live
+          showNote={!state.extensionsView.error}
+          variant="strip"
+        />
         {scan?.writeBlockedReason ? <Alert><AlertDescription>{scan.writeBlockedReason}</AlertDescription></Alert> : null}
         {focusedPluginId && scan && !busy && !scan.plugins.some((plugin) => plugin.id === focusedPluginId) ? <Alert><AlertDescription className="break-words">当前市场清单未找到插件 {focusedPluginId}。请重新读取；若仍未找到，请回该技能的原来源维护。</AlertDescription></Alert> : null}
       </div>

@@ -9,13 +9,19 @@ import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { skillOperationLabel, skillSourceLabel, type CodexSkill, type SkillIntent, type SkillSource } from "../codexSkills";
 import type { CodexSkills } from "../hooks/useCodexSkills";
+import type { ObservationCoverageItem } from "../observationCoverage";
 import { errorToString } from "../utils/format";
+import { ObservationState } from "./ObservationState";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
 const selectClass = "h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50";
 const githubSource: SkillSource = { kind: "github", repo: "", subdirectory: "", reference: "", referenceKind: "branch" };
 
-export function CodexSkillsPage({ workflow, onShowPlugins }: { workflow: CodexSkills; onShowPlugins: (pluginId?: string) => void }) {
+export function CodexSkillsPage({ workflow, coverageItem, onShowPlugins }: {
+  workflow: CodexSkills;
+  coverageItem: ObservationCoverageItem;
+  onShowPlugins: (pluginId?: string) => void;
+}) {
   const { scan, current, scanning, busy, phase, preview, error, result } = workflow;
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -58,6 +64,7 @@ export function CodexSkillsPage({ workflow, onShowPlugins }: { workflow: CodexSk
       <CardContent className="grid gap-2 p-4">
         <p className="text-sm">查看技能与来源，启停已有独立技能，维护本应用安装的副本。</p>
         <p className="text-xs text-muted-foreground">Codex 目录 <code className="ml-2 break-all text-foreground">{scan?.directory || "尚未读取"}</code></p>
+        <ObservationState item={coverageItem} showNote={false} variant="strip" />
         <p className="text-xs text-muted-foreground">插件与内置技能只读，项目技能和禁用插件未展开。 <button type="button" disabled={busy} onClick={() => onShowPlugins()} className="cursor-pointer text-primary underline underline-offset-4 disabled:opacity-50">前往插件市场</button></p>
         <p role="status" className="text-xs text-muted-foreground">{phase === "preparing" ? "正在取得来源并核对技能，尚未执行维护…" : phase === "executing" ? "正在执行并重新核对清单…" : scanning ? "正在读取，已有内容暂为上次结果。" : "在其他地方修改后请刷新；启用设置保存后，请在 Codex 重启或新会话中验证。"}</p>
       </CardContent>

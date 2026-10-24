@@ -71,7 +71,7 @@ export function VscodeStoragePage({
 }: {
   workflow: VscodeStorageWorkflow;
   homeDirectory: string | null;
-  coverageItem?: ObservationCoverageItem | null;
+  coverageItem: ObservationCoverageItem;
   onShowHistory?: (recordId: string) => void;
 }) {
   const {
@@ -150,28 +150,18 @@ export function VscodeStoragePage({
               ? formatHomePath(scan.storagePath, homeDirectory)
               : "~/Library/Application Support/Code/User/workspaceStorage"}
           </p>
-          {coverageItem ? (
-            <>
-              <ObservationState
-                extra={scanning
-                  ? scan ? "正在扫描，暂时显示上次结果。" : "正在读取工作区记录并测量占用…"
-                  : null}
-                item={coverageItem}
-                live
-                showNote={coverageItem.status !== "failed" && coverageItem.status !== "partial"}
-                variant="strip"
-              />
-              <p className="text-xs text-muted-foreground">
-                每个存储目录独立列出；切换页面保留结果，可手动刷新。
-              </p>
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground" role="status">
-              {scanning
-                ? scan ? "正在扫描，暂时显示上次结果。" : "正在读取工作区记录并测量占用…"
-                : "每个存储目录独立列出；切换页面保留结果，可手动刷新。"}
-            </p>
-          )}
+          <ObservationState
+            extra={scanning
+              ? scan ? "正在扫描，暂时显示上次结果。" : "正在读取工作区记录并测量占用…"
+              : null}
+            item={coverageItem}
+            live
+            showNote={coverageItem.status !== "failed" && coverageItem.status !== "partial"}
+            variant="strip"
+          />
+          <p className="text-xs text-muted-foreground">
+            每个存储目录独立列出；切换页面保留结果，可手动刷新。
+          </p>
         </CardContent>
       </Panel>
 
