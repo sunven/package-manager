@@ -2,6 +2,7 @@ import { managerOrder } from "../constants";
 import {
   buildObservationCoverage,
   indexObservationCoverage,
+  requireCoverageItem,
   type ObservationCoverageIndex,
   type ObservationCoverageItem,
 } from "../observationCoverage";
@@ -40,15 +41,15 @@ export function observationCoverageItem(
   };
 }
 
-export function managerCoverageItems(
+export function managerCoverageIndex(
   overrides: Partial<Record<ManagerId, Partial<ObservationCoverageItem>>> = {},
-): Record<ManagerId, ObservationCoverageItem> {
-  return Object.fromEntries(
+): ObservationCoverageIndex {
+  return new Map(
     managerOrder.map((manager) => [
-      manager,
+      managerObservationId(manager),
       observationCoverageItem(managerObservationId(manager), overrides[manager]),
     ]),
-  ) as Record<ManagerId, ObservationCoverageItem>;
+  );
 }
 
 export function coverageIndexFromFacts(
@@ -57,4 +58,13 @@ export function coverageIndexFromFacts(
   enabledManagers: ManagerId[] = [],
 ): ObservationCoverageIndex {
   return indexObservationCoverage(buildObservationCoverage({ facts, records, scopes: {}, enabledManagers }));
+}
+
+export function coverageItemFromFacts(
+  id: ObservationItemId,
+  facts: ObservationFactsMap,
+  records: Partial<Record<ObservationItemId, ObservationRecord>> = {},
+  enabledManagers: ManagerId[] = [],
+): ObservationCoverageItem {
+  return requireCoverageItem(coverageIndexFromFacts(facts, records, enabledManagers), id);
 }

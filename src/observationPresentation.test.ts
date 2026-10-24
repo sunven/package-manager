@@ -18,31 +18,16 @@ import {
   observationTimeText,
 } from "./observationPresentation";
 import { managerFixture } from "./test/fixtures";
-
-const NOW = new Date("2026-10-24T12:00:00Z").getTime();
-const OBSERVED_AT = NOW - 2 * 60 * 60 * 1000;
+import { NOW, OBSERVED_AT, observationCoverageItem } from "./test/observationFixtures";
 
 function item(overrides: Partial<ObservationCoverageItem> = {}): ObservationCoverageItem {
-  return {
-    id: "vscode-storage",
-    group: "vscode",
-    label: "VS Code 工作区存储",
-    status: "observed",
-    completeness: "complete",
-    note: null,
+  return observationCoverageItem("vscode-storage", {
     lastSuccessAt: OBSERVED_AT,
     lastSuccessScopeLabel: "VS Code 工作区存储",
     lastAttemptAt: OBSERVED_AT,
-    lastAttemptOutcome: "succeeded",
-    lastAttemptReason: null,
-    invalidatedAt: null,
-    invalidatedReason: null,
     currentScopeLabel: "VS Code 工作区存储",
-    scopeChanged: false,
-    attention: false,
-    actions: { view: true, refresh: true, adjustScope: false },
     ...overrides,
-  };
+  });
 }
 
 describe("observation presentation", () => {

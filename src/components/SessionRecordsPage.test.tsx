@@ -4,11 +4,10 @@ import { SessionRecordsPage as Page } from "./SessionRecordsPage";
 import { useSessionRecords } from "../hooks/useSessionRecords";
 import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import {
-  buildObservationCoverage,
-  indexObservationCoverage,
   requireCoverageItem,
   type ObservationCoverageItem,
 } from "../observationCoverage";
+import { coverageIndexFromFacts } from "../test/observationFixtures";
 import { openCodeObservationFacts, sessionObservationFacts } from "../observationFacts";
 import type { ObservationRecord } from "../observationLedger";
 import type {
@@ -40,17 +39,11 @@ function observationCoverageItems(
     openCode?: OpenCodeSessionScan | null;
   } = {},
 ): Record<"codex" | "claude" | "opencode", ObservationCoverageItem> {
-  const coverage = buildObservationCoverage({
-    facts: {
-      "session:codex": sessionObservationFacts("codex", scan.codex, options.scanning?.codex ?? false, null),
-      "session:claude": sessionObservationFacts("claude", scan.claude, options.scanning?.claude ?? false, null),
-      "session:opencode": openCodeObservationFacts(options.openCode ?? null, false, null),
-    },
-    records: options.records ?? {},
-    scopes: {},
-    enabledManagers: [],
-  });
-  const index = indexObservationCoverage(coverage);
+  const index = coverageIndexFromFacts({
+    "session:codex": sessionObservationFacts("codex", scan.codex, options.scanning?.codex ?? false, null),
+    "session:claude": sessionObservationFacts("claude", scan.claude, options.scanning?.claude ?? false, null),
+    "session:opencode": openCodeObservationFacts(options.openCode ?? null, false, null),
+  }, options.records);
   return {
     codex: requireCoverageItem(index, "session:codex"),
     claude: requireCoverageItem(index, "session:claude"),

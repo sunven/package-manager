@@ -70,13 +70,13 @@ export function observationCompletenessText(item: ObservationCoverageItem) {
 
 export function observationDetailText(
   item: ObservationCoverageItem,
-  options: { includeScope?: boolean; includeNote?: boolean; includeCompleteness?: boolean } = {},
+  options: { compact?: boolean; includeNote?: boolean } = {},
 ) {
-  const { includeScope = true, includeNote = true, includeCompleteness = true } = options;
+  const { compact = false, includeNote = true } = options;
   const details: string[] = [];
   if (item.scopeChanged) {
     details.push(`范围已变化：上次 ${item.lastSuccessScopeLabel ?? "未知"}；当前 ${item.currentScopeLabel ?? "未知"}`);
-  } else if (includeScope && item.currentScopeLabel) {
+  } else if (!compact && item.currentScopeLabel) {
     details.push(`范围：${item.currentScopeLabel}`);
   }
   if (item.status === "invalidated" && item.invalidatedAt) {
@@ -92,7 +92,7 @@ export function observationDetailText(
   ) {
     details.push(`最近尝试失败：${item.lastAttemptReason}`);
   }
-  if (includeCompleteness && item.completeness === "partial" && item.status !== "partial") {
+  if (!compact && item.completeness === "partial" && item.status !== "partial") {
     details.push("读取不完整");
   }
   return details.join(" · ");

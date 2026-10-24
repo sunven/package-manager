@@ -184,7 +184,6 @@ function CoverageRow({
         refresh: { onClick: () => onRefresh(item), disabled: busy || item.status === "inProgress" },
         adjustScope: {
           onClick: () => onAdjustScope(item),
-          label: item.group === "managers" ? "设置" : "调整范围",
           variant: "ghost",
         },
       }}

@@ -31,11 +31,10 @@ export interface ObservationStateProps {
   live?: boolean;
   now?: number;
   actions?: Partial<Record<ObservationActionKey, ObservationStateAction>>;
-  primaryAction?: ObservationActionKey;
   className?: string;
 }
 
-export function ObservationStateBadge({
+function ObservationStateBadge({
   item,
   now,
   className,
@@ -50,6 +49,7 @@ export function ObservationStateBadge({
   return (
     <Badge
       className={cn("status-badge", className)}
+      data-observation-item={item.id}
       data-observation-status={item.status}
       data-status={presentation.visualStatus}
       title={summary ? observationBadgeSummary(item, now) : undefined}
@@ -68,7 +68,6 @@ export function ObservationState({
   live = false,
   now,
   actions,
-  primaryAction,
   className,
 }: ObservationStateProps) {
   if (variant === "badge") {
@@ -80,11 +79,9 @@ export function ObservationState({
       .filter(Boolean)
       .join(" · ");
     const detail = observationDetailText(item, {
-      includeScope: false,
+      compact: true,
       includeNote: showNote,
-      includeCompleteness: false,
     });
-    const action = primaryAction ? renderAction(primaryAction, actions?.[primaryAction], item) : null;
     return (
       <div
         className={cn("flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground", className)}
@@ -95,16 +92,11 @@ export function ObservationState({
         <span>{time}</span>
         {detail ? <span className="[overflow-wrap:anywhere]">{detail}</span> : null}
         {extra}
-        {action}
       </div>
     );
   }
 
-  const detail = observationDetailText(item, {
-    includeScope: true,
-    includeNote: showNote,
-    includeCompleteness: true,
-  });
+  const detail = observationDetailText(item, { includeNote: showNote });
   const actionNodes = (["view", "refresh", "adjustScope"] as const)
     .map((key) => renderAction(key, actions?.[key], item))
     .filter(Boolean);

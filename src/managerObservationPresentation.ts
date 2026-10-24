@@ -1,10 +1,25 @@
+import { statusLabels } from "./constants";
 import type { CoverageStatus, ObservationCoverageItem } from "./observationCoverage";
 import {
+  coverageStatusLabels,
   observationCompletenessText,
   observationDetailText,
   observationTimeText,
 } from "./observationPresentation";
 import type { DisplayStatus, ManagerSnapshot } from "./types";
+
+const TAB_PRESENTATION: Record<CoverageStatus, { status: DisplayStatus; label: string }> = {
+  inProgress: { status: "Scanning", label: statusLabels.Scanning },
+  disabled: { status: "neutral", label: coverageStatusLabels.disabled },
+  unavailable: { status: "Missing", label: statusLabels.Missing },
+  failed: { status: "Failed", label: statusLabels.Failed },
+  partial: { status: "Partial", label: statusLabels.Partial },
+  scopeChanged: { status: "Partial", label: coverageStatusLabels.scopeChanged },
+  invalidated: { status: "neutral", label: coverageStatusLabels.invalidated },
+  lastObserved: { status: "neutral", label: coverageStatusLabels.lastObserved },
+  notObserved: { status: "Not scanned", label: statusLabels["Not scanned"] },
+  observed: { status: "Ready", label: statusLabels.Ready },
+};
 
 export function managerTabPresentation(
   item: ObservationCoverageItem,
@@ -21,45 +36,18 @@ export function managerTabPresentation(
   observationStatus: CoverageStatus;
 } {
   const { managerName, snapshot, scanning, now } = options;
-  let status: DisplayStatus;
-  let label: string;
+  const base = TAB_PRESENTATION[scanning ? "inProgress" : item.status];
+  let status = base.status;
+  let label = base.label;
 
-  if (scanning || item.status === "inProgress") {
-    status = "Scanning";
-    label = "扫描中";
-  } else if (item.status === "disabled") {
-    status = "neutral";
-    label = "已停用";
-  } else if (item.status === "unavailable") {
-    status = "Missing";
-    label = "未安装";
-  } else if (item.status === "failed") {
-    status = "Failed";
-    label = "失败";
-  } else if (item.status === "partial") {
-    status = "Partial";
-    label = "部分可用";
-  } else if (item.status === "scopeChanged") {
-    status = "Partial";
-    label = "范围已变化";
-  } else if (item.status === "invalidated") {
-    status = "neutral";
-    label = "已失效";
-  } else if (item.status === "lastObserved") {
-    status = "neutral";
-    label = "上次观察";
-  } else if (item.status === "notObserved") {
-    status = "Not scanned";
-    label = "未扫描";
-  } else if (snapshot?.status === "Unsupported") {
-    status = "Unsupported";
-    label = "不支持";
-  } else if (snapshot?.status === "Partial") {
-    status = "Partial";
-    label = "部分可用";
-  } else {
-    status = "Ready";
-    label = "就绪";
+  if (!scanning && item.status === "observed") {
+    if (snapshot?.status === "Unsupported") {
+      status = "Unsupported";
+      label = statusLabels.Unsupported;
+    } else if (snapshot?.status === "Partial") {
+      status = "Partial";
+      label = statusLabels.Partial;
+    }
   }
 
   const title = [
@@ -67,7 +55,7 @@ export function managerTabPresentation(
     label,
     observationTimeText(item, now),
     observationCompletenessText(item),
-    observationDetailText(item, { includeScope: false, includeCompleteness: false }),
+    observationDetailText(item, { compact: true }),
   ].filter(Boolean).join(" · ");
 
   return { status, label, title, observationStatus: item.status };

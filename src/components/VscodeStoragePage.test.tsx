@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { buildObservationCoverage, type ObservationCoverageItem } from "../observationCoverage";
+import type { ObservationCoverageItem } from "../observationCoverage";
 import { vscodeObservationFacts } from "../observationFacts";
 import type { ObservationRecord } from "../observationLedger";
+import { coverageItemFromFacts } from "../test/observationFixtures";
 import {
   filterVscodeWorkspaces,
   summarizeVscodeStorage,
@@ -90,15 +91,11 @@ function coverageItem(
   scanning = false,
   record?: ObservationRecord,
 ): ObservationCoverageItem {
-  const coverage = buildObservationCoverage({
-    facts: { "vscode-storage": vscodeObservationFacts(snapshot, scanning, error) },
-    records: record ? { "vscode-storage": record } : {},
-    scopes: {},
-    enabledManagers: [],
-  });
-  const item = coverage.items.find((entry) => entry.id === "vscode-storage");
-  if (!item) throw new Error("missing VS Code observation item");
-  return item;
+  return coverageItemFromFacts(
+    "vscode-storage",
+    { "vscode-storage": vscodeObservationFacts(snapshot, scanning, error) },
+    record ? { "vscode-storage": record } : {},
+  );
 }
 
 function renderWithCoverage(

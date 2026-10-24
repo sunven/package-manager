@@ -37,7 +37,6 @@ import {
 import {
   buildObservationCoverage,
   indexObservationCoverage,
-  managerCoverageByManager,
   requireCoverageItem,
   type ObservationCoverageItem,
 } from "./observationCoverage";
@@ -165,10 +164,6 @@ export function App() {
   const coverageById = useMemo(
     () => indexObservationCoverage(coverage),
     [coverage],
-  );
-  const managerCoverage = useMemo(
-    () => managerCoverageByManager(coverageById),
-    [coverageById],
   );
   const coverageWarnings = useMemo(() => [
     ...observationLedger.warnings,
@@ -517,7 +512,7 @@ export function App() {
           </Tabs>
         ) : (
           <ManagerTabs
-            coverageByManager={managerCoverage}
+            coverageIndex={coverageById}
             managerIds={state.enabledManagers}
             managerSnapshots={state.managerSnapshots}
             onSelect={actions.selectManager}

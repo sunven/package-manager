@@ -95,9 +95,7 @@ export function CodexMarketplacesPage({ workflow, coverage, onShowHooks, focused
           <ObservationState item={coverage.marketplaces} showNote={false} variant="strip" />
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>插件清单</span>
-            <span data-observation-item="codex:plugins">
-              <ObservationState item={coverage.plugins} variant="badge" />
-            </span>
+            <ObservationState item={coverage.plugins} variant="badge" />
           </div>
           <p className="text-xs text-muted-foreground" role="status">
             {pending ? "正在执行并重新核对市场，请稍候…" : pluginSaving ? "正在执行并重新核对插件…" : reading ? "正在读取市场与插件目录，已有内容为上次结果。" : "重新读取查看本机市场与插件清单；同步市场会从 Git 来源同步内容。"}

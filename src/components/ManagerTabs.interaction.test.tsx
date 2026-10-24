@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ManagerTabs } from "./ManagerTabs";
 import { managerFixture } from "../test/fixtures";
-import { managerCoverageItems } from "../test/observationFixtures";
+import { managerCoverageIndex } from "../test/observationFixtures";
 import type { ManagerId } from "../types";
 
 afterEach(cleanup);
@@ -15,7 +15,7 @@ it("associates each manager tab with a panel and switches visible content by key
   function Managers() {
     const [selected, setSelected] = useState<ManagerId>("Npm");
     return <ManagerTabs managerIds={["Npm", "Pip"]} managerSnapshots={{ Npm: managerFixture("Npm"), Pip: managerFixture("Pip") }}
-      coverageByManager={managerCoverageItems()} onSelect={setSelected} scanningManagers={new Set()} selectedManager={selected}>
+      coverageIndex={managerCoverageIndex()} onSelect={setSelected} scanningManagers={new Set()} selectedManager={selected}>
       <p>当前管理器：{selected}</p>
       <button type="button">刷新当前管理器</button>
     </ManagerTabs>;
@@ -40,7 +40,7 @@ it("associates each manager tab with a panel and switches visible content by key
 });
 
 it("keeps the content available when no managers are enabled", () => {
-  render(<ManagerTabs coverageByManager={managerCoverageItems()} managerIds={[]} managerSnapshots={{}} onSelect={vi.fn()} scanningManagers={new Set()} selectedManager="Npm">
+  render(<ManagerTabs coverageIndex={managerCoverageIndex()} managerIds={[]} managerSnapshots={{}} onSelect={vi.fn()} scanningManagers={new Set()} selectedManager="Npm">
     <p>尚未扫描</p>
     <button type="button">刷新当前管理器</button>
   </ManagerTabs>);
@@ -52,7 +52,7 @@ it("keeps the content available when no managers are enabled", () => {
 it("keeps missing CLI, unsupported, failed and last observed distinct in tab dots", () => {
   render(
     <ManagerTabs
-      coverageByManager={managerCoverageItems({
+      coverageIndex={managerCoverageIndex({
         Npm: { status: "observed" },
         Yarn: { status: "observed" },
         Pip: { status: "unavailable" },

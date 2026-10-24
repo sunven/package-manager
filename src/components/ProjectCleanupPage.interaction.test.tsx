@@ -12,9 +12,8 @@ import {
 } from "../projectCleanupWorkflow";
 import { createInMemoryProjectCleanupEffects } from "../projectCleanupInMemoryEffects";
 import { projectObservationFacts } from "../observationFacts";
+import { coverageIndexFromFacts } from "../test/observationFixtures";
 import {
-  buildObservationCoverage,
-  indexObservationCoverage,
   requireCoverageItem,
   type ObservationCoverageItem,
 } from "../observationCoverage";
@@ -34,12 +33,10 @@ afterEach(() => {
 });
 
 function projectCoverageItem(view: ProjectCleanupView, record?: ObservationRecord): ObservationCoverageItem {
-  const index = indexObservationCoverage(buildObservationCoverage({
-    facts: { "project-scan": projectObservationFacts(view) },
-    records: record ? { "project-scan": record } : {},
-    scopes: {},
-    enabledManagers: [],
-  }));
+  const index = coverageIndexFromFacts(
+    { "project-scan": projectObservationFacts(view) },
+    record ? { "project-scan": record } : {},
+  );
   return requireCoverageItem(index, "project-scan");
 }
 

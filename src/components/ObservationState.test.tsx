@@ -2,31 +2,18 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ObservationCoverageItem } from "../observationCoverage";
+import { observationCoverageItem } from "../test/observationFixtures";
 import { ObservationState } from "./ObservationState";
 
 afterEach(cleanup);
 
 function item(overrides: Partial<ObservationCoverageItem> = {}): ObservationCoverageItem {
-  return {
-    id: "vscode-storage",
-    group: "vscode",
-    label: "VS Code 工作区存储",
-    status: "observed",
-    completeness: "complete",
-    note: null,
+  return observationCoverageItem("vscode-storage", {
     lastSuccessAt: new Date("2026-10-24T10:00:00Z").getTime(),
     lastSuccessScopeLabel: "VS Code 工作区存储",
-    lastAttemptAt: null,
-    lastAttemptOutcome: "succeeded",
-    lastAttemptReason: null,
-    invalidatedAt: null,
-    invalidatedReason: null,
     currentScopeLabel: "VS Code 工作区存储",
-    scopeChanged: false,
-    attention: false,
-    actions: { view: true, refresh: true, adjustScope: false },
     ...overrides,
-  };
+  });
 }
 
 describe("ObservationState", () => {
@@ -86,23 +73,6 @@ describe("ObservationState", () => {
 
     rerender(<ObservationState item={item()} variant="badge" />);
     expect(screen.getByText("已观察").getAttribute("title")).toContain("VS Code 工作区存储");
-  });
-
-  it("renders one primary action in strip form", () => {
-    const refresh = vi.fn();
-    render(
-      <ObservationState
-        actions={{ refresh: { onClick: refresh }, view: { onClick: vi.fn() } }}
-        item={item()}
-        primaryAction="refresh"
-        variant="strip"
-      />,
-    );
-
-    expect(screen.getAllByRole("button")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
-    expect(refresh).toHaveBeenCalledOnce();
-    expect(screen.queryByRole("button", { name: "查看" })).toBeNull();
   });
 
   it("does not render actions that the coverage item or caller does not provide", () => {

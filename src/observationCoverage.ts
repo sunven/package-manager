@@ -289,12 +289,6 @@ export function requireCoverageItem(
   return item;
 }
 
-export function managerCoverageByManager(index: ObservationCoverageIndex): Record<ManagerId, ObservationCoverageItem> {
-  return Object.fromEntries(
-    managerOrder.map((manager) => [manager, requireCoverageItem(index, managerObservationId(manager))]),
-  ) as Record<ManagerId, ObservationCoverageItem>;
-}
-
 export function formatObservationTime(at: number, now = Date.now()) {
   return `${new Date(at).toLocaleString()}（${relativeObservationTime(at, now)}）`;
 }

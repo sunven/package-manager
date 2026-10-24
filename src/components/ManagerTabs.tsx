@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import type { DisplayStatus } from "../types";
 import type { ManagerId, ManagerSnapshot } from "../types";
 import { managerLabel } from "../utils/format";
-import type { ObservationCoverageItem } from "../observationCoverage";
+import { requireCoverageItem, type CoverageStatus, type ObservationCoverageIndex } from "../observationCoverage";
+import { managerObservationId } from "../observationItems";
 import { managerTabPresentation } from "../managerObservationPresentation";
 import { ManagerMark } from "./OverviewDashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
@@ -11,7 +12,7 @@ export function ManagerTabs({
   children,
   managerIds,
   managerSnapshots,
-  coverageByManager,
+  coverageIndex,
   onSelect,
   scanningManagers,
   selectedManager,
@@ -19,7 +20,7 @@ export function ManagerTabs({
   children: ReactNode;
   managerIds: ManagerId[];
   managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
-  coverageByManager: Record<ManagerId, ObservationCoverageItem>;
+  coverageIndex: ObservationCoverageIndex;
   onSelect: (managerId: ManagerId) => void;
   scanningManagers: Set<ManagerId>;
   selectedManager: ManagerId;
@@ -38,11 +39,10 @@ export function ManagerTabs({
             const manager = managerSnapshots[managerId];
             const managerName = manager?.label ?? managerLabel(managerId);
             const scanning = scanningManagers.has(managerId);
-            const presentation = managerTabPresentation(coverageByManager[managerId], {
-              managerName,
-              snapshot: manager,
-              scanning,
-            });
+            const presentation = managerTabPresentation(
+              requireCoverageItem(coverageIndex, managerObservationId(managerId)),
+              { managerName, snapshot: manager, scanning },
+            );
             const version = manager?.version?.trim() || presentation.label;
             return (
               <TabsTrigger className="studio-manager-tab" key={managerId} value={managerId}>
@@ -80,7 +80,7 @@ function StatusDot({
   status: DisplayStatus;
   label: string;
   title: string;
-  dataObservationStatus: ObservationCoverageItem["status"];
+  dataObservationStatus: CoverageStatus;
 }) {
   return (
     <span

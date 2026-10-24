@@ -3,7 +3,6 @@ import {
   buildObservationCoverage,
   formatObservationTime,
   indexObservationCoverage,
-  managerCoverageByManager,
   relativeObservationTime,
   requireCoverageItem,
   type ObservationCoverageItem,
@@ -214,10 +213,5 @@ describe("observation coverage model", () => {
     expect(index.size).toBe(25);
     expect(requireCoverageItem(index, "manager:npm")).toBe(item(coverage, "manager:npm"));
     expect(() => requireCoverageItem(index, "unknown" as ObservationItemId)).toThrow("unknown");
-
-    const managers = managerCoverageByManager(index);
-    for (const manager of managerOrder) {
-      expect(managers[manager].id).toBe(managerObservationId(manager));
-    }
   });
 });
