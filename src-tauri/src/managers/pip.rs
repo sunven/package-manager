@@ -9,7 +9,7 @@ use crate::types::{
     PipOutdatedPreview,
 };
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::env;
 use std::path::Path;
 use std::time::Duration;
@@ -535,13 +535,16 @@ pub(super) fn merge_pip_outdated(
     let outdated = preview
         .outdated
         .iter()
-        .map(|name| name.to_lowercase())
-        .collect::<HashSet<_>>();
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     for package in &mut snapshot.packages {
         package
             .signals
             .retain(|signal| !matches!(signal, PackageSignal::Outdated));
-        if outdated.contains(&package.name.to_lowercase()) {
+        if outdated
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&package.name))
+        {
             package.signals.push(PackageSignal::Outdated);
         }
     }

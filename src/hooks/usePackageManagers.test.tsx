@@ -83,7 +83,7 @@ describe("manager scan lifecycle", () => {
     await act(async () => { await result.current.actions.refresh("Pip"); });
     expect(result.current.managerSnapshots.Pip?.pip?.outdatedFailure).toEqual(failure);
     act(() => result.current.actions.selectManager("Pip"));
-    await act(async () => { await result.current.actions.retrySupplement("pip"); });
+    await act(async () => { await result.current.actions.refresh("Pip"); });
     expect(result.current.managerSnapshots.Pip?.pip?.outdatedFailure).toBeNull();
     expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual(["scan_manager", "save_manager_snapshot", "scan_manager", "save_manager_snapshot"]);
   });
@@ -95,7 +95,7 @@ describe("manager scan lifecycle", () => {
       result.current.actions.requestCacheCleanup();
       await result.current.actions.refresh();
       await result.current.actions.refreshEnabled();
-      await result.current.actions.retrySupplement("paths");
+      await result.current.actions.refresh();
     });
     expect(vi.mocked(invoke).mock.calls.filter(([name]) => name !== "save_manager_snapshot")).toHaveLength(1);
     await act(async () => {
@@ -160,7 +160,7 @@ describe("manager scan lifecycle", () => {
     expect(result.current.currentManager).not.toBeNull();
     expect(result.current.currentManager?.paths[0].size.status).toBe("Error");
     expect(result.current.scanStates.Npm?.error).toBe("cache：permission denied");
-    await act(async () => { await result.current.actions.retrySupplement("paths"); });
+    await act(async () => { await result.current.actions.refresh(); });
     expect(result.current.currentManager?.paths[0].size.bytes).toBe(42);
     expect(result.current.scanStates.Npm?.error).toBeNull();
     expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual(["scan_manager", "save_manager_snapshot", "scan_manager", "save_manager_snapshot"]);

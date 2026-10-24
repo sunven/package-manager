@@ -152,11 +152,11 @@ fn cleans_each_confirmed_candidate_and_records_the_batch() {
     )
     .unwrap();
 
-    assert_eq!(summary.finish, ProjectCleanupFinish::Completed);
-    assert_eq!(summary.total_count, 1);
-    assert_eq!(summary.completed_count, 1);
-    assert_eq!(summary.failed_count, 0);
-    assert!(summary.cleaned_bytes > 0);
+    assert_eq!(summary.result.finish, ProjectCleanupFinish::Completed);
+    assert_eq!(summary.result.total_count, 1);
+    assert_eq!(summary.result.completed_count, 1);
+    assert_eq!(summary.result.failed_count, 0);
+    assert!(summary.result.cleaned_bytes > 0);
     let history_id = summary.history_id.expect("history id");
     assert!(summary.history_warning.is_none());
     assert_eq!(events.len(), 2);
@@ -206,9 +206,9 @@ fn stops_after_the_current_candidate_and_leaves_the_rest_for_later() {
     )
     .unwrap();
 
-    assert_eq!(summary.finish, ProjectCleanupFinish::Stopped);
-    assert_eq!(summary.total_count, 2);
-    assert_eq!(summary.completed_count, 1);
+    assert_eq!(summary.result.finish, ProjectCleanupFinish::Stopped);
+    assert_eq!(summary.result.total_count, 2);
+    assert_eq!(summary.result.completed_count, 1);
     assert_eq!(advanced, 1);
     let remaining = ["one", "two"]
         .iter()
@@ -257,10 +257,10 @@ fn reports_an_effect_failure_without_history_when_the_scope_is_unknown() {
     )
     .unwrap();
 
-    assert_eq!(summary.finish, ProjectCleanupFinish::Completed);
-    assert_eq!(summary.total_count, 1);
-    assert_eq!(summary.completed_count, 1);
-    assert_eq!(summary.failed_count, 1);
+    assert_eq!(summary.result.finish, ProjectCleanupFinish::Completed);
+    assert_eq!(summary.result.total_count, 1);
+    assert_eq!(summary.result.completed_count, 1);
+    assert_eq!(summary.result.failed_count, 1);
     assert!(summary.history_id.is_none());
     assert!(summary.history_warning.is_some());
     assert!(failure.is_some_and(|message| !message.is_empty()));

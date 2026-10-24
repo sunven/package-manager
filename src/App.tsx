@@ -561,7 +561,6 @@ export function App() {
                   homeDirectory={state.homeDirectory}
                   busy={scanning || state.maintenanceBusy}
                   onRefresh={() => void actions.refresh()}
-                  onRetry={(kind) => void actions.retrySupplement(kind)}
                   onCopy={(value) => void actions.copyCommand(value)}
                 />
                 <PathPanel

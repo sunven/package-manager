@@ -5,7 +5,7 @@ use crate::maintenance_history::{
     MaintenanceOperation, ProjectCleanupCandidateSnapshot, ProjectCleanupDetail,
     ProjectCleanupFinish, ProjectCleanupScope,
 };
-use crate::maintenance_operation::{run, OperationEnd, OperationHeader};
+use crate::maintenance_operation::{run, OperationEnd, OperationHeader, Receipt};
 use crate::project_cleanup::{
     remove_dependency_directory, run_project_cleanup_with_runner_and_deleter, ProjectCleanupResult,
     ProjectCleanupState, ProjectCleanupStatus,
@@ -46,26 +46,17 @@ pub(crate) enum ProjectCleanupBatchProgress {
     },
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ProjectCleanupBatchSummary {
-    pub finish: ProjectCleanupFinish,
-    pub total_count: usize,
-    pub completed_count: usize,
-    pub failed_count: usize,
-    pub cleaned_bytes: u64,
-    pub history_id: Option<String>,
-    pub history_warning: Option<String>,
-}
+pub(crate) type ProjectCleanupBatchSummary = Receipt<BatchOutcome>;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct BatchOutcome {
+pub(crate) struct BatchOutcome {
     finish: ProjectCleanupFinish,
     total_count: usize,
     completed_count: usize,
     failed_count: usize,
     cleaned_bytes: u64,
+    #[serde(skip)]
     effect_failures: Vec<(String, String)>,
 }
 
@@ -133,11 +124,15 @@ where
         ),
         Err(error) => {
             let outcome = execute_batch(state, scope, progress, &mut |_| {}, runner, deleter)?;
-            return Ok(summary(outcome, None, Some(error)));
+            return Ok(Receipt {
+                result: outcome,
+                history_id: None,
+                history_warning: Some(error),
+            });
         }
     };
 
-    let receipt = run(
+    run(
         history,
         OperationHeader {
             domain: MaintenanceDomain::ProjectCleanup,
@@ -164,13 +159,7 @@ where
                 history.finish(id, ExecutionSummary::NotExecuted, error.to_string())
             }
         },
-    )?;
-
-    Ok(summary(
-        receipt.result,
-        receipt.history_id,
-        receipt.history_warning,
-    ))
+    )
 }
 
 fn execute_batch<F, D>(
@@ -233,13 +222,13 @@ where
                 effect_failures.push((candidate_id.clone(), message.clone()));
             }
         }
+        record(&outcome);
         progress(ProjectCleanupBatchProgress::Advanced {
             candidate_id: candidate_id.clone(),
-            outcome: outcome.clone(),
+            outcome,
             completed_count,
             cleaned_bytes,
         });
-        record(&outcome);
     }
 
     Ok(BatchOutcome {
@@ -293,22 +282,6 @@ fn project_detail(
         finish: ProjectCleanupFinish::Completed,
         results: Vec::new(),
     })
-}
-
-fn summary(
-    outcome: BatchOutcome,
-    history_id: Option<String>,
-    history_warning: Option<String>,
-) -> ProjectCleanupBatchSummary {
-    ProjectCleanupBatchSummary {
-        finish: outcome.finish,
-        total_count: outcome.total_count,
-        completed_count: outcome.completed_count,
-        failed_count: outcome.failed_count,
-        cleaned_bytes: outcome.cleaned_bytes,
-        history_id,
-        history_warning,
-    }
 }
 
 #[cfg(test)]

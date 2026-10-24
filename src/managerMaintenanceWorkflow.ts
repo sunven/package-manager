@@ -175,40 +175,25 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
         publish({ scanDurationMsByManager: { ...view.scanDurationMsByManager, [manager]: result.scanDurationMs } });
         const failed = result.manager.status === "Failed";
         const error = result.problems ?? null;
-        if (failed && view.managerSnapshots[manager]) {
-          setScanState(manager, {
-            error,
-            failures: result.manager.failures,
-            diagnostics: result.diagnostics,
-            lastReadFailed: true,
-          });
-          recordManagerObservation(manager, view.managerSnapshots[manager], {
-            phase: "reading",
-            scannedAt: view.scanStates[manager]?.scannedAt ?? null,
-            lastReadFailed: true,
-            error,
-          });
-          draft = snapshotDraft(result.manager, error);
-        } else {
-          installSnapshot(manager, result.manager);
-          const success = ["Ready", "Partial", "Unsupported"].includes(result.manager.status);
-          const scannedAt = success ? Date.now() : view.scanStates[manager]?.scannedAt ?? null;
-          setScanState(manager, {
-            phase: "enriching",
-            error,
-            failures: result.manager.failures,
-            diagnostics: result.diagnostics,
-            lastReadFailed: failed,
-            ...(success ? { scannedAt } : {}),
-          });
-          recordManagerObservation(manager, result.manager, {
-            phase: "enriching",
-            scannedAt,
-            lastReadFailed: failed,
-            error,
-          });
-          draft = snapshotDraft(result.manager, error);
-        }
+        const previous = failed ? view.managerSnapshots[manager] : undefined;
+        if (!previous) installSnapshot(manager, result.manager);
+        const success = ["Ready", "Partial", "Unsupported"].includes(result.manager.status);
+        const scannedAt = success ? Date.now() : view.scanStates[manager]?.scannedAt ?? null;
+        setScanState(manager, {
+          ...(previous ? {} : { phase: "enriching" as const }),
+          error,
+          failures: result.manager.failures,
+          diagnostics: result.diagnostics,
+          lastReadFailed: failed,
+          ...(success ? { scannedAt } : {}),
+        });
+        recordManagerObservation(manager, previous ?? result.manager, {
+          phase: previous ? "reading" : "enriching",
+          scannedAt,
+          lastReadFailed: failed,
+          error,
+        });
+        draft = snapshotDraft(result.manager, error);
       } catch (error) {
         const message = errorToString(error);
         setScanState(manager, { error: message, lastReadFailed: true });
@@ -235,12 +220,6 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
     publish({ scanningAll: true });
     try { await Promise.allSettled(view.enabledManagers.map(refresh)); }
     finally { publish({ scanningAll: false }); }
-  }
-
-  function retrySupplement(manager: ManagerId, _kind: "paths" | "homebrew" | "pip"): Promise<void> {
-    if (view.maintenanceBusy || !view.enabledManagers.includes(manager)) return Promise.resolve();
-    if (!view.managerSnapshots[manager]) return Promise.resolve();
-    return readFull(manager);
   }
 
   function setManagerEnabled(manager: ManagerId, enabled: boolean) {
@@ -389,7 +368,7 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
   return {
     read: () => view,
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    refresh, refreshEnabled, retrySupplement, setManagerEnabled,
+    refresh, refreshEnabled, setManagerEnabled,
     requestCacheCleanup, requestPackageUninstall, maintenanceBlockReason, confirmMaintenance, cancelMaintenance, retryVerification,
   };
 }

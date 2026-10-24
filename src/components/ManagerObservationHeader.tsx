@@ -21,8 +21,7 @@ export function ManagerObservationHeader({
   onRefresh: () => void;
   now?: number;
 }) {
-  const phase = scanState?.phase;
-  const phaseDetail = phase && phase !== "idle" ? scanStateLabel(scanState) : null;
+  const phaseDetail = scanStateLabel(scanState?.phase);
   const extra = phaseDetail || scanMeta
     ? <span className="flex min-w-0 flex-col gap-0.5">
         {phaseDetail ? <span>{phaseDetail}</span> : null}

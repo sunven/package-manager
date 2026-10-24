@@ -11,7 +11,6 @@ import { actionFailureTitle, countedSizePath, errorToString, formatBytes, format
 export interface PackageManagerActions {
   refresh: (managerId?: ManagerId) => Promise<void>;
   refreshEnabled: () => Promise<void>;
-  retrySupplement: (kind: "paths" | "homebrew" | "pip") => Promise<void>;
   selectManager: (managerId: ManagerId) => void;
   setManagerEnabled: (managerId: ManagerId, enabled: boolean) => void;
   selectPackage: (index: number | null) => void;
@@ -133,8 +132,6 @@ export function usePackageManagers() {
   );
 
   const refresh = useCallback((managerId = selectedManagerRef.current) => workflow.refresh(managerId), [workflow]);
-  const retrySupplement = useCallback((kind: "paths" | "homebrew" | "pip") =>
-    workflow.retrySupplement(selectedManagerRef.current, kind), [workflow]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -345,7 +342,6 @@ export function usePackageManagers() {
   const actions: PackageManagerActions = {
     refresh,
     refreshEnabled: workflow.refreshEnabled,
-    retrySupplement,
     selectManager,
     setManagerEnabled,
     selectPackage,

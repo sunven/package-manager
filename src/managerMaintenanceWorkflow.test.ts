@@ -199,7 +199,7 @@ describe("manager maintenance workflow", () => {
     expect(workflow.requestCacheCleanup("Npm")).toBe(true);
     await workflow.refresh("Homebrew");
     await workflow.refreshEnabled();
-    await workflow.retrySupplement("Pip", "pip");
+    await workflow.refresh("Pip");
     expect(workflow.requestCacheCleanup("Npm")).toBe(false);
     gates.Pnpm.resolve(scanResult("Pnpm"));
     await vi.waitFor(() => expect(effects.scan).toHaveBeenCalledWith("Pip", expect.any(Function)));
@@ -293,7 +293,7 @@ describe("manager maintenance workflow", () => {
     expect(workflow.cancelMaintenance(id)).toBe(false);
     expect(workflow.requestCacheCleanup("Npm")).toBe(false);
     await workflow.refresh("Pnpm");
-    await workflow.retrySupplement("Npm", "paths");
+    await workflow.refresh("Npm");
     expect(effects.scan).toHaveBeenCalledTimes(2);
     verification.resolve(scanResult("Npm"));
     await finished;
@@ -352,7 +352,7 @@ describe("manager maintenance workflow", () => {
     const first = deferred<ManagerScanSnapshot>();
     effects.scan.mockReturnValueOnce(first.promise);
     effects.scan.mockResolvedValueOnce(completeResult("Pip"));
-    const supplement = workflow.retrySupplement("Pip", "paths");
+    const supplement = workflow.refresh("Pip");
     const reread = workflow.retryVerification(id);
     await vi.waitFor(() => expect(effects.scan).toHaveBeenCalledTimes(3));
     expect(workflow.read().maintenanceBusy).toBe(true);
