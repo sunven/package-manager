@@ -50,6 +50,8 @@ import {
 import type { useSessionRecords } from "../hooks/useSessionRecords";
 import type { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { useSessionSelection } from "../hooks/useSessionSelection";
+import type { ObservationCoverageItem } from "../observationCoverage";
+import { ObservationState } from "./ObservationState";
 import { EmptyState, Panel, StatCard } from "./ui";
 
 const sources = [
@@ -66,6 +68,7 @@ export function SessionRecordsPage({
   nowMs,
   initialSource = "codex",
   homeDirectory,
+  coverageItems,
   onShowHistory,
 }: {
   records: ReturnType<typeof useSessionRecords>;
@@ -73,6 +76,7 @@ export function SessionRecordsPage({
   nowMs?: number;
   initialSource?: SessionSourceId | "opencode";
   homeDirectory: string | null;
+  coverageItems?: Partial<Record<SessionSourceId | "opencode", ObservationCoverageItem>>;
   onShowHistory?: (recordId: string) => void;
 }) {
   const { scan, scanningSources, error, refresh: onRefresh } = records;
@@ -403,6 +407,7 @@ export function SessionRecordsPage({
                 selectedIds={selection.selectedIds}
                 sort={sorts[source.key]}
                 source={data ?? null}
+                coverageItem={coverageItems?.[source.key]}
                 sourceKey={source.key}
                 view={view ?? null}
               />
@@ -411,6 +416,7 @@ export function SessionRecordsPage({
         })}
         <TabsContent className="min-w-0" value="opencode">
           <OpenCodeSection
+            coverageItem={coverageItems?.opencode}
             error={openCodeError}
             preparing={openCodePreparing}
             prepareError={openCodePrepareError}
@@ -449,6 +455,7 @@ function OpenCodeSection({
   preparing,
   error,
   prepareError,
+  coverageItem,
   onRefresh,
   onOpen,
   onRequestDelete,
@@ -466,6 +473,7 @@ function OpenCodeSection({
   preparing: boolean;
   error: string | null;
   prepareError: string | null;
+  coverageItem?: ObservationCoverageItem;
   onRefresh: () => void;
   onOpen: (sessionId: string) => Promise<string | null>;
   onRequestDelete: (id: string) => void;
@@ -500,7 +508,16 @@ function OpenCodeSection({
         <ToggleGroup type="single" value={filter.archived} onValueChange={(archived) => { if (archived) { setFilter((current) => ({ ...current, archived: archived as OpenCodeSessionFilter["archived"] })); onClearSelection(); } }} aria-label="OpenCode 归档状态">
           <ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="active">未归档</ToggleGroupItem><ToggleGroupItem value="archived">已归档</ToggleGroupItem>
         </ToggleGroup>
-        <span className="text-xs text-muted-foreground" role="status">{scan?.status === "ready" ? `匹配 ${records.length} / 已读取 ${scan.records.length} 条` : "OpenCode 服务不可用"}</span>
+        <div className="grid min-w-0 gap-0.5">
+          <span className="text-xs text-muted-foreground" role="status">{scan?.status === "ready" ? `匹配 ${records.length} / 已读取 ${scan.records.length} 条` : "OpenCode 服务不可用"}</span>
+          {coverageItem ? (
+            <ObservationState
+              item={coverageItem}
+              showNote={coverageItem.status !== "failed" && coverageItem.status !== "unavailable"}
+              variant="strip"
+            />
+          ) : null}
+        </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2 border-b px-3 py-2">
         <Button aria-pressed="true" onClick={() => setCollapsed({})} size="sm" type="button" variant="secondary">按最后活动时间</Button>
@@ -634,6 +651,7 @@ function SourceSection({
   homeDirectory,
   collapsed,
   sourceKey,
+  coverageItem,
   onToggle,
   nowMs,
   onSortChange,
@@ -660,6 +678,7 @@ function SourceSection({
   homeDirectory: string | null;
   collapsed: Record<string, boolean>;
   sourceKey: string;
+  coverageItem?: ObservationCoverageItem;
   onToggle: (groupKey: string) => void;
   nowMs: number;
   onSortChange: (sort: SessionSort) => void;
@@ -699,9 +718,18 @@ function SourceSection({
         <span className="text-xs text-muted-foreground" role="status">{view ? `匹配 ${view.count} / 已读取 ${view.totalCount} 条` : "尚未读取会话记录"}</span>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
-        <p className="min-w-0 basis-48 grow break-all text-xs text-muted-foreground">
-          {source ? formatHomePath(source.directory, homeDirectory) : fallbackPath}
-        </p>
+        <div className="grid min-w-0 basis-48 grow gap-0.5">
+          {coverageItem ? (
+            <ObservationState
+              item={coverageItem}
+              showNote={coverageItem.status !== "failed" && coverageItem.status !== "partial"}
+              variant="strip"
+            />
+          ) : null}
+          <p className="break-all text-xs text-muted-foreground">
+            {source ? formatHomePath(source.directory, homeDirectory) : fallbackPath}
+          </p>
+        </div>
         <span className="flex max-w-full flex-wrap gap-2">
           <span aria-label="排序" className="flex gap-1" role="group">
             <Button aria-pressed={sort === "time"} onClick={() => onSortChange("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>

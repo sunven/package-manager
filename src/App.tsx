@@ -157,6 +157,10 @@ export function App() {
     scopes: observationScopes.scopes,
     enabledManagers: state.enabledManagers,
   }), [observationLedger.records, coverageFacts, observationScopes.scopes, state.enabledManagers]);
+  const coverageById = useMemo(
+    () => new Map(coverage.items.map((item) => [item.id, item])),
+    [coverage],
+  );
   const coverageWarnings = useMemo(() => [
     ...observationLedger.warnings,
     ...(observationScopes.error ? [`观察范围无法读取：${observationScopes.error}`] : []),
@@ -393,12 +397,18 @@ export function App() {
             homeDirectory={state.homeDirectory}
             records={sessionRecords}
             openCode={openCodeSessions}
+            coverageItems={{
+              codex: coverageById.get("session:codex"),
+              claude: coverageById.get("session:claude"),
+              opencode: coverageById.get("session:opencode"),
+            }}
             onShowHistory={showHistoryRecord}
           />
         ) : activeView === "vscode" ? (
           <VscodeStoragePage
             homeDirectory={state.homeDirectory}
             workflow={vscodeStorage}
+            coverageItem={coverageById.get("vscode-storage") ?? null}
             onShowHistory={showHistoryRecord}
           />
         ) : activeView === "cleanup" ? (

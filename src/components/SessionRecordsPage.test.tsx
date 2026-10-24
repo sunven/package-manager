@@ -3,12 +3,53 @@ import { describe, expect, it } from "vitest";
 import { SessionRecordsPage as Page } from "./SessionRecordsPage";
 import { useSessionRecords } from "../hooks/useSessionRecords";
 import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
-import type { SessionRecordScan, SessionSourceScan } from "../sessionRecords";
+import { buildObservationCoverage, type ObservationCoverageItem } from "../observationCoverage";
+import { openCodeObservationFacts, sessionObservationFacts } from "../observationFacts";
+import type { ObservationRecord } from "../observationLedger";
+import type {
+  OpenCodeSessionScan,
+  SessionRecordScan,
+  SessionSourceScan,
+} from "../sessionRecords";
 
-function SessionRecordsPage({ scan, ...props }: { scan: SessionRecordScan; homeDirectory: string | null; initialSource?: "codex" | "claude" }) {
+function SessionRecordsPage({
+  scan,
+  coverageItems,
+  ...props
+}: {
+  scan: SessionRecordScan;
+  homeDirectory: string | null;
+  initialSource?: "codex" | "claude" | "opencode";
+  coverageItems?: Partial<Record<"codex" | "claude" | "opencode", ObservationCoverageItem>>;
+}) {
   const records = useSessionRecords(false);
   const openCode = useOpenCodeSessions(false);
-  return <Page {...props} records={{ ...records, scan }} openCode={openCode} />;
+  return <Page {...props} coverageItems={coverageItems} records={{ ...records, scan }} openCode={openCode} />;
+}
+
+function observationCoverageItems(
+  scan: SessionRecordScan,
+  options: {
+    scanning?: { codex?: boolean; claude?: boolean };
+    records?: Partial<Record<"session:codex" | "session:claude" | "session:opencode", ObservationRecord>>;
+    openCode?: OpenCodeSessionScan | null;
+  } = {},
+): Partial<Record<"codex" | "claude" | "opencode", ObservationCoverageItem>> {
+  const coverage = buildObservationCoverage({
+    facts: {
+      "session:codex": sessionObservationFacts("codex", scan.codex, options.scanning?.codex ?? false, null),
+      "session:claude": sessionObservationFacts("claude", scan.claude, options.scanning?.claude ?? false, null),
+      "session:opencode": openCodeObservationFacts(options.openCode ?? null, false, null),
+    },
+    records: options.records ?? {},
+    scopes: {},
+    enabledManagers: [],
+  });
+  return {
+    codex: coverage.items.find((item) => item.id === "session:codex"),
+    claude: coverage.items.find((item) => item.id === "session:claude"),
+    opencode: coverage.items.find((item) => item.id === "session:opencode"),
+  };
 }
 
 const codex: SessionSourceScan = {
@@ -38,6 +79,21 @@ const scan: SessionRecordScan = {
     records: [],
   },
 };
+
+function renderWithCoverage(
+  sourceScan: SessionRecordScan,
+  options: Parameters<typeof observationCoverageItems>[1] = {},
+  initialSource?: "codex" | "claude" | "opencode",
+) {
+  return renderToStaticMarkup(
+    <SessionRecordsPage
+      coverageItems={observationCoverageItems(sourceScan, options)}
+      homeDirectory="/Users/example"
+      initialSource={initialSource}
+      scan={sourceScan}
+    />,
+  );
+}
 
 describe("SessionRecordsPage", () => {
   it("shows the trash note, the month summary, and an in-use record", () => {
@@ -120,6 +176,70 @@ describe("SessionRecordsPage", () => {
     expect(html).not.toContain("没有 Claude 会话记录");
     expect(html).toContain("未能读取会话记录，请查看错误信息后刷新重试");
     expect(html).toContain(">Codex");
+  });
+
+  it("shows independent observation strips for Codex and Claude", () => {
+    const codexHtml = renderWithCoverage(scan, {}, "codex");
+    expect(codexHtml).toContain("已观察");
+    expect(codexHtml).toContain("观察时间未知");
+    expect(codexHtml).toContain("读取完整");
+    expect(codexHtml).not.toContain("未找到目录");
+
+    const claudeHtml = renderWithCoverage(scan, {}, "claude");
+    expect(claudeHtml).toContain("已观察");
+    expect(claudeHtml).toContain("观察时间未知");
+    expect(claudeHtml).toContain("读取完整");
+    expect(claudeHtml).toContain("未找到目录");
+    expect(claudeHtml).toContain("未找到 Claude 会话记录目录");
+  });
+
+  it("treats a missing sessions directory as observed with a domain note", () => {
+    const missing = {
+      ...scan,
+      claude: { ...scan.claude, status: "Missing" as const, records: [] },
+    };
+    const html = renderWithCoverage(missing, {}, "claude");
+    expect(html).toContain("已观察");
+    expect(html).toContain("未找到目录");
+    expect(html).toContain("未找到 Claude 会话记录目录");
+  });
+
+  it("keeps source-specific failure wording", () => {
+    const failed = {
+      ...scan,
+      claude: {
+        ...scan.claude,
+        status: "Failed" as const,
+        message: "无法读取会话记录目录",
+        records: [],
+      },
+    };
+    const html = renderWithCoverage(failed, {}, "claude");
+    expect(html).toContain("读取失败");
+    expect(html).toContain("Claude 会话记录读取失败");
+    expect(html).toContain("无法读取会话记录目录");
+  });
+
+  it("does not merge in-progress and observed sources into one busy state", () => {
+    const codexHtml = renderWithCoverage(scan, { scanning: { codex: true } }, "codex");
+    expect(codexHtml).toContain("观察中");
+
+    const claudeHtml = renderWithCoverage(scan, {}, "claude");
+    expect(claudeHtml).toContain("已观察");
+  });
+
+  it("shows an unavailable OpenCode service without inventing a read", () => {
+    const openCode: OpenCodeSessionScan = {
+      status: "unavailable",
+      records: [],
+      message: "服务未连接",
+      activeSessionIds: null,
+      activityMessage: null,
+      ageEligible: { days7: 0, days30: 0 },
+    };
+    const html = renderWithCoverage(scan, { openCode }, "opencode");
+    expect(html).toContain("不可用");
+    expect(html).toContain("OpenCode 服务不可用");
   });
 });
 

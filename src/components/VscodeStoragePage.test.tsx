@@ -1,5 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { buildObservationCoverage, type ObservationCoverageItem } from "../observationCoverage";
+import { vscodeObservationFacts } from "../observationFacts";
+import type { ObservationRecord } from "../observationLedger";
 import {
   filterVscodeWorkspaces,
   summarizeVscodeStorage,
@@ -59,6 +62,53 @@ function render(
 ) {
   return renderToStaticMarkup(
     <VscodeStoragePage workflow={workflow(snapshot, error, scanning, editorStatus)} homeDirectory="/Users/test" />,
+  );
+}
+
+function observationRecord(at: number, completeness: "complete" | "partial" = "complete"): ObservationRecord {
+  return {
+    itemId: "vscode-storage",
+    lastSuccess: {
+      at,
+      scope: "vscode:/storage",
+      scopeLabel: "VS Code 工作区存储",
+      completeness,
+      note: null,
+    },
+    lastAttempt: { at, outcome: "succeeded", scope: "vscode:/storage", reason: null },
+    invalidated: null,
+  };
+}
+
+function coverageItem(
+  snapshot: VscodeStorageScan | null,
+  error: string | null = null,
+  scanning = false,
+  record?: ObservationRecord,
+): ObservationCoverageItem {
+  const coverage = buildObservationCoverage({
+    facts: { "vscode-storage": vscodeObservationFacts(snapshot, scanning, error) },
+    records: record ? { "vscode-storage": record } : {},
+    scopes: {},
+    enabledManagers: [],
+  });
+  const item = coverage.items.find((entry) => entry.id === "vscode-storage");
+  if (!item) throw new Error("missing VS Code observation item");
+  return item;
+}
+
+function renderWithCoverage(
+  snapshot: VscodeStorageScan | null,
+  error: string | null = null,
+  scanning = false,
+  record?: ObservationRecord,
+) {
+  return renderToStaticMarkup(
+    <VscodeStoragePage
+      coverageItem={coverageItem(snapshot, error, scanning, record)}
+      workflow={workflow(snapshot, error, scanning)}
+      homeDirectory="/Users/test"
+    />,
   );
 }
 
@@ -163,5 +213,47 @@ describe("VS Code workspace storage", () => {
 
     const unknown = render(snapshot, null, false, "Unknown");
     expect(unknown).toContain("无法确认 VS Code 是否运行");
+  });
+
+  it("shows unobserved without inventing a time before the first read", () => {
+    const html = renderWithCoverage(null);
+    expect(html).toContain("未观察");
+    expect(html).toContain("尚未读取");
+  });
+
+  it("shows observation time and completeness after a successful read", () => {
+    const html = renderWithCoverage(scan([workspace("first")]), null, false, observationRecord(Date.now() - 60_000));
+    expect(html).toContain("已观察");
+    expect(html).toContain("观察于");
+    expect(html).toContain("读取完整");
+    expect(html).toContain("1 分钟前");
+  });
+
+  it("keeps the last observation distinct while the page holds no current scan", () => {
+    const html = renderWithCoverage(null, null, false, observationRecord(new Date("2026-10-23T10:00:00Z").getTime()));
+    expect(html).toContain("上次观察");
+    expect(html).toContain("本次会话尚未读取");
+    expect(html).toContain("上次观察于");
+  });
+
+  it("treats a missing storage directory as observed with a domain note", () => {
+    const html = renderWithCoverage(scan([], "Missing"));
+    expect(html).toContain("已观察");
+    expect(html).toContain("未找到目录");
+    expect(html).toContain("未发现 VS Code 工作区存储目录");
+  });
+
+  it("keeps detailed failure and partial notices alongside the status strip", () => {
+    const failed = renderWithCoverage(null, "permission denied");
+    expect(failed).toContain("读取失败");
+    expect(failed).toContain("VS Code 占用扫描失败");
+    expect(failed).toContain("permission denied");
+
+    const partial = renderWithCoverage(scan([workspace("partial", {
+      usage: { bytes: 1024, complete: false, message: "permission denied" },
+    })], "Partial"));
+    expect(partial).toContain("部分");
+    expect(partial).toContain("读取不完整");
+    expect(partial).toContain("占用统计不完整");
   });
 });

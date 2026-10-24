@@ -106,4 +106,49 @@ describe("observation coverage page", () => {
     expect(refreshManagers).toHaveBeenCalledOnce();
     expect(screen.queryByRole("button", { name: "刷新全部" })).toBeNull();
   });
+
+  it("renders scope change and invalidation details from the shared presentation", () => {
+    const facts: ObservationFactsMap = {
+      [managerObservationId("Npm")]: managerObservationFacts(
+        managerFixture("Npm", { scopeKey: "manager:observed" }),
+        { phase: "idle", scannedAt: 10, error: null },
+      ),
+      "codex:hooks": {
+        phase: "idle",
+        success: null,
+        failure: null,
+        invalidated: { at: 20, reason: "插件已变化" },
+        currentScope: null,
+      },
+    };
+    const coverage = buildObservationCoverage({
+      facts,
+      records: {},
+      scopes: { [managerObservationId("Npm")]: { key: "manager:current", label: "当前范围" } },
+      enabledManagers: ["Npm"],
+    });
+
+    render(
+      <ObservationCoveragePage
+        coverage={coverage}
+        warnings={[]}
+        busy={false}
+        onView={vi.fn()}
+        onRefresh={vi.fn()}
+        onRefreshManagers={vi.fn()}
+        onAdjustScope={vi.fn()}
+      />,
+    );
+
+    const npm = row(managerObservationId("Npm"));
+    expect(npm.getByText("范围已变化")).toBeTruthy();
+    expect(npm.getByText(/范围已变化：上次/)).toBeTruthy();
+    expect(npm.getByText(/当前范围/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开Codex" }));
+    const hooks = row("codex:hooks");
+    expect(hooks.getByText("已失效")).toBeTruthy();
+    expect(hooks.getByText(/失效于/)).toBeTruthy();
+    expect(hooks.getByText(/插件已变化/)).toBeTruthy();
+  });
 });
