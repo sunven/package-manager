@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   removeCompletedRecords,
@@ -156,10 +157,16 @@ export function useSessionRecords(active: boolean) {
       recordFollowUp: recordMaintenanceFollowUp,
     });
 
-  const scan: SessionRecordScan | null = scans.codex || scans.claude
-    ? { codex: scans.codex ?? emptySource(), claude: scans.claude ?? emptySource() }
-    : null;
-  const scanningSources = { codex: scanning.codex ?? false, claude: scanning.claude ?? false };
+  const scan = useMemo<SessionRecordScan | null>(
+    () => scans.codex || scans.claude
+      ? { codex: scans.codex ?? emptySource(), claude: scans.claude ?? emptySource() }
+      : null,
+    [scans.codex, scans.claude],
+  );
+  const scanningSources = useMemo(
+    () => ({ codex: scanning.codex ?? false, claude: scanning.claude ?? false }),
+    [scanning.codex, scanning.claude],
+  );
   const publicOutcome = outcome ? {
     source: outcome.target.source,
     result: outcome.result ?? (outcome.error ? abortedResult(outcome.error) : null),

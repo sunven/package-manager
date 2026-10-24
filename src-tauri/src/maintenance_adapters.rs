@@ -833,9 +833,6 @@ fn execution_from_counts(
     if succeeded > 0 && total == succeeded {
         return ExecutionSummary::Succeeded;
     }
-    if total == 0 || succeeded == 0 && failed == 0 {
-        return ExecutionSummary::NotExecuted;
-    }
     ExecutionSummary::NotExecuted
 }
 

@@ -1,6 +1,7 @@
 //! Scan-session-backed cleanup for project-owned derived data.
 
 use crate::command::{command_failure, envelope_owned};
+use crate::disk_usage::format_bytes;
 use crate::types::{CommandEnvelope, CommandFailure, CommandRun, FailureKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -1890,21 +1891,6 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, String> {
         return Err(format!("{} is not a directory", canonical.display()));
     }
     Ok(canonical)
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{} {}", bytes, UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
 }
 
 #[cfg(test)]

@@ -189,28 +189,6 @@ export interface PipCacheInfo {
   rawInfo: string;
 }
 
-export interface PipOutdatedPreview {
-  status: AsyncStatus;
-  command: CommandEnvelope;
-  outdated: string[];
-  message: string | null;
-  failure: CommandFailure | null;
-}
-
-export type NpmMaintenanceOperation = {
-  kind: "uninstallGlobalPackage";
-  packageName: string;
-};
-
-export type PnpmMaintenanceOperation =
-  | {
-      kind: "uninstallGlobalPackage";
-      packageName: string;
-    }
-  | {
-      kind: "storePrune";
-    };
-
 export type CleanupOutcome = "Succeeded" | "PartiallyCompleted" | "Failed" | "NoPlan";
 export type CleanupStepState = "Succeeded" | "Failed" | "Skipped";
 

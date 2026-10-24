@@ -6,7 +6,7 @@ import { createManagerMaintenanceWorkflow } from "../managerMaintenanceWorkflow"
 import { createManagerMaintenanceTauriEffects } from "../managerMaintenanceTauriEffects";
 import type { HomebrewFilter, ManagerId, MavenFilter, PackageRow, PipFilter, UiMessage } from "../types";
 import type { MaintenanceRequest } from "../state";
-import { actionFailureTitle, countedSizePath, errorToString, formatBytes, formatHomePathsInText, managerLabel } from "../utils/format";
+import { actionFailureTitle, errorToString, formatHomePathsInText, managerLabel } from "../utils/format";
 
 export interface PackageManagerActions {
   refresh: (managerId?: ManagerId) => Promise<void>;
@@ -88,29 +88,6 @@ export function usePackageManagers() {
     selectedManager,
   ]);
 
-  const overview = useMemo(() => {
-    const managers = enabledManagers.flatMap((managerId) => {
-      const manager = managerSnapshots[managerId];
-      return manager ? [manager] : [];
-    });
-    const totalBytes = managers.reduce((sum, manager) => {
-      return (
-        sum +
-        manager.paths.reduce((pathSum, path) => {
-          return countedSizePath(path.kind) ? pathSum + (path.size.bytes ?? 0) : pathSum;
-        }, 0)
-      );
-    }, 0);
-
-    return {
-      managerCount: `${managers.length}/${enabledManagers.length}`,
-      readyManagers: String(managers.filter((manager) => manager.status === "Ready").length),
-      totalPackages: String(managers.reduce((sum, manager) => sum + manager.packages.length, 0)),
-      totalBytes: formatBytes(totalBytes),
-      unsupported: String(managers.filter((manager) => manager.status === "Unsupported").length),
-    };
-  }, [enabledManagers, managerSnapshots]);
-
   const showError = useCallback((title: string, error: unknown) => {
     setUiMessage({
       tone: "bad",
@@ -129,6 +106,32 @@ export function usePackageManagers() {
       clearMessage();
     },
     [clearMessage],
+  );
+
+  const copyValue = useCallback(
+    async (value: string, label: string, failureAction: string, closeMenu = false) => {
+      try {
+        await writeText(value);
+        if (closeMenu) setOpenPackageActionMenuIndex(null);
+        markCopied(label);
+      } catch (error) {
+        showError(actionFailureTitle(failureAction), error);
+      }
+    },
+    [markCopied, showError],
+  );
+
+  const openValue = useCallback(
+    async (path: string, failureAction: string, closeMenu = false) => {
+      try {
+        await openPath(path);
+        if (closeMenu) setOpenPackageActionMenuIndex(null);
+        clearMessage();
+      } catch (error) {
+        showError(actionFailureTitle(failureAction), error);
+      }
+    },
+    [clearMessage, showError],
   );
 
   const refresh = useCallback((managerId = selectedManagerRef.current) => workflow.refresh(managerId), [workflow]);
@@ -210,96 +213,53 @@ export function usePackageManagers() {
   }, []);
 
   const copyPathValue = useCallback(
-    async (path: string) => {
-      try {
-        await writeText(path);
-        markCopied(path);
-      } catch (error) {
-        showError(actionFailureTitle("copy-path"), error);
-      }
-    },
-    [markCopied, showError],
+    (path: string) => copyValue(path, path, "copy-path"),
+    [copyValue],
   );
 
   const openPathValue = useCallback(
-    async (path: string) => {
-      try {
-        await openPath(path);
-        clearMessage();
-      } catch (error) {
-        showError(actionFailureTitle("open-path"), error);
-      }
-    },
-    [clearMessage, showError],
+    (path: string) => openValue(path, "open-path"),
+    [openValue],
   );
 
   const copyCommand = useCallback(
-    async (payload: string) => {
-      try {
-        await writeText(payload);
-        markCopied("命令详情");
-      } catch (error) {
-        showError(actionFailureTitle("copy-command"), error);
-      }
-    },
-    [markCopied, showError],
+    (payload: string) => copyValue(payload, "命令详情", "copy-command"),
+    [copyValue],
   );
 
   const copyCleanupCommand = useCallback(async () => {
     const cleanup = workflow.read().managerSnapshots.Homebrew?.homebrew?.cleanup;
     if (!cleanup) return;
-    try {
-      await writeText(cleanup.command.preview);
-      markCopied(cleanup.command.preview);
-    } catch (error) {
-      showError(actionFailureTitle("copy-cleanup-command"), error);
-    }
-  }, [markCopied, showError, workflow]);
+    await copyValue(cleanup.command.preview, cleanup.command.preview, "copy-cleanup-command");
+  }, [copyValue, workflow]);
 
   const copyPackageAction = useCallback(
     async (index: number, actionIndex: number) => {
       const pkg = packageAt(index);
       const packageAction = Number.isNaN(actionIndex) ? null : pkg?.actions[actionIndex];
       if (!packageAction) return;
-      try {
-        await writeText(packageAction.preview);
-        setOpenPackageActionMenuIndex(null);
-        markCopied(packageAction.preview);
-      } catch (error) {
-        showError(actionFailureTitle("copy-package-action"), error);
-      }
+      await copyValue(packageAction.preview, packageAction.preview, "copy-package-action", true);
     },
-    [markCopied, packageAt, showError],
+    [copyValue, packageAt],
   );
 
   const copyPackage = useCallback(
     async (index: number) => {
       const pkg = packageAt(index);
       if (!pkg) return;
-      try {
-        await writeText(`${pkg.name}@${pkg.version}`);
-        setOpenPackageActionMenuIndex(null);
-        markCopied(`${pkg.name}@${pkg.version}`);
-      } catch (error) {
-        showError(actionFailureTitle("copy-package"), error);
-      }
+      const value = `${pkg.name}@${pkg.version}`;
+      await copyValue(value, value, "copy-package", true);
     },
-    [markCopied, packageAt, showError],
+    [copyValue, packageAt],
   );
 
   const openPackage = useCallback(
     async (index: number) => {
       const pkg = packageAt(index);
       if (!pkg?.path) return;
-      try {
-        await openPath(pkg.path);
-        setOpenPackageActionMenuIndex(null);
-        clearMessage();
-      } catch (error) {
-        showError(actionFailureTitle("open-package"), error);
-      }
+      await openValue(pkg.path, "open-package", true);
     },
-    [clearMessage, packageAt, showError],
+    [openValue, packageAt],
   );
 
   const requestPackageUninstall = useCallback((index: number) => {
@@ -385,7 +345,6 @@ export function usePackageManagers() {
     homeDirectory,
     managerSnapshots,
     openPackageActionMenuIndex,
-    overview,
     pendingHomebrewCleanup,
     pendingPipOutdated,
     maintenance,

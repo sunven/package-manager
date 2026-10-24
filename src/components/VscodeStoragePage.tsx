@@ -27,7 +27,6 @@ import {
 } from "../../components/ui/table";
 import { useSessionSelection } from "../hooks/useSessionSelection";
 import type { VscodeStorageWorkflow } from "../hooks/useVscodeStorage";
-import type { SessionRefresh } from "../sessionRecords";
 import { formatBytes, formatHomePath } from "../utils/format";
 import {
   filterVscodeWorkspaces,
@@ -47,7 +46,7 @@ import {
 } from "../vscodeRemoval";
 import type { ObservationCoverageItem } from "../observationCoverage";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, Panel, PanelHead, StatCard } from "./ui";
+import { EmptyState, Panel, PanelHead, RefreshNotice, StatCard } from "./ui";
 
 const projectStatusLabels: Record<VscodeWorkspace["projectStatus"], string> = {
   Available: "路径存在",
@@ -476,17 +475,6 @@ export function VscodeStoragePage({
       </AlertDialog>
     </main>
   );
-}
-
-function RefreshNotice({ value, onRetry }: { value: SessionRefresh; onRetry: () => void }) {
-  if (value.status === "notRequested") return null;
-  if (value.status === "failed") return (
-    <div>
-      <p className="wrap-anywhere" role="status">列表刷新失败：{value.message} 执行结果已保留。</p>
-      <Button className="mt-2" onClick={onRetry} size="sm" type="button" variant="outline">重试刷新</Button>
-    </div>
-  );
-  return <p role="status">{value.status === "refreshing" ? "列表正在刷新。" : "列表已刷新。"}</p>;
 }
 
 function formatFootprint(bytes: number | null, complete: boolean) {

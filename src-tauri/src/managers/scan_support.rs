@@ -63,6 +63,19 @@ pub(super) fn expand_tilde(value: &str, home: Option<&Path>) -> PathBuf {
     PathBuf::from(value)
 }
 
+pub(super) fn resolve_env_path(
+    value: Option<&str>,
+    home: Option<&Path>,
+    fallback: &str,
+) -> PathBuf {
+    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+        return expand_tilde(value, home);
+    }
+
+    home.map(|home| home.join(fallback))
+        .unwrap_or_else(|| PathBuf::from(fallback))
+}
+
 pub(super) fn path_scope_key(
     snapshot: &ManagerSnapshot,
     kinds: &[PathKind],

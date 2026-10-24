@@ -57,8 +57,6 @@ export interface ManagerMaintenanceView {
   lockedManager: ManagerId | null;
 }
 
-export type ManagerMaintenanceWorkflow = ReturnType<typeof createManagerMaintenanceWorkflow>;
-
 export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffects) {
   const listeners = new Set<() => void>();
   const queue = createManagerScanQueue();

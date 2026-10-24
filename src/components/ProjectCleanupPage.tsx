@@ -124,9 +124,9 @@ export function ProjectCleanupPage({
     .filter((candidate) => candidate.cleanability.kind === "cleanable")
     .map((candidate) => candidate.candidateId);
   const noVisibleEligibleCandidates = visibleCandidates.length > 0 && selectableVisibleIds.length === 0;
-  const allVisibleSelected = Boolean(selectableVisibleIds.length)
-    && selectableVisibleIds.every((candidateId) =>
-      candidates.find((candidate) => candidate.candidateId === candidateId)?.selected,
+  const allVisibleSelected = selectableVisibleIds.length > 0
+    && visibleCandidates.every((candidate) =>
+      candidate.cleanability.kind !== "cleanable" || candidate.selected,
     );
   const settingsBusy = view.settings.phase === "loading";
   const scanBusy = view.scan.phase === "discovering" || view.scan.phase === "measuring";

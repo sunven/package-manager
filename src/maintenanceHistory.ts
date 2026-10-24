@@ -304,14 +304,6 @@ export function maintenanceRecoveryBoundary(record: Pick<MaintenanceRecordSummar
   return "维护操作按各管理器原有恢复边界执行；目录占用变化不等于实际释放空间。";
 }
 
-export function maintenanceRecordNeedsFollowUp(status: FollowUpReadStatus | null) {
-  return status === "failed";
-}
-
-export function maintenanceRecordNeedsVerification(status: VerificationStatus | null) {
-  return status === "failed" || status === "notStarted";
-}
-
 export function maintenanceRecordDateKey(value: number) {
   const date = new Date(value);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;

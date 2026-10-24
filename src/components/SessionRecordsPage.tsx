@@ -45,14 +45,13 @@ import {
   type SessionSectionView,
   type SessionSourceId,
   type SessionSourceScan,
-  type SessionRefresh,
 } from "../sessionRecords";
 import type { useSessionRecords } from "../hooks/useSessionRecords";
 import type { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { useSessionSelection } from "../hooks/useSessionSelection";
 import type { ObservationCoverageItem } from "../observationCoverage";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, Panel, StatCard } from "./ui";
+import { EmptyState, Panel, RefreshNotice, StatCard } from "./ui";
 
 const sources = [
   { key: "codex" as const, label: "Codex", empty: "没有 Codex 会话记录", fallback: "~/.codex/sessions" },
@@ -438,15 +437,6 @@ export function SessionRecordsPage({
       </Tabs>
     </main>
   );
-}
-
-function RefreshNotice({ value, onRetry }: { value: SessionRefresh; onRetry: () => void }) {
-  if (value.status === "notRequested") return null;
-  if (value.status === "failed") return <div>
-    <p className="wrap-anywhere" role="status">列表刷新失败：{value.message} 执行结果已保留。</p>
-    <Button className="mt-2" onClick={onRetry} size="sm" type="button" variant="outline">重试刷新</Button>
-  </div>;
-  return <p role="status">{value.status === "refreshing" ? "列表正在刷新。" : "列表已刷新。"}</p>;
 }
 
 function OpenCodeSection({

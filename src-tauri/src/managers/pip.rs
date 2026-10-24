@@ -9,7 +9,7 @@ use crate::types::{
     PipOutdatedPreview,
 };
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::Path;
 use std::time::Duration;
@@ -24,19 +24,9 @@ where
 {
     let mut snapshot = empty_snapshot(ManagerId::Pip, "pip");
 
-    let Some(python) = detect_python(runner, &mut snapshot) else {
+    let Some((python, python_version)) = detect_python(runner, &mut snapshot) else {
         return finish(snapshot);
     };
-
-    let python_version = command_stdout_owned(
-        python.as_str(),
-        vec!["--version".to_string()],
-        5,
-        &mut snapshot,
-        runner,
-        "Python version probe failed",
-    )
-    .unwrap_or_else(|| "unknown".to_string());
 
     let resolved_python = command_stdout_owned(
         python.as_str(),
@@ -280,13 +270,18 @@ where
     Err("python3 and python are not installed or are not on PATH".to_string())
 }
 
-fn detect_python<F>(runner: &F, snapshot: &mut ManagerSnapshot) -> Option<String>
+fn detect_python<F>(
+    runner: &F,
+    snapshot: &mut ManagerSnapshot,
+) -> Option<(String, String)>
 where
     F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
 {
     for program in ["python3", "python"] {
         match runner(program, &["--version".to_string()], Duration::from_secs(5)) {
-            Ok(run) if run.exit_code == Some(0) => return Some(program.to_string()),
+            Ok(run) if run.exit_code == Some(0) => {
+                return Some((program.to_string(), trimmed(run.stdout)));
+            }
             Ok(run) => snapshot.failures.push(command_failure(
                 FailureKind::CommandFailed,
                 "Python version probe failed",
@@ -535,23 +530,20 @@ pub(super) fn merge_pip_outdated(
     let outdated = preview
         .outdated
         .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
+        .map(|name| name.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
     for package in &mut snapshot.packages {
         package
             .signals
             .retain(|signal| !matches!(signal, PackageSignal::Outdated));
-        if outdated
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(&package.name))
-        {
+        if outdated.contains(&package.name.to_ascii_lowercase()) {
             package.signals.push(PackageSignal::Outdated);
         }
     }
     if let Some(pip) = snapshot.pip.as_mut() {
         pip.outdated_status = preview.status;
         pip.outdated_count = if matches!(preview.status, AsyncStatus::Ready) {
-            outdated.len()
+            preview.outdated.len()
         } else {
             0
         };

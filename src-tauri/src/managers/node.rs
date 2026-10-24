@@ -1,6 +1,6 @@
 use super::scan_support::{
-    empty_snapshot, expand_tilde, finish, home_dir, json_string, package_row, path_scope_key,
-    push_signal, split_package_version, trimmed,
+    empty_snapshot, finish, home_dir, json_string, package_row, path_scope_key, push_signal,
+    resolve_env_path, split_package_version, trimmed,
 };
 use crate::command::{command_failure, envelope_owned, parse_failure, push_command, run_command};
 use crate::disk_usage::path_info;
@@ -352,12 +352,7 @@ fn resolve_nvm_dir_from_env() -> PathBuf {
 }
 
 fn resolve_nvm_dir(nvm_dir: Option<&str>, home: Option<&Path>) -> PathBuf {
-    if let Some(value) = nvm_dir.map(str::trim).filter(|value| !value.is_empty()) {
-        return expand_tilde(value, home);
-    }
-
-    home.map(|home| home.join(".nvm"))
-        .unwrap_or_else(|| PathBuf::from(".nvm"))
+    resolve_env_path(nvm_dir, home, ".nvm")
 }
 
 fn scan_nvm_node_versions(
@@ -478,38 +473,7 @@ where
             vec!["uninstall".to_string(), "-g".to_string(), package_name]
         }
     };
-    let command = envelope_owned("npm", args.clone(), 30_000);
-
-    match runner("npm", &args, Duration::from_secs(30)) {
-        Ok(run) if run.exit_code == Some(0) => MaintenanceRunPreview {
-            status: AsyncStatus::Ready,
-            command,
-            stdout: run.stdout,
-            stderr: run.stderr,
-            message: None,
-            failure: None,
-        },
-        Ok(run) => {
-            let failure =
-                command_failure(FailureKind::CommandFailed, "npm maintenance failed", run);
-            MaintenanceRunPreview {
-                status: AsyncStatus::Failed,
-                command,
-                stdout: failure.stdout.clone(),
-                stderr: failure.stderr.clone(),
-                message: Some(failure.message.clone()),
-                failure: Some(failure),
-            }
-        }
-        Err(failure) => MaintenanceRunPreview {
-            status: AsyncStatus::Failed,
-            command,
-            stdout: failure.stdout.clone(),
-            stderr: failure.stderr.clone(),
-            message: Some(failure.message.clone()),
-            failure: Some(failure),
-        },
-    }
+    run_uninstall_with_runner("npm", args, "npm maintenance failed", runner)
 }
 
 pub(crate) fn run_pnpm_maintenance_with_runner<F>(
@@ -524,9 +488,21 @@ where
             vec!["remove".to_string(), "--global".to_string(), package_name]
         }
     };
-    let command = envelope_owned("pnpm", args.clone(), 30_000);
+    run_uninstall_with_runner("pnpm", args, "pnpm maintenance failed", runner)
+}
 
-    match runner("pnpm", &args, Duration::from_secs(30)) {
+fn run_uninstall_with_runner<F>(
+    program: &str,
+    args: Vec<String>,
+    failure_message: &str,
+    runner: &F,
+) -> MaintenanceRunPreview
+where
+    F: Fn(&str, &[String], Duration) -> Result<CommandRun, CommandFailure>,
+{
+    let command = envelope_owned(program, args.clone(), 30_000);
+
+    match runner(program, &args, Duration::from_secs(30)) {
         Ok(run) if run.exit_code == Some(0) => MaintenanceRunPreview {
             status: AsyncStatus::Ready,
             command,
@@ -536,8 +512,7 @@ where
             failure: None,
         },
         Ok(run) => {
-            let failure =
-                command_failure(FailureKind::CommandFailed, "pnpm maintenance failed", run);
+            let failure = command_failure(FailureKind::CommandFailed, failure_message, run);
             MaintenanceRunPreview {
                 status: AsyncStatus::Failed,
                 command,

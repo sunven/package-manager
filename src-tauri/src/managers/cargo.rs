@@ -1,5 +1,5 @@
 use super::scan_support::{
-    empty_snapshot, expand_tilde, finish, home_dir, package_row, path_scope_key,
+    empty_snapshot, finish, home_dir, package_row, path_scope_key, resolve_env_path,
 };
 use crate::command::{envelope_owned, parse_failure, run_command, run_recorded_command};
 use crate::disk_usage::path_info;
@@ -102,12 +102,7 @@ fn resolve_cargo_home_from_env() -> PathBuf {
 }
 
 fn resolve_cargo_home(cargo_home: Option<&str>, home: Option<&Path>) -> PathBuf {
-    if let Some(value) = cargo_home.map(str::trim).filter(|value| !value.is_empty()) {
-        return expand_tilde(value, home);
-    }
-
-    home.map(|home| home.join(".cargo"))
-        .unwrap_or_else(|| PathBuf::from(".cargo"))
+    resolve_env_path(cargo_home, home, ".cargo")
 }
 
 #[derive(Debug)]

@@ -26,10 +26,6 @@ export interface ObservationFacts {
 
 export type ObservationFactsMap = Partial<Record<ObservationItemId, ObservationFacts>>;
 
-export function idleObservationFacts(): ObservationFacts {
-  return { phase: "idle", success: null, failure: null, invalidated: null, currentScope: null };
-}
-
 export function recordObservationFacts(itemId: ObservationItemId, facts: ObservationFacts, at = Date.now()) {
   if (facts.failure) {
     recordObservation({
