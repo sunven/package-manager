@@ -30,6 +30,7 @@ const ITEM_IDS: &[&str] = &[
     "session:codex",
     "session:claude",
     "session:opencode",
+    "session:grok",
     "codex:marketplaces",
     "codex:plugins",
     "codex:hooks",
@@ -205,6 +206,15 @@ pub(crate) fn scopes(enabled_managers: &[ManagerId]) -> BTreeMap<String, Option<
             Some(ObservationScope {
                 key: format!("session:claude:{}", directory.display()),
                 label: "Claude 会话目录".into(),
+            }),
+        );
+    }
+    if let Ok(directory) = crate::grok_sessions::sessions_dir() {
+        scopes.insert(
+            "session:grok".into(),
+            Some(ObservationScope {
+                key: format!("session:grok:{}", directory.display()),
+                label: "Grok Build 会话目录".into(),
             }),
         );
     }

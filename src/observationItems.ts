@@ -26,6 +26,7 @@ export type ObservationItemId =
   | "session:codex"
   | "session:claude"
   | "session:opencode"
+  | "session:grok"
   | "codex:marketplaces"
   | "codex:plugins"
   | "codex:hooks"
@@ -69,6 +70,7 @@ export const OBSERVATION_ITEMS: ObservationItem[] = [
   { id: "session:codex", group: "sessions", label: "Codex 会话记录" },
   { id: "session:claude", group: "sessions", label: "Claude 会话记录" },
   { id: "session:opencode", group: "sessions", label: "OpenCode 会话记录" },
+  { id: "session:grok", group: "sessions", label: "Grok Build 会话记录" },
   { id: "codex:marketplaces", group: "codex", label: "Codex 市场" },
   { id: "codex:plugins", group: "codex", label: "Codex 插件" },
   { id: "codex:hooks", group: "codex", label: "Codex Hooks" },
@@ -94,6 +96,6 @@ export function managerObservationId(manager: string): ObservationItemId {
   return `manager:${manager.toLowerCase()}` as ObservationItemId;
 }
 
-export function sessionObservationId(source: "codex" | "claude" | "opencode"): ObservationItemId {
+export function sessionObservationId(source: "codex" | "claude" | "opencode" | "grok"): ObservationItemId {
   return `session:${source}` as ObservationItemId;
 }

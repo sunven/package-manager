@@ -128,6 +128,9 @@ export function App() {
       sessionRecords.scanningSources.claude,
       sessionRecords.error,
     );
+    facts["session:grok"] = sessionObservationFacts(
+      "grok", sessionRecords.scan?.grok ?? null, sessionRecords.scanningSources.grok, sessionRecords.error,
+    );
     facts["session:opencode"] = openCodeObservationFacts(
       openCodeSessions.scan,
       openCodeSessions.scanning,
@@ -146,7 +149,7 @@ export function App() {
     observations.environment, observations.environmentBusy, observations.environmentError,
     projectCleanup.view,
     vscodeStorage.scan, vscodeStorage.scanning, vscodeStorage.error,
-    sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.error,
+    sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.scanningSources.grok, sessionRecords.error,
     openCodeSessions.scan, openCodeSessions.scanning, openCodeSessions.error,
     codex.extensions.marketplaces, codex.extensions.plugins, codex.extensions.hooks, codex.skills,
     claude.state.extensionsView, claude.state.hooksView, claude.skills,
@@ -167,6 +170,7 @@ export function App() {
     || claude.locked
     || Boolean(vscodeStorage.operation)
     || Boolean(sessionRecords.operation)
+    || Boolean(sessionRecords.openingGrokId)
     || Boolean(openCodeSessions.operation)
     || Boolean(projectCleanup.view.batch);
 
@@ -236,6 +240,7 @@ export function App() {
         return;
       case "session:codex":
       case "session:claude":
+      case "session:grok":
       case "session:opencode":
         setActiveView("sessions");
         return;
@@ -286,6 +291,7 @@ export function App() {
       case "vscode-storage": await vscodeStorage.refresh(); return;
       case "session:codex": await sessionRecords.refresh("codex"); return;
       case "session:claude": await sessionRecords.refresh("claude"); return;
+      case "session:grok": await sessionRecords.refresh("grok"); return;
       case "session:opencode": await openCodeSessions.refresh(); return;
       case "codex:marketplaces": await codex.extensions.readMarketplaces(); return;
       case "codex:plugins": await codex.extensions.readPlugins(); return;

@@ -14,6 +14,7 @@ mod command;
 mod command_location_association;
 mod disk_usage;
 mod environment_inspection;
+mod grok_sessions;
 mod maintenance_history;
 mod manager_history;
 mod managers;
@@ -365,22 +366,23 @@ fn session_history_scope(
     days: Option<u64>,
     confirmed_count: Option<usize>,
     confirmed_records: Option<Vec<SessionRecordSnapshotInput>>,
+    directory: Option<String>,
+    cutoff_ms: Option<i64>,
 ) -> maintenance_history::MaintenanceDetail {
-    maintenance_history::MaintenanceDetail::SessionTrash(
-        maintenance_history::SessionTrashDetail {
-            scope: maintenance_history::SessionTrashScope {
-                source,
-                mode,
-                days,
-                confirmed_count,
-                confirmed_records: confirmed_records.map(|records| {
-                    records.into_iter().map(session_record_snapshot).collect()
-                }),
-            },
-            execution_total: None,
-            results: Vec::new(),
+    maintenance_history::MaintenanceDetail::SessionTrash(maintenance_history::SessionTrashDetail {
+        scope: maintenance_history::SessionTrashScope {
+            source,
+            mode,
+            days,
+            confirmed_count,
+            directory,
+            cutoff_ms,
+            confirmed_records: confirmed_records
+                .map(|records| records.into_iter().map(session_record_snapshot).collect()),
         },
-    )
+        execution_total: None,
+        results: Vec::new(),
+    })
 }
 
 fn append_session_history(
@@ -435,6 +437,8 @@ async fn remove_session_records_older_than(
     source: session_records::SessionSourceKind,
     days: u64,
     confirmed_count: Option<usize>,
+    expected_directory: Option<String>,
+    cutoff_ms: Option<i64>,
     on_progress: tauri::ipc::Channel<session_records::SessionRemovalProgress>,
     history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
 ) -> Result<maintenance_history::Receipt<session_records::SessionRemovalResult>, String> {
@@ -449,6 +453,8 @@ async fn remove_session_records_older_than(
                 Some(days),
                 confirmed_count,
                 None,
+                expected_directory.clone(),
+                cutoff_ms,
             ),
             None,
         ) {
@@ -466,14 +472,38 @@ async fn remove_session_records_older_than(
                 }
             }
         };
-        let result = match session_records::remove_older_default_with_reporter(
-            source,
-            days,
-            &mut |progress| {
-                let _ = on_progress.send(progress);
-            },
-            &mut on_item,
-        ) {
+        let mut report = |progress| {
+            let _ = on_progress.send(progress);
+        };
+        let execution = if matches!(source, session_records::SessionSourceKind::Grok) {
+            if !matches!(days, 7 | 30)
+                || !cutoff_ms.is_some_and(|cutoff| {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|value| value.as_millis().min(i64::MAX as u128) as i64)
+                        .unwrap_or(0);
+                    cutoff <= now.saturating_sub((days as i64).saturating_mul(86_400_000))
+                })
+            {
+                Err("Grok Build 按年龄移除需要已确认的 7／30 天门槛".into())
+            } else {
+                grok_sessions::remove_default(
+                    expected_directory.as_deref(),
+                    None,
+                    cutoff_ms,
+                    &mut report,
+                    &mut on_item,
+                )
+            }
+        } else {
+            session_records::remove_older_default_with_reporter(
+                source,
+                days,
+                &mut report,
+                &mut on_item,
+            )
+        };
+        let result = match execution {
             Ok(result) => result,
             Err(error) => {
                 abort_session_history(&history, history_id.as_ref(), &error);
@@ -503,6 +533,7 @@ async fn remove_session_record(
     source: session_records::SessionSourceKind,
     id: String,
     confirmed_record: Option<SessionRecordSnapshotInput>,
+    expected_directory: Option<String>,
     history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
 ) -> Result<maintenance_history::Receipt<session_records::SessionRemovalResult>, String> {
     let history = history.inner().clone();
@@ -516,13 +547,26 @@ async fn remove_session_record(
                 None,
                 Some(1),
                 confirmed_record.map(|record| vec![record]),
+                expected_directory.clone(),
+                None,
             ),
             None,
         ) {
             Ok(id) => (Some(id), None),
             Err(error) => (None, Some(error)),
         };
-        let result = match session_records::remove_default(source, &id) {
+        let execution = if matches!(source, session_records::SessionSourceKind::Grok) {
+            grok_sessions::remove_default(
+                expected_directory.as_deref(),
+                Some(&[id.clone()]),
+                None,
+                &mut |_| {},
+                &mut |_| {},
+            )
+        } else {
+            session_records::remove_default(source, &id)
+        };
+        let result = match execution {
             Ok(result) => result,
             Err(error) => {
                 abort_session_history(&history, history_id.as_ref(), &error);
@@ -545,6 +589,7 @@ async fn remove_session_records(
     source: session_records::SessionSourceKind,
     ids: Vec<String>,
     confirmed_records: Vec<SessionRecordSnapshotInput>,
+    expected_directory: Option<String>,
     on_progress: tauri::ipc::Channel<session_records::SessionRemovalProgress>,
     history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
 ) -> Result<maintenance_history::Receipt<session_records::SessionRemovalResult>, String> {
@@ -559,6 +604,8 @@ async fn remove_session_records(
                 None,
                 Some(confirmed_records.len()),
                 Some(confirmed_records),
+                expected_directory.clone(),
+                None,
             ),
             None,
         ) {
@@ -576,14 +623,26 @@ async fn remove_session_records(
                 }
             }
         };
-        let result = match session_records::remove_selected_default_with_reporter(
-            source,
-            &ids,
-            &mut |progress| {
-                let _ = on_progress.send(progress);
-            },
-            &mut on_item,
-        ) {
+        let mut report = |progress| {
+            let _ = on_progress.send(progress);
+        };
+        let execution = if matches!(source, session_records::SessionSourceKind::Grok) {
+            grok_sessions::remove_default(
+                expected_directory.as_deref(),
+                Some(&ids),
+                None,
+                &mut report,
+                &mut on_item,
+            )
+        } else {
+            session_records::remove_selected_default_with_reporter(
+                source,
+                &ids,
+                &mut report,
+                &mut on_item,
+            )
+        };
+        let result = match execution {
             Ok(result) => result,
             Err(error) => {
                 abort_session_history(&history, history_id.as_ref(), &error);
@@ -635,6 +694,15 @@ async fn scan_opencode_sessions() -> opencode_sessions::OpenCodeSessionScan {
             active_session_ids: None,
             activity_message: None,
         })
+}
+
+#[tauri::command]
+async fn open_grok_session(id: String, expected_directory: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        grok_sessions::open_default(&id, &expected_directory)
+    })
+    .await
+    .map_err(|_| "无法启动 Grok Build 会话".to_string())?
 }
 
 #[tauri::command]
@@ -1402,6 +1470,7 @@ pub fn run() {
             scan_session_source,
             scan_opencode_sessions,
             open_opencode_session,
+            open_grok_session,
             prepare_opencode_deletion,
             commit_opencode_deletion,
             scan_vscode_storage,

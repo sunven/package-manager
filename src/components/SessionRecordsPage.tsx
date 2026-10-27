@@ -24,6 +24,7 @@ import {
   bulkRemovalRequest,
   openCodeAgeEligibleCount,
   formatSessionActivity,
+  formatSessionRecordId,
   removableSessionRecords,
   removalProgressBreakdown,
   removalProgressText,
@@ -56,6 +57,7 @@ import { EmptyState, Panel, StatCard } from "./ui";
 const sources = [
   { key: "codex" as const, label: "Codex", empty: "没有 Codex 会话记录", fallback: "~/.codex/sessions" },
   { key: "claude" as const, label: "Claude", empty: "没有 Claude 会话记录", fallback: "~/.claude/projects" },
+  { key: "grok" as const, label: "Grok Build", empty: "没有 Grok Build 会话记录", fallback: "~/.grok/sessions" },
 ];
 
 const selectableSession = (record: SessionRecord) => !record.inUse;
@@ -96,15 +98,15 @@ export function SessionRecordsPage({
     : 0;
   const removalProgressDetail = removalProgress ? removalProgressBreakdown(removalProgress) : null;
   const result = records.outcome?.result;
-  const resultSource = records.outcome?.source === "codex" ? "Codex" : "Claude";
+  const resultSource = sources.find((source) => source.key === records.outcome?.source)?.label ?? "会话记录";
   const removalSource = records.outcome?.source;
   const pendingOpenCodeDelete = openCode.operation?.phase !== "refreshing" ? openCode.operation?.target ?? null : null;
   const deletingOpenCodeId = openCode.operation && openCode.operation.phase !== "confirming"
     ? openCode.operation.target.roots[0]?.id ?? null
     : null;
   const openCodeDeleteResult = openCode.outcome;
-  const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time" });
-  const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" } });
+  const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time", grok: "time" });
+  const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" }, grok: { query: "", usage: "all" } });
   const sections = useMemo(() => (scan ? sessionSections(scan, sorts, filters) : null), [scan, sorts, filters]);
   const [activeSource, setActiveSource] = useState<SessionSourceId | "opencode">(initialSource);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -120,6 +122,11 @@ export function SessionRecordsPage({
     isSelectable: selectableSession,
     completedIds: records.outcome?.source === "claude" ? completedSessionIds : null,
   });
+  const grokSelection = useSessionSelection({
+    records: scan?.grok?.records ?? null,
+    isSelectable: selectableSession,
+    completedIds: records.outcome?.source === "grok" ? completedSessionIds : null,
+  });
   const openCodeSelection = useSessionSelection({
     records: openCode.scan?.records ?? null,
     isSelectable: selectableOpenCode,
@@ -127,7 +134,7 @@ export function SessionRecordsPage({
   });
 
   return (
-    <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || openCodeScanning}>
+    <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || scanningSources.grok || openCodeScanning}>
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>会话记录读取失败</AlertTitle>
@@ -216,6 +223,9 @@ export function SessionRecordsPage({
             </div>
           ) : null}
           <p className="shrink-0 text-sm text-foreground/80">清空废纸篓前可恢复记录；移入废纸篓不代表磁盘空间立即释放。</p>
+          {pending?.source === "grok" ? (
+            <p className="shrink-0 text-sm text-foreground/80">整条本机会话目录会移入废纸篓。搜索索引与远端副本保留，Grok 搜索中仍可能出现旧片段。独立关联记录不会自动连带移除，指向原记录的引用可能失效。执行前及每条移除前会复核 Grok Build 已退出。</p>
+          ) : null}
           <AlertDialogFooter className="shrink-0">
             <AlertDialogCancel asChild>
               <Button disabled={removing} type="button" variant="outline">
@@ -337,16 +347,16 @@ export function SessionRecordsPage({
             {result.historyId && onShowHistory ? <Button className="w-fit" onClick={() => onShowHistory(result.historyId!)} size="sm" type="button" variant="outline">已保存到维护历史</Button> : null}
             {records.outcome ? <RefreshNotice value={records.outcome.refresh} onRetry={() => void records.refresh(removalSource)} /> : null}
             {result.items.length ? <details><summary className="cursor-pointer">查看逐条结果（{result.items.length}）</summary><ul className="mt-2 flex max-h-64 flex-col gap-2 overflow-auto">
-              {result.items.map((item) => <li key={item.id} className="break-all"><strong>{item.id}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
+              {result.items.map((item) => <li key={item.id} className="break-all"><strong>{formatSessionRecordId(removalSource, item.id)}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : item.status === "NotAttempted" ? "未执行" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
             </ul></details> : null}
           </AlertDescription>
         </Alert>
       ) : null}
 
       <Tabs className="min-w-0" onValueChange={(value) => setActiveSource(value as SessionSourceId | "opencode")} value={activeSource}>
-        <TabsList className="w-full">
+        <TabsList className="h-auto w-full flex-wrap">
           {sources.map((source) => {
-            const count = sections?.[source.key].count;
+            const count = sections?.[source.key]?.count;
             return (
               <TabsTrigger key={source.key} value={source.key}>
                 {source.label}
@@ -364,7 +374,7 @@ export function SessionRecordsPage({
         {sources.map((source) => {
           const data = scan?.[source.key];
           const view = sections?.[source.key];
-          const selection = source.key === "codex" ? codexSelection : claudeSelection;
+          const selection = source.key === "codex" ? codexSelection : source.key === "grok" ? grokSelection : claudeSelection;
           return (
             <TabsContent className="min-w-0" key={source.key} value={source.key}>
               <SourceSection
@@ -381,6 +391,8 @@ export function SessionRecordsPage({
                 fallbackPath={source.fallback}
                 homeDirectory={homeDirectory}
                 label={source.label}
+                onOpen={source.key === "grok" ? records.openGrokSession : undefined}
+                openingId={source.key === "grok" ? records.openingGrokId : null}
                 nowMs={nowMs ?? Date.now()}
                 onClearSelection={() => selection.clear()}
                 onRequestAgeRemoval={(days, count) => {
@@ -399,7 +411,7 @@ export function SessionRecordsPage({
                 onRefresh={() => onRefresh(source.key)}
                 onSortChange={(next) => setSorts((current) => ({ ...current, [source.key]: next }))}
                 onToggle={(groupKey) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: !current[`${source.key}:${groupKey}`] }))}
-                removing={removing}
+                removing={removing || Boolean(records.openingGrokId)}
                 scanning={scanningSources[source.key]}
                 selectedIds={selection.selectedIds}
                 sort={sorts[source.key]}
@@ -633,6 +645,8 @@ function SourceSection({
   source,
   view,
   label,
+  onOpen,
+  openingId,
   emptyMessage,
   fallbackPath,
   homeDirectory,
@@ -659,6 +673,8 @@ function SourceSection({
   source: SessionSourceScan | null;
   view: SessionSectionView | null;
   label: string;
+  onOpen?: (record: SessionRecord) => Promise<string | null>;
+  openingId?: string | null;
   emptyMessage: string;
   fallbackPath: string;
   homeDirectory: string | null;
@@ -680,6 +696,10 @@ function SourceSection({
   selectedIds: readonly string[];
   sort: SessionSort;
 }) {
+  const [openError, setOpenError] = useState<string | null>(null);
+  const grok = sourceKey === "grok";
+  const blockedReason = grok ? source?.status === "Failed" ? "请先成功读取 Grok Build 会话记录。" : source?.removalBlockedReason : null;
+  const mutationBlocked = removing || (grok && (scanning || Boolean(blockedReason)));
   const records = view?.groups.flatMap((group) => group.records) ?? [];
   const allSourceRecords = source?.records ?? [];
   const removable = removableSessionRecords(records);
@@ -724,7 +744,7 @@ function SourceSection({
             return (
               <Button
                 aria-describedby={`${sourceKey}-age-removal-help ${ageEligibilityId}`}
-                disabled={scanning || removing || request === null}
+                disabled={scanning || mutationBlocked || request === null}
                 key={days}
                 onClick={() => {
                   if (request) onRequestAgeRemoval(request.days, request.count);
@@ -739,12 +759,19 @@ function SourceSection({
           })}
         </span>
       </div>
+      {grok ? (
+        <div className="space-y-1 border-b px-3 py-2 text-xs text-muted-foreground">
+          <p id={`${sourceKey}-removal-blocked`} role="status">{blockedReason ?? (source ? "移除前会逐条复核 Grok Build 已退出及记录未被其他进程打开。" : "读取后检查 Grok Build 的运行状态。")}</p>
+          <p>移除只把本机会话目录移入废纸篓；外部搜索索引、远端副本及未选中的独立关联记录保留。</p>
+        </div>
+      ) : null}
+      {openError ? <Alert variant="destructive"><AlertTitle>无法继续 Grok Build 会话</AlertTitle><AlertDescription>{openError}</AlertDescription></Alert> : null}
       <CardContent className="flex flex-col gap-2 p-3">
         <p className="text-xs text-muted-foreground" id={`${sourceKey}-age-removal-help`}>按天数移除以最后活动时间为准，作用于整个 {label} 来源，不受搜索和状态筛选限制。使用中的记录会跳过。</p>
         <p className="text-xs text-muted-foreground" id={ageEligibilityId} role="status">{!source ? "读取会话记录后显示当前符合年龄条件的数量。" : eligibleAge7 === 0 && eligibleAge30 === 0 ? `当前没有符合 7 天或 30 天门槛的记录；近 7 天 ${recentAge7Count} 条、近 30 天 ${recentAge30Count} 条未达门槛` : eligibleAge7 === 0 ? `当前没有符合 7 天门槛的记录；近 7 天 ${recentAge7Count} 条未达门槛` : eligibleAge30 === 0 ? `当前没有符合 30 天门槛的记录；近 30 天 ${recentAge30Count} 条未达门槛` : `当前符合年龄门槛：7 天 ${eligibleAge7} 条、30 天 ${eligibleAge30} 条`}{inUseCount ? `；${inUseCount} 条使用中的记录会跳过` : ""}{unknownActivityCount ? `；${unknownActivityCount} 条缺少最后活动时间，无法按年龄判断` : ""}。</p>
         <div className="grid gap-2 sm:grid-cols-2">
           <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
-          <StatCard label="当前结果的记录占用" value={view ? formatBytes(view.bytes) : "—"} />
+          <StatCard label="当前结果的记录占用" value={view ? `${records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}${formatBytes(view.bytes)}` : "—"} />
         </div>
       </CardContent>
       {source?.status === "Failed" && source.message ? (
@@ -765,7 +792,7 @@ function SourceSection({
         <div className="flex flex-col">
           <div className="flex flex-wrap gap-2 border-b px-4 py-2">
             <Button
-              disabled={removing || removable.length === 0 || selectedCount === removable.length}
+              disabled={mutationBlocked || removable.length === 0 || selectedCount === removable.length}
               onClick={onSelectAll}
               size="sm"
               type="button"
@@ -777,7 +804,7 @@ function SourceSection({
               取消选择
             </Button>
             <Button
-              disabled={removing || selected === null}
+              disabled={mutationBlocked || selected === null}
               onClick={(event) => {
                 if (selected) onRequestSelectedRemoval(records.filter((record) => selectedSet.has(record.id)), event.currentTarget);
               }}
@@ -800,7 +827,7 @@ function SourceSection({
                     aria-label={`选择${group.label}的可移除会话记录`}
                     aria-describedby={groupRemovable.length === 0 ? ageEligibilityId : undefined}
                     checked={groupAllSelected}
-                    disabled={removing || groupRemovable.length === 0}
+                    disabled={mutationBlocked || groupRemovable.length === 0}
                     onCheckedChange={(checked) => onSetGroupSelected(group.records, checked === true)}
                   />
                   <button
@@ -811,7 +838,7 @@ function SourceSection({
                   >
                     <span className="text-sm font-medium">{group.label}</span>
                     <span className="text-xs text-muted-foreground">
-                      {group.count} 条 · {formatBytes(group.bytes)}
+                      {group.count} 条 · {group.records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}{formatBytes(group.bytes)}
                     </span>
                   </button>
                 </div>
@@ -823,7 +850,7 @@ function SourceSection({
                           aria-label={`选择 ${record.title}`}
                           aria-describedby={record.inUse ? `${sourceKey}-in-use-${encodeURIComponent(record.id)}` : undefined}
                           checked={!record.inUse && selectedSet.has(record.id)}
-                          disabled={removing || record.inUse}
+                          disabled={mutationBlocked || record.inUse}
                           onCheckedChange={(checked) => onSetRecordSelected(record.id, checked === true)}
                         />
                         <span className="min-w-0">
@@ -833,16 +860,27 @@ function SourceSection({
                               ? formatHomePath(record.workingDirectory, homeDirectory)
                               : "没有工作目录"}
                           </span>
+                          {record.grok?.parentSessionId ? <span className="mt-1 block break-all text-xs text-muted-foreground">来源记录：{record.grok.parentSessionId}</span> : null}
+                          {record.grok?.relatedSessionIds.length ? <span className="mt-1 block text-xs text-muted-foreground">关联 {record.grok.relatedSessionIds.length} 条记录，移除不自动连带</span> : null}
+                          {record.grok?.resumeError ? <span className="mt-1 block text-xs text-muted-foreground" id={`grok-resume-${encodeURIComponent(record.id)}`}>{record.grok.resumeError}</span> : null}
                         </span>
-                        <span className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                        <span className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
                           <span>{record.lastActivityMs === null ? "没有最后活动时间" : formatSessionActivity(record.lastActivityMs)}</span>
-                          <span className="font-medium tabular-nums text-foreground">{formatBytes(record.bytes)}</span>
+                          <span className="font-medium tabular-nums text-foreground">{record.grok?.bytesComplete === false ? record.bytes ? `已测 ${formatBytes(record.bytes)}` : "大小未知" : formatBytes(record.bytes)}</span>
                         </span>
-                        <span className="flex items-center justify-end">
+                        <span className="flex flex-wrap items-center justify-end gap-2">
+                          {onOpen ? <Button
+                            aria-label={`在 Grok Build 中继续 ${record.title}`}
+                            aria-describedby={record.grok?.resumeError ? `grok-resume-${encodeURIComponent(record.id)}` : undefined}
+                            disabled={removing || scanning || source?.status === "Failed" || Boolean(record.grok?.resumeError)}
+                            onClick={async () => { setOpenError(null); setOpenError(await onOpen(record)); }}
+                            size="sm" type="button" variant="outline"
+                          ><ArrowSquareOut aria-hidden="true" />{openingId === record.id ? "打开中" : "继续会话"}</Button> : null}
                           {record.inUse ? <span className="text-xs text-muted-foreground" id={`${sourceKey}-in-use-${encodeURIComponent(record.id)}`}>使用中，暂不移除</span> : (
                             <Button
                               aria-label={`将 ${record.title || record.id} 移入废纸篓`}
-                              disabled={removing}
+                              disabled={mutationBlocked}
+                              aria-describedby={blockedReason ? `${sourceKey}-removal-blocked` : undefined}
                               onClick={() => onRequestRemoval(record)}
                               size="icon-sm"
                               title="移入废纸篓"

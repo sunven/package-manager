@@ -7,6 +7,14 @@ export type SessionRecord = {
   workingDirectory: string | null;
   bytes: number;
   inUse: boolean;
+  grok?: {
+    sessionId: string;
+    bytesComplete: boolean;
+    resumeError: string | null;
+    parentSessionId: string | null;
+    relatedSessionIds: string[];
+    relationsComplete?: boolean;
+  };
 };
 
 export type SessionSourceScan = {
@@ -14,14 +22,28 @@ export type SessionSourceScan = {
   status: SessionScanStatus;
   records: SessionRecord[];
   message: string | null;
+  removalBlockedReason?: string | null;
 };
 
 export type SessionRecordScan = {
   codex: SessionSourceScan;
   claude: SessionSourceScan;
+  grok?: SessionSourceScan;
 };
 
-export type SessionSourceId = "codex" | "claude";
+export type SessionSourceId = "codex" | "claude" | "grok";
+
+export function formatSessionRecordId(source: SessionSourceId | undefined, id: string): string {
+  if (source !== "grok") return id;
+  const separator = id.indexOf("/");
+  if (separator < 0) return id;
+  try {
+    const directory = decodeURIComponent(id.slice(0, separator));
+    return directory.startsWith("/") ? directory + id.slice(separator) : id;
+  } catch {
+    return id;
+  }
+}
 
 export type SessionRefresh = {
   status: "notRequested" | "refreshing" | "ready" | "failed";
@@ -106,10 +128,10 @@ export type SessionRemovalResult = {
   message: string | null;
 };
 
-export type SessionRemovalReason = "InUse" | "NoLongerRecord" | "ActivityChanged" | "ActivityUnknown" | "TrashFailed";
+export type SessionRemovalReason = "InUse" | "NoLongerRecord" | "ActivityChanged" | "ActivityUnknown" | "TrashFailed" | "RuntimeBlocked";
 export type SessionRemovalItem = {
   id: string;
-  status: "Moved" | "Skipped" | "Failed";
+  status: "Moved" | "Skipped" | "Failed" | "NotAttempted";
   reason: SessionRemovalReason | null;
   message: string | null;
 };
@@ -137,15 +159,17 @@ export const removalReasonLabels: Record<SessionRemovalReason, string> = {
   ActivityChanged: "最后活动时间已更新，不再早于门槛",
   ActivityUnknown: "无法确认最后活动时间，留在原处",
   TrashFailed: "移入废纸篓失败",
+  RuntimeBlocked: "运行状态未满足要求，未执行",
 };
 
 export function singleRemovalConfirmText(title: string) {
   return `将「${title}」移入废纸篓？`;
 }
 
-export function removalResultText(result: Pick<SessionRemovalResult, "moved" | "failed" | "skipped" | "operationError">) {
+export function removalResultText(result: Pick<SessionRemovalResult, "moved" | "failed" | "skipped" | "operationError"> & Partial<Pick<SessionRemovalResult, "items">>) {
   if (result.operationError) return "移除未能执行";
-  return `移入废纸篓 ${result.moved} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条`;
+  const notAttempted = result.items?.filter((item) => item.status === "NotAttempted").length ?? 0;
+  return `移入废纸篓 ${result.moved} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条${notAttempted ? `，未执行 ${notAttempted} 条` : ""}`;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -250,6 +274,7 @@ export function sessionSections(
   return {
     codex: sectionView(scan.codex, mode("codex"), filters.codex),
     claude: sectionView(scan.claude, mode("claude"), filters.claude),
+    grok: scan.grok ? sectionView(scan.grok, mode("grok"), filters.grok) : undefined,
   };
 }
 

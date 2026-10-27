@@ -127,11 +127,13 @@ export interface SessionRemovalItemSnapshot {
 export interface SessionTrashDetail {
   kind: "sessionTrash";
   scope: {
-    source: "codex" | "claude";
+    source: "codex" | "claude" | "grok";
     mode: SessionRemovalMode;
     days: number | null;
     confirmedCount: number | null;
     confirmedRecords: SessionRecordSnapshot[] | null;
+    directory?: string | null;
+    cutoffMs?: number | null;
   };
   executionTotal: number | null;
   results: SessionRemovalItemSnapshot[];
@@ -192,7 +194,7 @@ export interface SummarySubject {
   managerId?: ManagerId;
   target?: string;
   rootPath?: string;
-  source?: "codex" | "claude" | "opencode" | "vscode";
+  source?: "codex" | "claude" | "grok" | "opencode" | "vscode";
   mode?: SessionRemovalMode;
   targetCount: number;
 }
@@ -280,7 +282,7 @@ export function maintenanceRecordTitle(record: Pick<MaintenanceRecordSummary, "d
     return "VS Code 工作区存储移除";
   }
   if (record.domain === "sessionRecord") {
-    const source = record.subject.source === "opencode" ? "OpenCode" : record.subject.source === "claude" ? "Claude Code" : "Codex";
+    const source = record.subject.source === "grok" ? "Grok Build" : record.subject.source === "opencode" ? "OpenCode" : record.subject.source === "claude" ? "Claude Code" : "Codex";
     const mode = record.subject.mode ? ` · ${sessionModeLabels[record.subject.mode]}` : "";
     return `${source} 会话记录${record.operation === "deletePermanently" ? "永久删除" : "移除"}${mode}`;
   }

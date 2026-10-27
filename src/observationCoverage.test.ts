@@ -52,11 +52,11 @@ function item(coverage: ReturnType<typeof build>, id: ObservationItemId): Observ
 }
 
 describe("observation coverage model", () => {
-  it("contains the 25-item catalog in fixed groups", () => {
-    expect(OBSERVATION_ITEMS).toHaveLength(25);
-    expect(new Set(OBSERVATION_ITEMS.map((entry) => entry.id)).size).toBe(25);
+  it("contains the 26-item catalog in fixed groups", () => {
+    expect(OBSERVATION_ITEMS).toHaveLength(26);
+    expect(new Set(OBSERVATION_ITEMS.map((entry) => entry.id)).size).toBe(26);
     const coverage = build();
-    expect(coverage.items).toHaveLength(25);
+    expect(coverage.items).toHaveLength(26);
     expect(coverage.groups.map((group) => group.id)).toEqual([
       "managers", "environment", "project", "vscode", "sessions", "codex", "claude",
     ]);
@@ -182,11 +182,11 @@ describe("observation coverage model", () => {
 
   it("counts observed, partial, unobserved and attention without percentages", () => {
     const empty = build();
-    expect(empty.summary).toMatchObject({ observed: 0, notObserved: 25, attention: 25, disabled: 0 });
+    expect(empty.summary).toMatchObject({ observed: 0, notObserved: 26, attention: 26, disabled: 0 });
     const observed = build({ facts: { environment: fact({ success: success() }) } });
-    expect(observed.summary).toMatchObject({ observed: 1, partial: 0, notObserved: 24, attention: 24 });
+    expect(observed.summary).toMatchObject({ observed: 1, partial: 0, notObserved: 25, attention: 25 });
     const partial = build({ facts: { environment: fact({ success: success({ completeness: "partial" }) }) } });
-    expect(partial.summary).toMatchObject({ observed: 1, partial: 1, attention: 25 - 1 + 1 });
+    expect(partial.summary).toMatchObject({ observed: 1, partial: 1, attention: 26 - 1 + 1 });
   });
 
   it("exposes source actions and formats observation times", () => {

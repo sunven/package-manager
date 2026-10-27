@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } fr
 import { Button } from "../../components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { managerLabels } from "../constants";
-import { removalReasonLabels } from "../sessionRecords";
+import { formatSessionRecordId, removalReasonLabels } from "../sessionRecords";
 import { vscodeRemovalReasonLabels } from "../vscodeRemoval";
 import { useObservationTools } from "../hooks/useObservationTools";
 import { useMaintenanceHistory } from "../hooks/useMaintenanceHistory";
@@ -232,9 +232,12 @@ function VscodeScope({ detail, homeDirectory }: { detail: VscodeStorageDetail; h
 }
 
 function SessionScope({ detail }: { detail: SessionTrashDetail }) {
-  const source = detail.scope.source === "codex" ? "Codex" : "Claude Code";
+  const source = detail.scope.source === "grok" ? "Grok Build" : detail.scope.source === "codex" ? "Codex" : "Claude Code";
   return <div className="grid gap-2 text-sm">
     <Row label="来源" value={source} />
+    {detail.scope.directory ? <Row label="确认来源目录" value={detail.scope.directory} /> : null}
+    {detail.scope.cutoffMs != null ? <Row label="确认年龄门槛" value={time(detail.scope.cutoffMs)} /> : null}
+    {detail.scope.source === "grok" ? <p className="text-xs text-muted-foreground">移入废纸篓仅作用于本机会话目录，外部搜索索引与远端副本保留，独立关联记录不自动连带移除。</p> : null}
     <Row label="模式" value={detail.scope.mode === "olderThan" ? `按年龄 · ${detail.scope.days} 天` : detail.scope.mode === "selected" ? "明确选择" : "单条"} />
     {detail.scope.confirmedCount !== null ? <Row label="确认时条数" value={String(detail.scope.confirmedCount)} /> : null}
     {detail.executionTotal !== null ? <Row label="执行时目标总数" value={String(detail.executionTotal)} /> : null}
@@ -269,7 +272,7 @@ function Results({ detail }: { detail: MaintenanceDetail }) {
   if (detail.kind === "manager") return <ManagerResults detail={detail} />;
   if (detail.kind === "projectCleanup") return <ProjectResults detail={detail} />;
   if (detail.kind === "vscodeStorage") return <SimpleResults items={detail.results.map((item) => ({ id: item.id, status: item.status, reason: item.reason, message: item.message }))} reasonLabels={vscodeRemovalReasonLabels as Record<string, string>} />;
-  if (detail.kind === "sessionTrash") return <SimpleResults items={detail.results.map((item) => ({ id: item.id, status: item.status, reason: item.reason, message: item.message }))} reasonLabels={removalReasonLabels as Record<string, string>} />;
+  if (detail.kind === "sessionTrash") return <SimpleResults items={detail.results.map((item) => ({ id: item.id, label: formatSessionRecordId(detail.scope.source, item.id), status: item.status, reason: item.reason, message: item.message }))} reasonLabels={removalReasonLabels as Record<string, string>} />;
   return <OpenCodeResults detail={detail} />;
 }
 
@@ -296,10 +299,10 @@ function ProjectResults({ detail }: { detail: ProjectCleanupDetail }) {
   })}</div>;
 }
 
-function SimpleResults({ items, reasonLabels }: { items: { id: string; status: string; reason: string | null; message: string | null }[]; reasonLabels: Record<string, string> }) {
+function SimpleResults({ items, reasonLabels }: { items: { id: string; label?: string; status: string; reason: string | null; message: string | null }[]; reasonLabels: Record<string, string> }) {
   if (!items.length) return <p className="text-sm text-muted-foreground">没有逐目标结果。</p>;
   return <div className="grid gap-1 text-sm">{items.map((item) => <div className="rounded-lg border p-2 text-xs" key={item.id}>
-    <p className="break-all font-medium">{item.id} · {statusLabel(item.status)}</p>
+    <p className="break-all font-medium">{item.label ?? item.id} · {statusLabel(item.status)}</p>
     {item.reason ? <p className="text-muted-foreground">{reasonLabels[item.reason] ?? item.reason}</p> : null}
     {item.message ? <p className="break-words text-muted-foreground">{item.message}</p> : null}
   </div>)}</div>;

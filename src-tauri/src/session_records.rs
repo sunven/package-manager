@@ -15,6 +15,8 @@ const TITLE_LIMIT: usize = 140;
 pub(crate) struct SessionRecordScan {
     pub codex: SessionSourceScan,
     pub claude: SessionSourceScan,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grok: Option<SessionSourceScan>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -24,6 +26,8 @@ pub(crate) struct SessionSourceScan {
     pub status: SessionScanStatus,
     pub records: Vec<SessionRecord>,
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removal_blocked_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -43,6 +47,8 @@ pub(crate) struct SessionRecord {
     pub working_directory: Option<String>,
     pub bytes: u64,
     pub in_use: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grok: Option<crate::grok_sessions::RecordDetails>,
 }
 
 pub(crate) fn scan_default() -> Result<SessionRecordScan, String> {
@@ -52,6 +58,7 @@ pub(crate) fn scan_default() -> Result<SessionRecordScan, String> {
     Ok(SessionRecordScan {
         codex: scan_source(codex_sessions_dir(), RecordFormat::Codex),
         claude: scan_source(claude_projects_dir(), RecordFormat::Claude),
+        grok: Some(crate::grok_sessions::scan_default()),
     })
 }
 
@@ -62,6 +69,7 @@ pub(crate) fn scan_source_default(source: SessionSourceKind) -> Result<SessionSo
     Ok(match source {
         SessionSourceKind::Codex => scan_source(codex_sessions_dir(), RecordFormat::Codex),
         SessionSourceKind::Claude => scan_source(claude_projects_dir(), RecordFormat::Claude),
+        SessionSourceKind::Grok => crate::grok_sessions::scan_default(),
     })
 }
 
@@ -98,6 +106,7 @@ fn failed_source(directory: String, message: String) -> SessionSourceScan {
         status: SessionScanStatus::Failed,
         records: Vec::new(),
         message: Some(message),
+        removal_blocked_reason: None,
     }
 }
 
@@ -148,6 +157,7 @@ pub(crate) fn list_session_sources(
     SessionRecordScan {
         codex: source_or_failure(codex_dir, is_open, RecordFormat::Codex),
         claude: source_or_failure(claude_dir, is_open, RecordFormat::Claude),
+        grok: None,
     }
 }
 
@@ -156,6 +166,7 @@ pub(crate) fn list_session_sources(
 pub(crate) enum SessionSourceKind {
     Codex,
     Claude,
+    Grok,
 }
 
 #[derive(Debug, Default, Serialize, PartialEq, Eq)]
@@ -183,6 +194,7 @@ pub(crate) enum SessionRemovalStatus {
     Moved,
     Skipped,
     Failed,
+    NotAttempted,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -192,6 +204,7 @@ pub(crate) enum SessionRemovalReason {
     ActivityChanged,
     ActivityUnknown,
     TrashFailed,
+    RuntimeBlocked,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -209,14 +222,14 @@ pub(crate) enum SessionRemovalProgress {
 }
 
 impl SessionRemovalResult {
-    fn aborted(message: String) -> Self {
+    pub(crate) fn aborted(message: String) -> Self {
         Self {
             operation_error: Some(message),
             ..Self::default()
         }
     }
 
-    fn record(
+    pub(crate) fn record(
         &mut self,
         id: &str,
         status: SessionRemovalStatus,
@@ -227,6 +240,7 @@ impl SessionRemovalResult {
             SessionRemovalStatus::Moved => self.moved += 1,
             SessionRemovalStatus::Skipped => self.skipped += 1,
             SessionRemovalStatus::Failed => self.failed += 1,
+            SessionRemovalStatus::NotAttempted => {}
         }
         if self.message.is_none() && status == SessionRemovalStatus::Failed {
             self.message = message.clone();
@@ -247,6 +261,7 @@ pub(crate) fn remove_default(
     let directory = match source {
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
+        SessionSourceKind::Grok => return Err("Grok Build 移除需要已确认的来源范围".into()),
     };
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
@@ -275,6 +290,7 @@ pub(crate) fn remove_older_default_with_reporter(
     let directory = match source {
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
+        SessionSourceKind::Grok => return Err("Grok Build 移除需要已确认的来源范围".into()),
     };
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
@@ -289,6 +305,7 @@ pub(crate) fn remove_older_default_with_reporter(
     let format = match source {
         SessionSourceKind::Codex => RecordFormat::Codex,
         SessionSourceKind::Claude => RecordFormat::Claude,
+        SessionSourceKind::Grok => return Err("Grok Build 使用独立的目录记录策略".into()),
     };
     Ok(remove_older_than_with_reporter(
         &directory,
@@ -460,6 +477,7 @@ pub(crate) fn remove_selected_default_with_reporter(
     let directory = match source {
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
+        SessionSourceKind::Grok => return Err("Grok Build 移除需要已确认的来源范围".into()),
     };
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
@@ -653,6 +671,7 @@ fn list_records(
         status: SessionScanStatus::Ready,
         records: Vec::new(),
         message: None,
+        removal_blocked_reason: None,
     };
     let metadata = match fs::symlink_metadata(directory) {
         Ok(metadata) => metadata,
@@ -699,6 +718,7 @@ fn list_records(
             working_directory: parsed.working_directory,
             bytes: metadata.len(),
             in_use: is_open(&path),
+            grok: None,
         });
     }
     Ok(scan)
@@ -974,7 +994,7 @@ fn parse_lsof_paths(output: &str) -> HashSet<PathBuf> {
         .collect()
 }
 
-fn parse_rfc3339_millis(value: &str) -> Option<i64> {
+pub(crate) fn parse_rfc3339_millis(value: &str) -> Option<i64> {
     let bytes = value.as_bytes();
     if bytes.len() < 20 {
         return None;

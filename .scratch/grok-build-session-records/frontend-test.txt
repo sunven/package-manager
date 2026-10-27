@@ -1,0 +1,201 @@
+
+ RUN  v3.2.7 /Users/sunven/github/package-manager
+
+ ✓ src/hooks/useCodexExtensions.test.ts (18 tests) 2289ms
+ ❯ src/components/ClaudeSkillsPage.test.tsx (7 tests | 1 failed) 12030ms
+   × Claude Skills > connects the App tabs, owning-plugin navigation and mutation invalidation 5419ms
+     → Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   ✓ Claude Skills > shows definition sources, preserves disabled plugins, filters and reads inert details  1274ms
+   ✓ Claude Skills > previews actual setting key, restores focus on cancel, and disables the dialog while executing  1494ms
+   ✓ Claude Skills > retains completed outcome and marks stale rows after failed refresh without replay  911ms
+   ✓ Claude Skills > keeps definitions readable when CLI is unavailable  328ms
+   ✓ Claude Skills > separates unknown user settings from an absent user override 149ms
+   ✓ Claude Skills > captures GitHub tag or local-copy source without writing before confirmation  2452ms
+ ✓ src/components/SessionRecordsPage.interaction.test.tsx (20 tests) 16346ms
+   ✓ session selection boundaries > collapses OpenCode months and reviews age targets from the entire source despite search  1796ms
+   ✓ session selection boundaries > keeps OpenCode metadata visible and disables age actions when activity cannot be read  383ms
+   ✓ session selection boundaries > shows a prepare error without opening a dialog  455ms
+   ✓ session selection boundaries > filters OpenCode records and opens the selected session  351ms
+   ✓ session selection boundaries > requires confirmation before permanently deleting an OpenCode session and its children  817ms
+   ✓ session selection boundaries > previews cascade descendants and clears OpenCode selection when filters change  836ms
+   ✓ session selection boundaries > deduplicates selected parent-child sessions through prepared plans and reports the batch result  327ms
+   ✓ session selection boundaries > does not refresh after a batch preflight cancels all deletions  563ms
+   ✓ session selection boundaries > preserves failed and unattempted selections through a failed refresh and retries only reading  916ms
+   ✓ session selection boundaries > keeps an executing operation and its result when the page is rebuilt  1386ms
+   ✓ session selection boundaries > names a single removal target and explains recovery before confirmation  518ms
+   ✓ session selection boundaries > previews and confirms only the selected codex records  1420ms
+   ✓ session selection boundaries > previews and confirms only the selected claude records  1661ms
+   ✓ session selection boundaries > keeps the reviewed summaries and submitted IDs stable when the scan changes  1153ms
+   ✓ session selection boundaries > clears hidden selections, selects visible eligible records and explains skipped results  945ms
+   ✓ session selection boundaries > keeps age removal scoped to the whole source despite a search  542ms
+   ✓ session selection boundaries > explains zero eligible age targets and associates in-use status with selection  454ms
+   ✓ session selection boundaries > explains OpenCode age eligibility and disables thresholds with no targets  312ms
+   ✓ session selection boundaries > shows batch removal progress inside the confirmation dialog  1064ms
+   ✓ session selection boundaries > reports a rejected operation without inventing a failed record  434ms
+ ❯ src/components/CodexMarketplacePlugins.test.tsx (10 tests | 2 failed) 41607ms
+   ✓ installed plugins organized by marketplace > opens the merged tab, reads both inventories once, and scopes same-named plugins to their markets  3800ms
+   ✓ installed plugins organized by marketplace > opens the owning plugin from a skill and refreshes skills after plugin maintenance  4828ms
+   ✓ installed plugins organized by marketplace > keeps empty markets and unmatched plugin groups without inventing source actions  4160ms
+   ✓ installed plugins organized by marketplace > keeps plugin management available when the market inventory fails  2219ms
+   ✓ installed plugins organized by marketplace > keeps market management available when plugins fail and does not report zero installed plugins  1931ms
+   ✓ installed plugins organized by marketplace > regroups after an executed Succeeded removal without leaving the page  3287ms
+   ✓ installed plugins organized by marketplace > regroups after an executed Partial removal without leaving the page  3954ms
+   ✓ installed plugins organized by marketplace > regroups after an executed Failed removal without leaving the page  3962ms
+   × installed plugins organized by marketplace > keeps failed rereads marked stale and does not grant source errors control over plugin writes 7570ms
+     → Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × installed plugins organized by marketplace > uses the merged Hooks destination, caches tab visits, and invalidates Hooks after plugin changes 5895ms
+     → Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ✓ src/components/ClaudeCodePage.test.tsx (20 tests) 4680ms
+   ✓ Claude market and plugin interface > opens the owning plugin and explains a missing plugin destination  1072ms
+   ✓ Claude market and plugin interface > previews cascading market removal and cancels without executing  496ms
+   ✓ Claude market and plugin interface > filters plugins, keeps remote details incomplete and confirms the selected identity  587ms
+   ✓ Claude market and plugin interface > retains an add form on native failure and submits ref and sparse through confirmation  367ms
+   ✓ Claude Hook interface > validates MCP JSON before preparing and preserves unknown fields on edit  393ms
+ ✓ src/components/CodexHookEditor.test.tsx (8 tests) 7680ms
+   ✓ Codex Hook definition editing > shows user definitions and allows creation while the persistent feature is off  2351ms
+   ✓ Codex Hook definition editing > requires a source choice when both formats exist and rejects invalid MCP input locally  704ms
+   ✓ Codex Hook definition editing > edits an untrusted MCP definition with its full input without granting trust  702ms
+   ✓ Codex Hook definition editing > previews affected disabled siblings and cancels deletion without a commit  591ms
+   ✓ Codex Hook definition editing > keeps the form after partial saving and requires explicit reconciliation with a new snapshot  989ms
+   ✓ Codex Hook definition editing > revokes definition write eligibility after saving succeeds but refreshing fails  601ms
+   ✓ Codex Hook definition editing > uses the refreshed enablement after explicitly reconciling a failed edit  1546ms
+ ✓ src/hooks/useSkillInventory.test.ts (12 tests) 768ms
+ ✓ src/components/CodexMarketplacesPage.test.tsx (13 tests) 3757ms
+   ✓ Codex marketplace management > shows all sources, limits writes by ownership, and keeps local sources free of Git refresh  1040ms
+   ✓ Codex marketplace management > confirms refresh scope including disabled plugins and restores focus on cancel  649ms
+   ✓ Codex marketplace management > adds only on explicit submit and treats duplicate sources as already existing  357ms
+   ✓ Codex marketplace management > submits Git ref and multiple sparse paths as structured optional arguments  322ms
+   ✓ Codex marketplace management > uses a selected local directory and cancels without adding  387ms
+ ✓ src/components/CodexPluginList.test.tsx (13 tests) 3256ms
+   ✓ Codex plugin management > searches and filters catalog entries without treating unavailable details as empty components  1241ms
+   ✓ Codex plugin management > confirms Install and rereads instead of assuming the new state  340ms
+   ✓ Codex plugin management > refreshes conflicts and requires a new user action instead of retrying the write  373ms
+ ✓ src/hooks/useSessionOperation.test.ts (11 tests) 648ms
+ ✓ src/components/CodexSkillsPage.test.tsx (5 tests) 5549ms
+   ✓ Codex skills workflow > reads once, filters sources/status, renders inert details, and scopes controls by ownership  1876ms
+   ✓ Codex skills workflow > cancels without writing and disables the dialog while executing  1899ms
+   ✓ Codex skills workflow > retains saved outcome and stale rows when post-operation refresh fails  579ms
+   ✓ Codex skills workflow > captures GitHub version selection and independently copies a chosen local source  1065ms
+ ✓ src/components/ProjectCleanupPage.interaction.test.tsx (5 tests) 4715ms
+   ✓ lets a user edit a multi-digit depth before saving it for the next scan  1627ms
+   ✓ filters candidate types by keyboard while retaining the selected candidates  2133ms
+   ✓ shows the current-depth scan summary and opens all retained records  669ms
+ ✓ src/hooks/useNativeInventory.test.ts (8 tests) 574ms
+ ✓ src/components/GrokSessionRecords.test.tsx (5 tests) 3250ms
+   ✓ Grok Build session records > keeps browsing and continuing available while source-level runtime protection blocks removal  1036ms
+   ✓ Grok Build session records > explains directory, index and relation boundaries and cancels without removing anything  512ms
+   ✓ Grok Build session records > freezes the source and age threshold for all records despite a search hiding older records  413ms
+   ✓ Grok Build session records > retains selection and reports unattempted records after a partial batch  995ms
+ ✓ src/components/CodexHooksPage.test.tsx (10 tests) 3924ms
+   ✓ Codex hooks management > shows full details and native trust states without enabling untrusted hooks  1586ms
+   ✓ Codex hooks management > confirms the exact hook, cancels without writing and restores focus  946ms
+   ✓ Codex hooks management > keeps a saved result separate from a failed reload and revokes old write eligibility  490ms
+ ✓ src/components/VscodeStoragePage.interaction.test.tsx (5 tests) 3030ms
+   ✓ VS Code workspace storage removal > selects only removable rows and prunes hidden selections when searching  1157ms
+   ✓ VS Code workspace storage removal > confirms, streams progress, and reports the removal result  572ms
+   ✓ VS Code workspace storage removal > cancels without removing and restores focus to the trigger  459ms
+   ✓ VS Code workspace storage removal > shows skipped reasons and reports a refresh failure separately  547ms
+ ✓ src/components/PackageTable.interaction.test.tsx (3 tests) 2468ms
+   ✓ package lookup > searches hidden paths and preserves the original package identity for actions  1164ms
+   ✓ package lookup > keeps native table semantics and independent keyboard actions for Npm  654ms
+   ✓ package lookup > keeps native table semantics and independent keyboard actions for Pip  647ms
+ ✓ src/components/ObservationTools.test.tsx (4 tests) 1237ms
+   ✓ global search interaction > opens with the shortcut, navigates with arrows and chooses the correct manager  545ms
+   ✓ global search interaction > loads results in groups of fifty  377ms
+ ✓ src/hooks/useObservationTools.test.tsx (3 tests) 404ms
+ ✓ src/hooks/useVscodeStorage.test.tsx (3 tests) 262ms
+ ✓ src/components/HistoryPage.test.tsx (5 tests) 722ms
+   ✓ History page > lists maintenance records and loads their details  610ms
+ ✓ src/hooks/useCommandLocationAssociations.test.tsx (5 tests) 326ms
+ ✓ src/components/ObservationTools.association.test.tsx (4 tests) 1743ms
+   ✓ renders visible groups, interpreter evidence, folded broader locations and scope notes  1648ms
+ ✓ src/components/ObservationCoveragePage.test.tsx (1 test) 1780ms
+   ✓ observation coverage page > renders groups, disabled managers, persisted-only rows and source actions  1778ms
+ ✓ src/components/ProjectScanHistoryDialog.test.tsx (5 tests) 940ms
+   ✓ renders read-only scan records with baseline changes and relative paths  667ms
+ ✓ src/components/MaintenanceConfirmationBanner.test.tsx (5 tests) 441ms
+ ✓ src/hooks/useClaudeWorkflow.test.tsx (2 tests) 166ms
+ ✓ src/hooks/useCodexWorkflow.test.tsx (1 test) 133ms
+ ✓ src/components/ManagerTabs.interaction.test.tsx (2 tests) 410ms
+   ✓ associates each manager tab with a panel and switches visible content by keyboard  401ms
+ ✓ src/components/OverviewDashboard.interaction.test.tsx (2 tests) 262ms
+ ✓ src/hooks/usePackageManagers.test.tsx (9 tests) 55ms
+ ✓ src/components/ManagerDiagnostics.test.tsx (2 tests) 195ms
+ ✓ src/hooks/useSessionRecords.test.ts (9 tests) 42ms
+ ✓ src/hooks/useOpenCodeSessions.test.ts (10 tests) 122ms
+ ✓ src/observationLedger.test.ts (5 tests) 8ms
+ ✓ src/hooks/useSessionSelection.test.ts (7 tests) 31ms
+ ✓ src/managerMaintenanceWorkflow.test.ts (22 tests) 423ms
+ ✓ src/components/SessionRecordsPage.test.tsx (4 tests) 106ms
+ ✓ src/components/VscodeStoragePage.test.tsx (7 tests) 167ms
+ ✓ src/components/PathPanel.test.tsx (13 tests) 49ms
+ ✓ src/components/PackageTable.test.tsx (11 tests) 59ms
+ ✓ src/observationCoverage.test.ts (11 tests) 63ms
+ ✓ src/sessionRecords.test.ts (10 tests) 13ms
+ ✓ src/components/SettingsPage.test.tsx (1 test) 23ms
+ ✓ src/observation.test.ts (10 tests) 14ms
+ ✓ src/components/DevelopmentHealthPage.test.tsx (4 tests) 19ms
+ ✓ src/developmentHealth.test.ts (2 tests) 15ms
+ ✓ src/projectScanHistory.test.ts (4 tests) 9ms
+ ✓ src/projectCleanupWorkflow.test.ts (20 tests) 15ms
+ ✓ src/utils/filters.test.ts (1 test) 7ms
+ ✓ src/commandLocationAssociation.test.ts (7 tests) 4ms
+ ✓ src/cleanupCopy.test.ts (26 tests) 5ms
+ ✓ src/observationFacts.test.ts (5 tests) 4ms
+ ✓ src/managerSettings.test.ts (5 tests) 3ms
+ ✓ src/vscodeRemoval.test.ts (5 tests) 6ms
+ ✓ src/state.test.ts (8 tests) 8ms
+ ✓ src/utils/format.test.ts (9 tests) 4ms
+ ✓ src/projectCleanup.test.ts (3 tests) 3ms
+ ✓ src/managerScanQueue.test.ts (2 tests) 3ms
+ ✓ src/capabilities.test.ts (1 test) 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/ClaudeSkillsPage.test.tsx > Claude Skills > connects the App tabs, owning-plugin navigation and mutation invalidation
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/components/ClaudeSkillsPage.test.tsx:57:3
+     55|
+     56| describe("Claude Skills", () => {
+     57|   it("connects the App tabs, owning-plugin navigation and mutation inv…
+       |   ^
+     58|     window.localStorage.clear();
+     59|     const user = userEvent.setup();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/components/CodexMarketplacePlugins.test.tsx > installed plugins organized by marketplace > keeps failed rereads marked stale and does not grant source errors control over plugin writes
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/components/CodexMarketplacePlugins.test.tsx:159:3
+    157|   });
+    158|
+    159|   it("keeps failed rereads marked stale and does not grant source erro…
+       |   ^
+    160|     await openPage();
+    161|     expand("team-tools");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/components/CodexMarketplacePlugins.test.tsx > installed plugins organized by marketplace > uses the merged Hooks destination, caches tab visits, and invalidates Hooks after plugin changes
+Error: Test timed out in 5000ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ src/components/CodexMarketplacePlugins.test.tsx:177:3
+    175|   });
+    176|
+    177|   it("uses the merged Hooks destination, caches tab visits, and invali…
+       |   ^
+    178|     const user = userEvent.setup();
+    179|     await openPage();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed | 58 passed (60)
+      Tests  3 failed | 445 passed (448)
+   Start at  14:17:58
+   Duration  200.76s (transform 9.70s, setup 0ms, collect 181.49s, tests 126.87s, environment 53.92s, prepare 6.81s)

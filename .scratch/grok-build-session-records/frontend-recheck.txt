@@ -1,0 +1,25 @@
+
+ RUN  v3.2.7 /Users/sunven/github/package-manager
+
+ ✓ src/components/CodexMarketplacePlugins.test.tsx (10 tests) 6470ms
+   ✓ installed plugins organized by marketplace > opens the merged tab, reads both inventories once, and scopes same-named plugins to their markets  1213ms
+   ✓ installed plugins organized by marketplace > opens the owning plugin from a skill and refreshes skills after plugin maintenance  514ms
+   ✓ installed plugins organized by marketplace > keeps empty markets and unmatched plugin groups without inventing source actions  584ms
+   ✓ installed plugins organized by marketplace > keeps plugin management available when the market inventory fails  750ms
+   ✓ installed plugins organized by marketplace > keeps market management available when plugins fail and does not report zero installed plugins  430ms
+   ✓ installed plugins organized by marketplace > regroups after an executed Succeeded removal without leaving the page  928ms
+   ✓ installed plugins organized by marketplace > regroups after an executed Partial removal without leaving the page  429ms
+   ✓ installed plugins organized by marketplace > regroups after an executed Failed removal without leaving the page  385ms
+   ✓ installed plugins organized by marketplace > keeps failed rereads marked stale and does not grant source errors control over plugin writes  737ms
+   ✓ installed plugins organized by marketplace > uses the merged Hooks destination, caches tab visits, and invalidates Hooks after plugin changes  497ms
+ ✓ src/components/ClaudeSkillsPage.test.tsx (7 tests) 4154ms
+   ✓ Claude Skills > connects the App tabs, owning-plugin navigation and mutation invalidation  2096ms
+   ✓ Claude Skills > shows definition sources, preserves disabled plugins, filters and reads inert details  340ms
+   ✓ Claude Skills > previews actual setting key, restores focus on cancel, and disables the dialog while executing  335ms
+   ✓ Claude Skills > retains completed outcome and marks stale rows after failed refresh without replay  313ms
+   ✓ Claude Skills > captures GitHub tag or local-copy source without writing before confirmation  797ms
+
+ Test Files  2 passed (2)
+      Tests  17 passed (17)
+   Start at  14:22:47
+   Duration  52.78s (transform 2.00s, setup 0ms, collect 27.88s, tests 10.62s, environment 10.56s, prepare 757ms)

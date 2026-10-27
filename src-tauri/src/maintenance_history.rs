@@ -279,6 +279,10 @@ pub(crate) struct SessionTrashScope {
     pub days: Option<u64>,
     pub confirmed_count: Option<usize>,
     pub confirmed_records: Option<Vec<SessionRecordSnapshot>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cutoff_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -811,8 +815,15 @@ impl MaintenanceHistoryState {
             .or_else(|| result.operation_error.clone())
             .unwrap_or_else(|| {
                 format!(
-                    "已移入 {} 项，跳过 {} 项，失败 {} 项。",
-                    result.moved, result.skipped, result.failed
+                    "已移入 {} 项，跳过 {} 项，失败 {} 项，未执行 {} 项。",
+                    result.moved,
+                    result.skipped,
+                    result.failed,
+                    result
+                        .items
+                        .iter()
+                        .filter(|item| formats_item_status(&item.status, "NotAttempted"))
+                        .count()
                 )
             });
         self.mutate(|records| {
@@ -1237,7 +1248,7 @@ fn summary(record: &MaintenanceRecord) -> MaintenanceRecordSummary {
                     succeeded,
                     failed,
                     skipped,
-                    not_attempted: total.saturating_sub(detail.results.len()),
+                    not_attempted: total.saturating_sub(succeeded + failed + skipped),
                 },
             )
         }
@@ -1356,7 +1367,11 @@ fn session_execution(result: &SessionRemovalResult) -> ExecutionSummary {
         result.moved as usize,
         result.failed as usize,
         result.skipped as usize,
-        0,
+        result
+            .items
+            .iter()
+            .filter(|item| formats_item_status(&item.status, "NotAttempted"))
+            .count(),
     )
 }
 
@@ -1428,6 +1443,7 @@ fn source_label(source: SessionSourceKind) -> &'static str {
     match source {
         SessionSourceKind::Codex => "codex",
         SessionSourceKind::Claude => "claude",
+        SessionSourceKind::Grok => "grok",
     }
 }
 
@@ -1666,6 +1682,80 @@ mod tests {
     }
 
     #[test]
+    fn grok_history_preserves_confirmed_scope_and_counts_unattempted_items_after_read_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = MaintenanceHistoryState::new(directory.path().into());
+        let detail = MaintenanceDetail::SessionTrash(SessionTrashDetail {
+            scope: SessionTrashScope {
+                source: SessionSourceKind::Grok,
+                mode: SessionRemovalMode::OlderThan,
+                days: Some(7),
+                confirmed_count: Some(2),
+                confirmed_records: None,
+                directory: Some("/example/.grok/sessions".into()),
+                cutoff_ms: Some(1000),
+            },
+            execution_total: None,
+            results: Vec::new(),
+        });
+        let id = store
+            .begin(
+                MaintenanceDomain::SessionRecord,
+                MaintenanceOperation::RemoveToTrash,
+                detail,
+                None,
+            )
+            .unwrap();
+        let mut result = SessionRemovalResult::default();
+        result.record(
+            "project/first",
+            crate::session_records::SessionRemovalStatus::Moved,
+            None,
+            None,
+        );
+        result.record(
+            "project/second",
+            crate::session_records::SessionRemovalStatus::NotAttempted,
+            Some(crate::session_records::SessionRemovalReason::RuntimeBlocked),
+            Some("Grok 已启动".into()),
+        );
+        for item in &result.items {
+            store.append_session_item(&id, item).unwrap();
+        }
+        store.finish_session_trash(&id, 2, &result).unwrap();
+        store
+            .record_followup(&id, "failed", Some("合成读取错误".into()))
+            .unwrap();
+        let saved = store.get(&id).unwrap();
+        let summary = summary(&saved);
+        assert_eq!(summary.execution, ExecutionSummary::Partial);
+        assert_eq!(summary.subject.source.as_deref(), Some("grok"));
+        assert_eq!(
+            (
+                summary.counts.succeeded,
+                summary.counts.failed,
+                summary.counts.not_attempted
+            ),
+            (1, 0, 1)
+        );
+        assert_eq!(
+            saved.follow_up_read.as_ref().unwrap().status,
+            FollowUpReadStatus::Failed
+        );
+        let MaintenanceDetail::SessionTrash(saved) = saved.detail else {
+            panic!("wrong detail");
+        };
+        assert_eq!(
+            saved.scope.directory.as_deref(),
+            Some("/example/.grok/sessions")
+        );
+        assert_eq!(saved.scope.cutoff_ms, Some(1000));
+        let legacy = serde_json::json!({"source":"codex","mode":"single","days":null,"confirmedCount":1,"confirmedRecords":null});
+        let scope: SessionTrashScope = serde_json::from_value(legacy).unwrap();
+        assert!(scope.directory.is_none() && scope.cutoff_ms.is_none());
+    }
+
+    #[test]
     fn follow_up_read_is_written_once_for_closed_session_records() {
         let directory = tempfile::tempdir().unwrap();
         let store = MaintenanceHistoryState::new(directory.path().into());
@@ -1676,6 +1766,8 @@ mod tests {
                 days: None,
                 confirmed_count: Some(1),
                 confirmed_records: None,
+                directory: None,
+                cutoff_ms: None,
             },
             execution_total: None,
             results: Vec::new(),

@@ -195,7 +195,7 @@ export function vscodeObservationFacts(
 }
 
 export function sessionObservationFacts(
-  source: "codex" | "claude",
+  source: "codex" | "claude" | "grok",
   scan: SessionSourceScan | null,
   scanning: boolean,
   error: string | null,
@@ -207,7 +207,7 @@ export function sessionObservationFacts(
       : null;
   let success: ObservationFacts["success"] = null;
   if (scan && scan.status !== "Failed") {
-    const label = source === "codex" ? "Codex 会话目录" : "Claude 会话目录";
+    const label = source === "grok" ? "Grok Build 会话目录" : source === "codex" ? "Codex 会话目录" : "Claude 会话目录";
     success = {
       at: null,
       scope: `session:${source}:${scan.directory}`,
@@ -224,7 +224,7 @@ export function sessionObservationFacts(
     currentScope: scan?.directory
       ? {
           key: `session:${source}:${scan.directory}`,
-          label: source === "codex" ? "Codex 会话目录" : "Claude 会话目录",
+          label: source === "grok" ? "Grok Build 会话目录" : source === "codex" ? "Codex 会话目录" : "Claude 会话目录",
         }
       : null,
   };
