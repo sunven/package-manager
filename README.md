@@ -1,4 +1,4 @@
-# Package Manager Control Center
+# DevScope
 
 一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv 和 FVM 的包、缓存/仓库占用与维护信号，清理 Rust / Maven / Node 项目派生数据，以及查看 VS Code 占用和 Codex、Claude Code、OpenCode 会话记录。
 
@@ -238,8 +238,8 @@ pnpm tauri build
 打包产物：
 
 ```text
-src-tauri/target/release/bundle/macos/Package Manager Control Center.app
-src-tauri/target/release/bundle/dmg/Package Manager Control Center_0.1.0_aarch64.dmg
+src-tauri/target/release/bundle/macos/DevScope.app
+src-tauri/target/release/bundle/dmg/DevScope_0.1.0_aarch64.dmg
 ```
 
 ## 扫描方式

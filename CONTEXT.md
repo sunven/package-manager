@@ -1,4 +1,4 @@
-# Package Manager Control Center
+# DevScope
 
 一个本机开发环境观察与维护工具。它把多个互不相干的包管理器（npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv）、本地项目派生数据、编辑器工作区数据和代理留下的会话记录收敛成一套统一词汇，并在此之上提供受约束的维护操作。
 
