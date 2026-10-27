@@ -1,0 +1,1471 @@
+{
+ "url": "http://localhost:14210/",
+ "at": "2026-10-27T08:15:33.688Z",
+ "allow": [],
+ "viewports": [
+  {
+   "width": 1440,
+   "height": 900,
+   "load": "load",
+   "screens": 1,
+   "filled": [
+    0.69
+   ],
+   "motion": {
+    "elements": 6,
+    "css": 0,
+    "transitions": 6,
+    "scripted": 0,
+    "videos": 0,
+    "playingVideos": 0
+   },
+   "metrics": {
+    "viewport": {
+     "w": 1440,
+     "h": 900
+    },
+    "page": {
+     "height": 900,
+     "screens": 1,
+     "words": 105,
+     "img": 0,
+     "video": 0,
+     "canvas": 0,
+     "svg": 14,
+     "sections": 4,
+     "horizontalOverflow": 0,
+     "overflowCulprits": [],
+     "uiFragments": 0,
+     "uiAbuse": false,
+     "realPictures": 0,
+     "videoCount": 0,
+     "uiPictures": 0,
+     "pictureSamples": [],
+     "blendText": 0,
+     "sideScrollers": 0,
+     "brokenImages": [],
+     "emoji": [],
+     "videosNoPoster": 0
+    },
+    "hero": {
+     "text": "开发环境总览",
+     "words": 1,
+     "chars": 6,
+     "lines": 1,
+     "size": 24,
+     "vw": 1.7,
+     "font": "Outfit Variable",
+     "weight": 600,
+     "tracking": -0.02,
+     "leading": 1.25,
+     "top": 173,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "h1": {
+     "text": "开发环境总览",
+     "words": 1,
+     "lines": 1,
+     "size": 24,
+     "font": "Outfit Variable"
+    },
+    "headings": [],
+    "headingSummary": {
+     "count": 0,
+     "maxLines": 0,
+     "over2Lines": 0,
+     "statements": 0,
+     "centered": 0,
+     "medianWords": null,
+     "mixedFontHeadings": 0
+    },
+    "type": {
+     "families": [
+      {
+       "family": "Outfit Variable",
+       "share": 1,
+       "mono": false
+      }
+     ],
+     "familyCount": 1,
+     "sizes": [
+      9,
+      12,
+      13,
+      14,
+      15,
+      20,
+      24
+     ],
+     "sizeCount": 7,
+     "notLoaded": [],
+     "body": {
+      "font": "Outfit Variable",
+      "size": 12.5,
+      "leading": 1.43,
+      "weight": 400,
+      "tracking": 0,
+      "contrast": 5.6
+     },
+     "measureChars": 92,
+     "max": {
+      "size": 24,
+      "vw": 1.7,
+      "font": "Outfit Variable",
+      "text": "开发环境总览"
+     },
+     "monoShare": 0,
+     "monoProseShare": 0,
+     "monoFamilies": [],
+     "monoSamples": [],
+     "microLabels": 0,
+     "microLabelShare": 0,
+     "microSamples": [],
+     "upperShare": 0.03,
+     "centerShare": 0.25,
+     "smallText": 2
+    },
+    "eyebrows": [],
+    "numbered": [],
+    "color": {
+     "bodyBg": "#f5f5f6",
+     "bodyBgHsl": {
+      "h": 240,
+      "s": 0.05,
+      "l": 0.96
+     },
+     "dark": false,
+     "sectionBgs": [
+      {
+       "color": "#f5f5f6",
+       "top": 0,
+       "hsl": {
+        "h": 240,
+        "s": 0.05,
+        "l": 0.96
+       }
+      }
+     ],
+     "textColors": [
+      {
+       "color": "#5d6067",
+       "share": 0.79
+      },
+      {
+       "color": "#17181b",
+       "share": 0.18
+      },
+      {
+       "color": "#ffffff",
+       "share": 0.03
+      }
+     ],
+     "button": {
+      "bg": "#191a1d",
+      "hsl": {
+       "h": 225,
+       "s": 0.07,
+       "l": 0.11
+      },
+      "fg": "#ffffff"
+     },
+     "lowContrast": []
+    },
+    "buttons": {
+     "count": 9,
+     "inHero": 9,
+     "radius": 0,
+     "height": 38,
+     "withShadow": 0,
+     "withGradient": 0,
+     "mono": 0,
+     "upper": 0,
+     "heroLabels": [
+      "跳到主内容",
+      "搜索 ⌘K",
+      "总览",
+      "扫描已启用管理器",
+      "查看详情"
+     ]
+    },
+    "surfaces": {
+     "shadowStatic": 0,
+     "shadowOverlay": 0,
+     "shadowSamples": [],
+     "gradients": 0,
+     "scrims": 0,
+     "gradientSamples": [],
+     "gradientText": 0,
+     "hairlines": 13,
+     "hairlineSamples": [
+      "header.studio-topbar 1440px",
+      "aside.studio-sidebar 224px",
+      "div.overview-section-head 665px",
+      "div.overview-section-head 492px",
+      "div.overview-section-head 570px"
+     ],
+     "outlinedBoxes": 5,
+     "dashed": 2,
+     "blurred": 0,
+     "roundedBoxes": 5,
+     "boxRadius": 8,
+     "squareMedia": 0,
+     "roundedMedia": 0,
+     "mediaRadius": 0,
+     "textShadow": 0,
+     "cardRows": []
+    },
+    "heroMedia": [],
+    "nav": {
+     "links": 0,
+     "fixed": false,
+     "height": 52,
+     "floatingPill": false,
+     "blur": false
+    },
+    "fontsLoaded": [
+     "outfit variable"
+    ]
+   },
+   "layout": {
+    "viewport": {
+     "w": 1440,
+     "h": 900
+    },
+    "pageH": 900,
+    "margins": {
+     "left": 12,
+     "right": 41
+    },
+    "sections": [
+     {
+      "sel": "div.group/card.flex",
+      "tag": "div",
+      "top": 493,
+      "height": 129,
+      "words": 5,
+      "media": 0,
+      "middle": 266,
+      "heading": {
+       "text": "优先建议",
+       "size": 15,
+       "tag": "h2"
+      },
+      "left": 269,
+      "right": 45,
+      "textLeft": 269,
+      "textRight": 45,
+      "fullBleed": false,
+      "footer": false,
+      "hero": false,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.overview-lower",
+      "tag": "div",
+      "top": 646,
+      "height": 281,
+      "words": 26,
+      "media": 0,
+      "middle": 152,
+      "heading": {
+       "text": "观察覆盖度",
+       "size": 15,
+       "tag": "h2"
+      },
+      "left": 269,
+      "right": 45,
+      "textLeft": 269,
+      "textRight": 45,
+      "fullBleed": false,
+      "footer": true,
+      "hero": false,
+      "continues": false,
+      "pinned": false
+     }
+    ],
+    "gaps": [],
+    "h1s": [
+     {
+      "text": "开发环境总览",
+      "size": 24,
+      "top": 173,
+      "firstScreen": true
+     }
+    ],
+    "edgeText": [],
+    "edges": [
+     {
+      "x": 269,
+      "n": 2
+     },
+     {
+      "x": 252,
+      "n": 1
+     },
+     {
+      "x": 857,
+      "n": 1
+     },
+     {
+      "x": 935,
+      "n": 1
+     }
+    ],
+    "leftBlocks": 5,
+    "bodySize": 13,
+    "stage": false,
+    "explains": false,
+    "slivers": [],
+    "voidShare": 0.07,
+    "voidBox": {
+     "x": 0,
+     "y": 600,
+     "w": 1440,
+     "h": 60
+    }
+   },
+   "app": {
+    "viewport": {
+     "w": 1440,
+     "h": 900
+    },
+    "dark": false,
+    "ground": "#f5f5f6",
+    "sidebar": {
+     "w": 224,
+     "tag": "aside",
+     "links": 10,
+     "share": 0.16
+    },
+    "topbar": {
+     "h": 52
+    },
+    "canvas": {
+     "left": 28,
+     "right": 27
+    },
+    "hero": {
+     "text": "开发环境总览",
+     "words": 1,
+     "chars": 6,
+     "lines": 1,
+     "size": 24,
+     "vw": 1.7,
+     "font": "Outfit Variable",
+     "weight": 600,
+     "tracking": -0.02,
+     "leading": 1.25,
+     "top": 173,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "charts": 0,
+    "layout": {
+     "panels": 5,
+     "firstScreen": 5,
+     "ragged": [],
+     "voids": []
+    },
+    "tiles": 0,
+    "panels": {
+     "count": 8,
+     "radii": [
+      [
+       8,
+       5
+      ],
+      [
+       0,
+       3
+      ]
+     ],
+     "heavyBorders": 0,
+     "borderSamples": [],
+     "heavyShadows": 0,
+     "softShadows": 0,
+     "shadowSamples": [],
+     "glass": 0
+    },
+    "chips": {
+     "count": 0,
+     "hues": 0,
+     "samples": []
+    },
+    "numbers": {
+     "cells": 0,
+     "leftAligned": 0,
+     "figures": 2,
+     "tabularShare": 1,
+     "kpiMax": 24
+    },
+    "rows": null,
+    "chartHues": 0,
+    "placeholders": [],
+    "type": {
+     "under13": 0.29,
+     "tiny": 0,
+     "tinySamples": [],
+     "sizes": [
+      9,
+      12,
+      13,
+      14,
+      15,
+      20,
+      24
+     ]
+    },
+    "title": {
+     "text": "开发环境总览",
+     "size": 24,
+     "top": 173
+    },
+    "colourShare": 0
+   },
+   "consoleErrors": []
+  },
+  {
+   "width": 768,
+   "height": 1024,
+   "load": "load",
+   "screens": 2,
+   "filled": [
+    0.59,
+    0.79
+   ],
+   "motion": {
+    "elements": 6,
+    "css": 0,
+    "transitions": 6,
+    "scripted": 0,
+    "videos": 0,
+    "playingVideos": 0
+   },
+   "metrics": {
+    "viewport": {
+     "w": 768,
+     "h": 1024
+    },
+    "page": {
+     "height": 1453,
+     "screens": 1.4,
+     "words": 90,
+     "img": 0,
+     "video": 0,
+     "canvas": 0,
+     "svg": 14,
+     "sections": 4,
+     "horizontalOverflow": 0,
+     "overflowCulprits": [],
+     "uiFragments": 0,
+     "uiAbuse": false,
+     "realPictures": 0,
+     "videoCount": 0,
+     "uiPictures": 0,
+     "pictureSamples": [],
+     "blendText": 0,
+     "sideScrollers": 0,
+     "brokenImages": [],
+     "emoji": [],
+     "videosNoPoster": 0
+    },
+    "hero": {
+     "text": "开发环境总览",
+     "words": 1,
+     "chars": 6,
+     "lines": 1,
+     "size": 24,
+     "vw": 3.1,
+     "font": "Outfit Variable",
+     "weight": 600,
+     "tracking": -0.02,
+     "leading": 1.25,
+     "top": 228,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "h1": {
+     "text": "开发环境总览",
+     "words": 1,
+     "lines": 1,
+     "size": 24,
+     "font": "Outfit Variable"
+    },
+    "headings": [],
+    "headingSummary": {
+     "count": 0,
+     "maxLines": 0,
+     "over2Lines": 0,
+     "statements": 0,
+     "centered": 0,
+     "medianWords": null,
+     "mixedFontHeadings": 0
+    },
+    "type": {
+     "families": [
+      {
+       "family": "Outfit Variable",
+       "share": 1,
+       "mono": false
+      }
+     ],
+     "familyCount": 1,
+     "sizes": [
+      9,
+      12,
+      13,
+      14,
+      15,
+      20,
+      24
+     ],
+     "sizeCount": 7,
+     "notLoaded": [],
+     "body": {
+      "font": "Outfit Variable",
+      "size": 12.5,
+      "leading": 1.43,
+      "weight": 400,
+      "tracking": 0,
+      "contrast": 5.6
+     },
+     "measureChars": 92,
+     "max": {
+      "size": 24,
+      "vw": 3.1,
+      "font": "Outfit Variable",
+      "text": "开发环境总览"
+     },
+     "monoShare": 0,
+     "monoProseShare": 0,
+     "monoFamilies": [],
+     "monoSamples": [],
+     "microLabels": 0,
+     "microLabelShare": 0,
+     "microSamples": [],
+     "upperShare": 0.03,
+     "centerShare": 0.28,
+     "smallText": 2
+    },
+    "eyebrows": [],
+    "numbered": [],
+    "color": {
+     "bodyBg": "#f5f5f6",
+     "bodyBgHsl": {
+      "h": 240,
+      "s": 0.05,
+      "l": 0.96
+     },
+     "dark": false,
+     "sectionBgs": [
+      {
+       "color": "#f5f5f6",
+       "top": 0,
+       "hsl": {
+        "h": 240,
+        "s": 0.05,
+        "l": 0.96
+       }
+      }
+     ],
+     "textColors": [
+      {
+       "color": "#5d6067",
+       "share": 0.77
+      },
+      {
+       "color": "#17181b",
+       "share": 0.2
+      },
+      {
+       "color": "#ffffff",
+       "share": 0.03
+      }
+     ],
+     "button": {
+      "bg": "#191a1d",
+      "hsl": {
+       "h": 225,
+       "s": 0.07,
+       "l": 0.11
+      },
+      "fg": "#ffffff"
+     },
+     "lowContrast": []
+    },
+    "buttons": {
+     "count": 8,
+     "inHero": 4,
+     "radius": 0,
+     "height": 38,
+     "withShadow": 0,
+     "withGradient": 0,
+     "mono": 0,
+     "upper": 0,
+     "heroLabels": [
+      "跳到主内容",
+      "搜索 ⌘K",
+      "扫描已启用管理器",
+      "查看详情"
+     ]
+    },
+    "surfaces": {
+     "shadowStatic": 0,
+     "shadowOverlay": 0,
+     "shadowSamples": [],
+     "gradients": 0,
+     "scrims": 0,
+     "gradientSamples": [],
+     "gradientText": 0,
+     "hairlines": 14,
+     "hairlineSamples": [
+      "header.studio-topbar 768px",
+      "aside.studio-sidebar 768px",
+      "div.overview-section-head 726px",
+      "section.overview-board-section 726px",
+      "div.overview-section-head 726px"
+     ],
+     "outlinedBoxes": 5,
+     "dashed": 2,
+     "blurred": 0,
+     "roundedBoxes": 5,
+     "boxRadius": 8,
+     "squareMedia": 0,
+     "roundedMedia": 0,
+     "mediaRadius": 0,
+     "textShadow": 0,
+     "cardRows": []
+    },
+    "heroMedia": [],
+    "nav": {
+     "links": 0,
+     "fixed": false,
+     "height": 52,
+     "floatingPill": false,
+     "blur": false
+    },
+    "fontsLoaded": [
+     "outfit variable"
+    ]
+   },
+   "layout": {
+    "viewport": {
+     "w": 768,
+     "h": 1024
+    },
+    "pageH": 1453,
+    "margins": {
+     "left": 20,
+     "right": 20
+    },
+    "sections": [
+     {
+      "sel": "section.manager-inventory",
+      "tag": "section",
+      "top": 419,
+      "height": 133,
+      "words": 19,
+      "media": 0,
+      "middle": 12,
+      "heading": null,
+      "left": 37,
+      "right": 37,
+      "textLeft": 37,
+      "textRight": 137,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.group/card.flex",
+      "tag": "div",
+      "top": 576,
+      "height": 258,
+      "words": 5,
+      "media": 0,
+      "middle": 173,
+      "heading": {
+       "text": "优先建议",
+       "size": 15,
+       "tag": "h2"
+      },
+      "left": 37,
+      "right": 37,
+      "textLeft": 37,
+      "textRight": 37,
+      "fullBleed": false,
+      "footer": false,
+      "hero": false,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.overview-lower",
+      "tag": "div",
+      "top": 857,
+      "height": 548,
+      "words": 26,
+      "media": 0,
+      "middle": 0,
+      "heading": {
+       "text": "观察覆盖度",
+       "size": 15,
+       "tag": "h2"
+      },
+      "left": 37,
+      "right": 37,
+      "textLeft": 37,
+      "textRight": 37,
+      "fullBleed": false,
+      "footer": true,
+      "hero": false,
+      "continues": false,
+      "pinned": false
+     }
+    ],
+    "gaps": [],
+    "h1s": [
+     {
+      "text": "开发环境总览",
+      "size": 24,
+      "top": 228,
+      "firstScreen": true
+     }
+    ],
+    "edgeText": [],
+    "edges": [
+     {
+      "x": 37,
+      "n": 4
+     },
+     {
+      "x": 20,
+      "n": 1
+     }
+    ],
+    "leftBlocks": 5,
+    "bodySize": 13,
+    "stage": false,
+    "explains": false,
+    "slivers": [],
+    "voidShare": 0,
+    "voidBox": null
+   },
+   "app": {
+    "viewport": {
+     "w": 768,
+     "h": 1024
+    },
+    "dark": false,
+    "ground": "#f5f5f6",
+    "sidebar": null,
+    "topbar": {
+     "h": 52
+    },
+    "canvas": {
+     "left": 16,
+     "right": 16
+    },
+    "hero": {
+     "text": "开发环境总览",
+     "words": 1,
+     "chars": 6,
+     "lines": 1,
+     "size": 24,
+     "vw": 3.1,
+     "font": "Outfit Variable",
+     "weight": 600,
+     "tracking": -0.02,
+     "leading": 1.25,
+     "top": 228,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "charts": 0,
+    "layout": {
+     "panels": 5,
+     "firstScreen": 4,
+     "ragged": [],
+     "voids": []
+    },
+    "tiles": 0,
+    "panels": {
+     "count": 9,
+     "radii": [
+      [
+       8,
+       5
+      ],
+      [
+       0,
+       4
+      ]
+     ],
+     "heavyBorders": 0,
+     "borderSamples": [],
+     "heavyShadows": 0,
+     "softShadows": 0,
+     "shadowSamples": [],
+     "glass": 0
+    },
+    "chips": {
+     "count": 0,
+     "hues": 0,
+     "samples": []
+    },
+    "numbers": {
+     "cells": 0,
+     "leftAligned": 0,
+     "figures": 2,
+     "tabularShare": 1,
+     "kpiMax": 24
+    },
+    "rows": null,
+    "chartHues": 0,
+    "placeholders": [],
+    "type": {
+     "under13": 0.27,
+     "tiny": 0,
+     "tinySamples": [],
+     "sizes": [
+      9,
+      12,
+      13,
+      14,
+      15,
+      20,
+      24
+     ]
+    },
+    "title": {
+     "text": "开发环境总览",
+     "size": 24,
+     "top": 228
+    },
+    "colourShare": 0
+   },
+   "consoleErrors": []
+  },
+  {
+   "width": 390,
+   "height": 844,
+   "load": "load",
+   "screens": 2,
+   "filled": [
+    0.64,
+    0.79
+   ],
+   "motion": {
+    "elements": 6,
+    "css": 0,
+    "transitions": 6,
+    "scripted": 0,
+    "videos": 0,
+    "playingVideos": 0
+   },
+   "metrics": {
+    "viewport": {
+     "w": 390,
+     "h": 844
+    },
+    "page": {
+     "height": 1641,
+     "screens": 1.9,
+     "words": 90,
+     "img": 0,
+     "video": 0,
+     "canvas": 0,
+     "svg": 14,
+     "sections": 4,
+     "horizontalOverflow": 0,
+     "overflowCulprits": [],
+     "uiFragments": 0,
+     "uiAbuse": false,
+     "realPictures": 0,
+     "videoCount": 0,
+     "uiPictures": 0,
+     "pictureSamples": [],
+     "blendText": 0,
+     "sideScrollers": 0,
+     "brokenImages": [],
+     "emoji": [],
+     "videosNoPoster": 0
+    },
+    "hero": {
+     "text": "开发环境总览",
+     "words": 1,
+     "chars": 6,
+     "lines": 1,
+     "size": 21,
+     "vw": 5.4,
+     "font": "Outfit Variable",
+     "weight": 600,
+     "tracking": -0.02,
+     "leading": 1.25,
+     "top": 261,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "h1": {
+     "text": "开发环境总览",
+     "words": 1,
+     "lines": 1,
+     "size": 21,
+     "font": "Outfit Variable"
+    },
+    "headings": [
+     {
+      "text": "0 / 12",
+      "words": 3,
+      "chars": 6,
+      "lines": 1,
+      "size": 24,
+      "vw": 6.2,
+      "font": "Outfit Variable",
+      "weight": 500,
+      "tracking": -0.02,
+      "leading": 1.2,
+      "upper": false,
+      "italic": false,
+      "mono": false,
+      "align": "left",
+      "position": "left",
+      "widthRatio": 0.37,
+      "top": 445,
+      "tag": "div",
+      "kind": "heading"
+     },
+     {
+      "text": "—",
+      "words": 1,
+      "chars": 1,
+      "lines": 1,
+      "size": 24,
+      "vw": 6.2,
+      "font": "Outfit Variable",
+      "weight": 500,
+      "tracking": -0.02,
+      "leading": 1.2,
+      "upper": false,
+      "italic": false,
+      "mono": false,
+      "align": "left",
+      "position": "right",
+      "widthRatio": 0.37,
+      "top": 445,
+      "tag": "div",
+      "kind": "heading"
+     },
+     {
+      "text": "12",
+      "words": 1,
+      "chars": 2,
+      "lines": 1,
+      "size": 24,
+      "vw": 6.2,
+      "font": "Outfit Variable",
+      "weight": 500,
+      "tracking": -0.02,
+      "leading": 1.2,
+      "upper": false,
+      "italic": false,
+      "mono": false,
+      "align": "left",
+      "position": "center",
+      "widthRatio": 0.83,
+      "top": 530,
+      "tag": "div",
+      "kind": "heading"
+     }
+    ],
+    "headingSummary": {
+     "count": 3,
+     "maxLines": 1,
+     "over2Lines": 0,
+     "statements": 0,
+     "centered": 0,
+     "medianWords": 1,
+     "mixedFontHeadings": 0
+    },
+    "type": {
+     "families": [
+      {
+       "family": "Outfit Variable",
+       "share": 1,
+       "mono": false
+      }
+     ],
+     "familyCount": 1,
+     "sizes": [
+      9,
+      12,
+      13,
+      14,
+      15,
+      20,
+      21,
+      24
+     ],
+     "sizeCount": 8,
+     "notLoaded": [],
+     "body": {
+      "font": "Outfit Variable",
+      "size": 12.5,
+      "leading": 1.43,
+      "weight": 400,
+      "tracking": 0,
+      "contrast": 5.6
+     },
+     "measureChars": 53,
+     "max": {
+      "size": 24,
+      "vw": 6.2,
+      "font": "Outfit Variable",
+      "text": "0 / 12"
+     },
+     "monoShare": 0,
+     "monoProseShare": 0,
+     "monoFamilies": [],
+     "monoSamples": [],
+     "microLabels": 0,
+     "microLabelShare": 0,
+     "microSamples": [],
+     "upperShare": 0.03,
+     "centerShare": 0.28,
+     "smallText": 2
+    },
+    "eyebrows": [
+     {
+      "text": "已扫描／已启用管理器",
+      "above": "0 / 12",
+      "upper": false,
+      "tracked": false,
+      "mono": false,
+      "pill": false,
+      "size": 12,
+      "top": 418
+     },
+     {
+      "text": "包、版本与资源条目",
+      "above": "—",
+      "upper": false,
+      "tracked": false,
+      "mono": false,
+      "pill": false,
+      "size": 12,
+      "top": 418
+     },
+     {
+      "text": "未扫描管理器",
+      "above": "12",
+      "upper": false,
+      "tracked": false,
+      "mono": false,
+      "pill": false,
+      "size": 12,
+      "top": 503
+     }
+    ],
+    "numbered": [],
+    "color": {
+     "bodyBg": "#f5f5f6",
+     "bodyBgHsl": {
+      "h": 240,
+      "s": 0.05,
+      "l": 0.96
+     },
+     "dark": false,
+     "sectionBgs": [
+      {
+       "color": "#f5f5f6",
+       "top": 0,
+       "hsl": {
+        "h": 240,
+        "s": 0.05,
+        "l": 0.96
+       }
+      },
+      {
+       "color": "#ffffff",
+       "top": 1053,
+       "hsl": {
+        "h": 0,
+        "s": 0,
+        "l": 1
+       }
+      }
+     ],
+     "textColors": [
+      {
+       "color": "#5d6067",
+       "share": 0.77
+      },
+      {
+       "color": "#17181b",
+       "share": 0.2
+      },
+      {
+       "color": "#ffffff",
+       "share": 0.03
+      }
+     ],
+     "button": {
+      "bg": "#191a1d",
+      "hsl": {
+       "h": 225,
+       "s": 0.07,
+       "l": 0.11
+      },
+      "fg": "#ffffff"
+     },
+     "lowContrast": []
+    },
+    "buttons": {
+     "count": 8,
+     "inHero": 3,
+     "radius": 0,
+     "height": 38,
+     "withShadow": 0,
+     "withGradient": 0,
+     "mono": 0,
+     "upper": 0,
+     "heroLabels": [
+      "跳到主内容",
+      "搜索 ⌘K",
+      "扫描已启用管理器"
+     ]
+    },
+    "surfaces": {
+     "shadowStatic": 0,
+     "shadowOverlay": 0,
+     "shadowSamples": [],
+     "gradients": 0,
+     "scrims": 0,
+     "gradientSamples": [],
+     "gradientText": 0,
+     "hairlines": 14,
+     "hairlineSamples": [
+      "header.studio-topbar 390px",
+      "aside.studio-sidebar 390px",
+      "div.overview-section-head 356px",
+      "section.overview-board-section 356px",
+      "div.overview-section-head 356px"
+     ],
+     "outlinedBoxes": 5,
+     "dashed": 2,
+     "blurred": 0,
+     "roundedBoxes": 5,
+     "boxRadius": 8,
+     "squareMedia": 0,
+     "roundedMedia": 0,
+     "mediaRadius": 0,
+     "textShadow": 0,
+     "cardRows": []
+    },
+    "heroMedia": [],
+    "nav": {
+     "links": 0,
+     "fixed": false,
+     "height": 52,
+     "floatingPill": false,
+     "blur": false
+    },
+    "fontsLoaded": [
+     "outfit variable"
+    ]
+   },
+   "layout": {
+    "viewport": {
+     "w": 390,
+     "h": 844
+    },
+    "pageH": 1641,
+    "margins": {
+     "left": 16,
+     "right": 23
+    },
+    "sections": [
+     {
+      "sel": "header.page-header",
+      "tag": "header",
+      "top": 261,
+      "height": 122,
+      "words": 3,
+      "media": 0,
+      "middle": 0,
+      "heading": {
+       "text": "开发环境总览",
+       "size": 21,
+       "tag": "h1"
+      },
+      "left": 16,
+      "right": 23,
+      "textLeft": 16,
+      "textRight": 23,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.stat-grid.grid-cols-1",
+      "tag": "div",
+      "top": 403,
+      "height": 171,
+      "words": 7,
+      "media": 0,
+      "middle": 59,
+      "heading": {
+       "text": "0 / 12",
+       "size": 24,
+       "tag": "strong"
+      },
+      "left": 33,
+      "right": 71,
+      "textLeft": 33,
+      "textRight": 71,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "section.manager-inventory",
+      "tag": "section",
+      "top": 594,
+      "height": 161,
+      "words": 19,
+      "media": 0,
+      "middle": 12,
+      "heading": null,
+      "left": 33,
+      "right": 33,
+      "textLeft": 33,
+      "textRight": 63,
+      "fullBleed": false,
+      "footer": false,
+      "hero": false,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.group/card.flex",
+      "tag": "div",
+      "top": 775,
+      "height": 258,
+      "words": 5,
+      "media": 0,
+      "middle": 0,
+      "heading": {
+       "text": "优先建议",
+       "size": 15,
+       "tag": "h2"
+      },
+      "left": 33,
+      "right": 33,
+      "textLeft": 33,
+      "textRight": 33,
+      "fullBleed": false,
+      "footer": false,
+      "hero": false,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.overview-lower",
+      "tag": "div",
+      "top": 1053,
+      "height": 548,
+      "words": 26,
+      "media": 0,
+      "middle": 0,
+      "heading": {
+       "text": "观察覆盖度",
+       "size": 15,
+       "tag": "h2"
+      },
+      "left": 33,
+      "right": 33,
+      "textLeft": 33,
+      "textRight": 33,
+      "fullBleed": false,
+      "footer": true,
+      "hero": false,
+      "continues": false,
+      "pinned": false
+     }
+    ],
+    "gaps": [],
+    "h1s": [
+     {
+      "text": "开发环境总览",
+      "size": 21,
+      "top": 261,
+      "firstScreen": true
+     }
+    ],
+    "edgeText": [],
+    "edges": [
+     {
+      "x": 33,
+      "n": 4
+     },
+     {
+      "x": 16,
+      "n": 1
+     }
+    ],
+    "leftBlocks": 5,
+    "bodySize": 13,
+    "stage": false,
+    "explains": false,
+    "slivers": [],
+    "voidShare": 0,
+    "voidBox": null
+   },
+   "app": {
+    "viewport": {
+     "w": 390,
+     "h": 844
+    },
+    "dark": false,
+    "ground": "#f5f5f6",
+    "sidebar": null,
+    "topbar": {
+     "h": 52
+    },
+    "canvas": {
+     "left": 16,
+     "right": 16
+    },
+    "hero": {
+     "text": "开发环境总览",
+     "words": 1,
+     "chars": 6,
+     "lines": 1,
+     "size": 21,
+     "vw": 5.4,
+     "font": "Outfit Variable",
+     "weight": 600,
+     "tracking": -0.02,
+     "leading": 1.25,
+     "top": 261,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "charts": 0,
+    "layout": {
+     "panels": 6,
+     "firstScreen": 4,
+     "ragged": [],
+     "voids": []
+    },
+    "tiles": 0,
+    "panels": {
+     "count": 10,
+     "radii": [
+      [
+       8,
+       6
+      ],
+      [
+       0,
+       4
+      ]
+     ],
+     "heavyBorders": 0,
+     "borderSamples": [],
+     "heavyShadows": 0,
+     "softShadows": 0,
+     "shadowSamples": [],
+     "glass": 0
+    },
+    "chips": {
+     "count": 0,
+     "hues": 0,
+     "samples": []
+    },
+    "numbers": {
+     "cells": 0,
+     "leftAligned": 0,
+     "figures": 2,
+     "tabularShare": 1,
+     "kpiMax": 24
+    },
+    "rows": null,
+    "chartHues": 0,
+    "placeholders": [],
+    "type": {
+     "under13": 0.27,
+     "tiny": 0,
+     "tinySamples": [],
+     "sizes": [
+      9,
+      12,
+      13,
+      14,
+      15,
+      20,
+      21,
+      24
+     ]
+    },
+    "title": {
+     "text": "开发环境总览",
+     "size": 21,
+     "top": 261
+    },
+    "colourShare": 0.001
+   },
+   "consoleErrors": []
+  }
+ ],
+ "findings": [],
+ "images": [
+  {
+   "viewport": "desktop",
+   "width": 1440,
+   "fold": "/Users/sunven/github/package-manager/.taste-skill/after/desktop-fold.jpg",
+   "pages": [
+    "/Users/sunven/github/package-manager/.taste-skill/after/desktop-page-01.jpg"
+   ],
+   "film": []
+  },
+  {
+   "viewport": "tablet",
+   "width": 768,
+   "fold": "/Users/sunven/github/package-manager/.taste-skill/after/tablet-fold.jpg",
+   "pages": [
+    "/Users/sunven/github/package-manager/.taste-skill/after/tablet-page-01.jpg"
+   ],
+   "film": []
+  },
+  {
+   "viewport": "mobile",
+   "width": 390,
+   "fold": "/Users/sunven/github/package-manager/.taste-skill/after/mobile-fold.jpg",
+   "pages": [
+    "/Users/sunven/github/package-manager/.taste-skill/after/mobile-page-01.jpg"
+   ],
+   "film": []
+  }
+ ]
+}
