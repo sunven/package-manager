@@ -16,6 +16,26 @@ import type { DisplayStatus } from "../types";
 import type { SessionRefresh } from "../sessionRecords";
 import { cn } from "../../lib/utils";
 
+export function PageHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: string;
+  description?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <header className="page-header">
+      <div className="page-header-copy">
+        <h1>{title}</h1>
+        {description ? <p>{description}</p> : null}
+      </div>
+      {actions ? <div className="page-header-actions">{actions}</div> : null}
+    </header>
+  );
+}
+
 export function Panel({
   children,
   className,
@@ -45,14 +65,14 @@ export function PanelHead({
   );
 }
 
-export function StatCard({ label, value, tone }: { label: string; value: string; tone?: "info" | "measurement" }) {
+export function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <Card size="sm" className="industrial-stat-card min-h-[76px] justify-between gap-2 py-3" data-tone={tone}>
-      <CardHeader className="px-3.5">
-        <CardDescription className="text-xs font-medium">{label}</CardDescription>
+    <Card size="sm" className="industrial-stat-card justify-between">
+      <CardHeader>
+        <CardDescription>{label}</CardDescription>
       </CardHeader>
-      <CardContent className="px-3.5">
-        <strong className="block text-2xl font-medium leading-7">{value}</strong>
+      <CardContent>
+        <strong className="block">{value}</strong>
       </CardContent>
     </Card>
   );

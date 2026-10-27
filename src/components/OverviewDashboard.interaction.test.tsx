@@ -40,7 +40,7 @@ describe("overview entry points", () => {
       />,
     );
     expect(screen.getByText("已测下限 ≥ 100 B")).toBeTruthy();
-    expect(screen.getByText(/项需注意/)).toBeTruthy();
+    expect(screen.getByText("需注意")).toBeTruthy();
     expect(screen.queryByText("管理器状态")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "查看观察覆盖度" }));
     expect(openCoverage).toHaveBeenCalledOnce();
@@ -71,7 +71,7 @@ describe("overview entry points", () => {
     expect(refresh).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "查看观察覆盖度" }));
     expect(openCoverage).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: "会话记录" }));
+    fireEvent.click(screen.getByRole("button", { name: /会话记录/ }));
     expect(view).toHaveBeenCalledWith("sessions");
     expect(screen.queryByRole("button", { name: "确认清理" })).toBeNull();
   });

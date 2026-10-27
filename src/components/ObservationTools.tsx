@@ -17,7 +17,7 @@ import type { ObservationRecord } from "../observationLedger";
 import type { ObservationItemId } from "../observationItems";
 import type { ManagerId, ManagerSnapshot } from "../types";
 import { pathLabel } from "../utils/format";
-import { Notice } from "./ui";
+import { PageHeader, Notice } from "./ui";
 
 const time = (value: number) => new Date(value).toLocaleString();
 
@@ -55,15 +55,12 @@ export function EnvironmentPanel({
     && !associations.error
     && !associations.hasUsableLocations;
 
-  return <main className="grid gap-4" aria-label="环境诊断">
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <h2 className="text-lg font-semibold">应用中的命令来源</h2>
-        <p className="mt-1 text-sm text-muted-foreground">按应用 PATH 顺序观察文件；Shell 函数和别名不在此范围，nvm 查看 Node 来源。</p>
-        <p className="mt-1 text-sm text-muted-foreground">关联只说明候选的目标路径位于某次观察到的安装位置内；不代表该管理器或包安装了它，也不比较版本或选择正确来源。</p>
-      </div>
-      <Button variant="outline" disabled={state.environmentBusy} onClick={() => void state.refreshEnvironment()}>刷新诊断</Button>
-    </div>
+  return <main className="view-grid" aria-label="环境诊断">
+    <PageHeader
+      title="应用中的命令来源"
+      description="按应用 PATH 顺序观察文件；Shell 函数和别名不在此范围，nvm 查看 Node 来源。关联只说明候选目标位于某次观察到的安装位置内，不代表该管理器或包安装了它。"
+      actions={<Button variant="outline" disabled={state.environmentBusy} onClick={() => void state.refreshEnvironment()}>刷新诊断</Button>}
+    />
     {state.environmentError ? <Notice title="环境诊断未完成" message={state.environmentError} /> : null}
     {associations.error ? <Notice title="命令位置关联计算失败" message={associations.error} /> : null}
     {indeterminate ? <Notice title="无法判断命令位置关联" message="尚无已观察命令位置。请先启用并扫描管理器。" /> : null}

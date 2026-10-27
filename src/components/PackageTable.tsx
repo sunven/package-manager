@@ -319,9 +319,9 @@ function TableShell({
   return (
     <Table className={compact ? "table-fixed" : "min-w-[760px]"}>
       <TableHeader>
-        <TableRow className="bg-muted/40 hover:bg-muted/40">
+        <TableRow className="hover:bg-transparent">
           {heading.map((item) => (
-            <TableHead className={cx("font-semibold", compact && item === "版本" && "w-32", item === "操作" && (compact ? "w-32 text-right" : "w-24 text-right"))} key={item}>
+            <TableHead className={cx(compact && item === "版本" && "w-32", item === "操作" && (compact ? "w-32 text-right" : "w-24 text-right"))} key={item}>
               {item}
             </TableHead>
           ))}
@@ -370,7 +370,7 @@ function MavenSummary({ health, homeDirectory }: { health: MavenRepositoryHealth
   const scanStatus = health.repositoryScanStatus.partial ? "部分可用" : "就绪";
 
   return (
-    <div className="flex flex-col gap-2 p-3">
+    <div className="flex flex-col gap-3 p-4">
       <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="构件" value={String(health.artifactCount)} />
         <StatCard label="版本" value={String(health.versionCount)} />
@@ -393,7 +393,7 @@ function PipSummary({ health, homeDirectory }: { health: PipEnvironmentHealth | 
   const outdatedValue = health.outdatedStatus === "Ready" ? String(health.outdatedCount) : health.outdatedStatus === "Pending" ? "等待中" : "失败";
 
   return (
-    <div className="flex flex-col gap-2 p-3">
+    <div className="flex flex-col gap-3 p-4">
       <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="已安装" value={String(health.installedCount)} />
         <StatCard label="可更新" value={outdatedValue} />
@@ -425,7 +425,7 @@ function DockerSummary({
   const cleanupCopy = cleanupAvailable ? cleanupCopyFor("Docker") : null;
 
   return (
-    <div className="flex flex-col gap-2 p-3">
+    <div className="flex flex-col gap-3 p-4">
       <div className="stat-grid grid-cols-2 md:grid-cols-3">
         <StatCard label="镜像" value={String(health.imageCount)} />
         <StatCard label="容器" value={String(health.containerCount)} />
@@ -439,7 +439,7 @@ function DockerSummary({
           {diskRows.map((row) => (
             <div className="min-w-0" key={row.resourceType}>
               <StatCard label={`${row.resourceType} · Docker 报告可回收`} value={row.reclaimable || "—"} />
-              <p className="px-3 text-xs text-muted-foreground">Docker 报告占用 {row.size || "—"}</p>
+              <p className="border-t border-border bg-card px-4 py-2 text-xs text-muted-foreground">Docker 报告占用 {row.size || "—"}</p>
             </div>
           ))}
         </div>
@@ -476,7 +476,7 @@ function FilterBar<T extends string>({
 }) {
   return (
     <ToggleGroup
-      className="flex flex-wrap justify-start border-y px-4 py-3"
+      className="flex flex-wrap justify-start border-t px-4 py-3"
       onValueChange={(value) => {
         if (value) onSelect(value as T);
       }}

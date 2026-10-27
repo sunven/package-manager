@@ -55,7 +55,7 @@ import {
 } from "../../components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, IconButton, Panel, PanelHead } from "./ui";
+import { EmptyState, IconButton, PageHeader, Panel, PanelHead } from "./ui";
 import { ProjectScanHistoryDialog } from "./ProjectScanHistoryDialog";
 
 export function ProjectCleanupPage({
@@ -168,6 +168,10 @@ export function ProjectCleanupPage({
 
   return (
     <main className="view-grid">
+      <PageHeader
+        title="项目清理"
+        description="从扫描根目录递归发现 Rust / Maven / Node 项目的派生构建产物；清理在确认后执行。"
+      />
       {displayedMessage ? (
         <Alert variant="destructive">
           <AlertTitle>{displayedMessage.title}</AlertTitle>
@@ -330,19 +334,19 @@ export function ProjectCleanupPage({
             >
               <ToggleGroupItem value="RustTarget">
                 Rust target
-                <span className="font-mono text-xs tabular-nums text-muted-foreground">{rustTotal}</span>
+                <span className="text-xs tabular-nums text-muted-foreground">{rustTotal}</span>
               </ToggleGroupItem>
               <ToggleGroupItem value="MavenTarget">
                 Maven target
-                <span className="font-mono text-xs tabular-nums text-muted-foreground">{mavenTotal}</span>
+                <span className="text-xs tabular-nums text-muted-foreground">{mavenTotal}</span>
               </ToggleGroupItem>
               <ToggleGroupItem value="NodeModules">
                 Node node_modules
-                <span className="font-mono text-xs tabular-nums text-muted-foreground">{nodeTotal}</span>
+                <span className="text-xs tabular-nums text-muted-foreground">{nodeTotal}</span>
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 p-2">
+          <div className="flex flex-wrap items-center gap-1.5 border-b p-2">
             <Input
               aria-label="搜索项目或目录路径"
               className="min-w-56 flex-1"

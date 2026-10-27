@@ -15,8 +15,8 @@ describe("SettingsPage", () => {
       />,
     );
 
-    expect(html).toContain("管理器扫描设置");
-    expect(html).toContain("已启用 1/12");
+    expect(html).toContain("启用的包管理器");
+    expect(html).toContain("已启用 1 / 12");
     expect(html).toContain("pnpm");
     expect(html).toContain("disabled");
   });

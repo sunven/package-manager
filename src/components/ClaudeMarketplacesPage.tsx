@@ -57,10 +57,15 @@ export function ClaudeMarketplacesPage({ state, coverageItem, onShowHooks, focus
 
   return <section className="grid gap-4" aria-label="Claude Code 插件市场">
     <Panel><PanelHead title="Claude Code 插件市场" action={<Button ref={readButton} disabled={busy || choosing} onClick={() => void state.refresh("marketplaces")} variant="outline" size="sm"><ArrowsClockwise aria-hidden="true" data-icon="inline-start" />{busy ? "正在处理…" : "重新读取"}</Button>} />
-      <div className="grid gap-2 p-4 text-sm">
+      <div className="grid gap-3 p-4 text-sm">
         <p>展开市场，浏览插件、查看详情并管理当前用户的安装与启用选择。</p>
+        <dl className="meta-list">
+          <div className="meta-row">
+            <dt>Claude Code 目录</dt>
+            <dd><code>{scan?.directory ?? "尚未读取"}</code>{scan?.version ? <span> · CLI {scan.version}</span> : null}</dd>
+          </div>
+        </dl>
         <p className="text-xs text-muted-foreground">更新市场目录后，可单独更新已安装插件。插件变更请在 Claude 中重新加载或开启新会话验证。</p>
-        <p className="break-all text-xs text-muted-foreground">Claude Code 目录 <code className="ml-2 text-foreground">{scan?.directory ?? "尚未读取"}</code>{scan?.version ? ` · CLI ${scan.version}` : ""}</p>
         <ObservationState
           item={coverageItem}
           live
@@ -80,7 +85,7 @@ export function ClaudeMarketplacesPage({ state, coverageItem, onShowHooks, focus
       }}>
         <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
           <label className="grid gap-1 text-sm">来源类型<select className={control} value={sourceKind} disabled={blocked} onChange={(e) => setSourceKind(e.target.value as typeof sourceKind)}><option value="git">GitHub / Git</option><option value="local">本地目录 / JSON</option><option value="url">远程 JSON</option></select></label>
-          <label className="grid gap-1 text-sm">市场来源<Input value={source} disabled={blocked} onChange={(e) => setSource(e.target.value)} placeholder={sourceKind === "local" ? "本地绝对路径" : sourceKind === "url" ? "https://example.com/marketplace.json" : "owner/repo 或 Git URL"} required /></label>
+          <label className="grid gap-1 text-sm">市场来源<Input value={source} disabled={blocked} onChange={(e) => setSource(e.target.value)} placeholder={sourceKind === "local" ? "本地绝对路径" : sourceKind === "url" ? "远程 marketplace.json 地址" : "owner/repo 或 Git URL"} required /></label>
         </div>
         {sourceKind === "local" ? <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={blocked} onClick={() => void choose(false)} type="button">选择目录</Button><Button variant="outline" size="sm" disabled={blocked} onClick={() => void choose(true)} type="button">选择 JSON 文件</Button><p className="w-full text-xs text-muted-foreground">本地目录须包含 .claude-plugin/marketplace.json。</p></div> : <p className="text-xs text-muted-foreground">沿用本机认证；地址请勿包含令牌。远程 JSON 目录中的插件不能使用相对来源路径。</p>}
         {sourceKind === "git" ? <details><summary className="cursor-pointer text-sm font-medium">Git 高级选项</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">

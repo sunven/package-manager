@@ -48,9 +48,7 @@ export function PathPanel({
 }) {
   if (!manager) {
     return (
-      <section className="studio-card studio-side-card">
-        <EmptyState message={scanning ? "正在扫描路径..." : "尚未扫描"} />
-      </section>
+      <EmptyState message={scanning ? "正在扫描路径..." : "尚未扫描，扫描后显示缓存与存储路径"} />
     );
   }
 
@@ -188,10 +186,10 @@ function InlinePathCard({
   const itemCount = paths.length;
   const gridClassName =
     itemCount >= 3
-      ? "grid grid-cols-1 gap-px bg-border @xl:grid-cols-2 @4xl:grid-cols-3"
+      ? "grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border @xl:grid-cols-2 @4xl:grid-cols-3"
       : itemCount === 2
-        ? "grid grid-cols-1 gap-px bg-border @xl:grid-cols-2"
-        : "grid grid-cols-1 gap-px bg-border";
+        ? "grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border @xl:grid-cols-2"
+        : "grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border";
 
   return (
     <div className={gridClassName}>
@@ -247,7 +245,7 @@ function InlinePathCell({
   const cleanupBlockId = `cleanup-block-${managerId.toLowerCase()}-${path.kind.toLowerCase()}`;
 
   return (
-    <div className={`${className} telemetry-cell border bg-background p-2`}>
+    <div className={`${className} telemetry-cell p-3`}>
       <div className="flex min-h-10 items-start justify-between gap-1">
         <div className="flex min-w-0 items-center gap-1">
           <p className="truncate text-xs font-medium text-foreground">{pathLabel(path.label)}</p>

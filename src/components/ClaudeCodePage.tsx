@@ -6,6 +6,7 @@ import type { ObservationCoverageItem } from "../observationCoverage";
 import { ClaudeMarketplacesPage } from "./ClaudeMarketplacesPage";
 import { ClaudeSkillsPage } from "./ClaudeSkillsPage";
 import { ClaudeHooksPage } from "./ClaudeHooksPage";
+import { PageHeader } from "./ui";
 
 export function ClaudeCodePage({ workflow, coverage, tab, onTabChange }: {
   workflow: ClaudeWorkflow;
@@ -15,7 +16,12 @@ export function ClaudeCodePage({ workflow, coverage, tab, onTabChange }: {
 }) {
   const [focusedPluginId, setFocusedPluginId] = useState<string | undefined>();
   const { state, skills, locked } = workflow;
-  return <Tabs value={tab} onValueChange={onTabChange} role="main" aria-label="Claude Code 管理">
+  return <div className="view-grid">
+    <PageHeader
+      title="Claude Code"
+      description="管理当前用户的市场、插件、Hooks 与 Skills；写入前会说明影响范围。"
+    />
+    <Tabs value={tab} onValueChange={onTabChange} role="main" aria-label="Claude Code 管理">
     <TabsList aria-label="Claude Code 管理视图">
       <TabsTrigger value="marketplaces" disabled={locked}>插件市场</TabsTrigger>
       <TabsTrigger value="hooks" disabled={locked}>Hooks</TabsTrigger>
@@ -29,5 +35,6 @@ export function ClaudeCodePage({ workflow, coverage, tab, onTabChange }: {
     <TabsContent value="marketplaces"><ClaudeMarketplacesPage coverageItem={coverage.extensions} state={state} focusedPluginId={focusedPluginId} onShowHooks={() => onTabChange("hooks")} /></TabsContent>
     <TabsContent value="hooks"><ClaudeHooksPage coverageItem={coverage.hooks} state={state} /></TabsContent>
     <TabsContent value="skills"><ClaudeSkillsPage coverageItem={coverage.skills} workflow={skills} onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); onTabChange("marketplaces"); }} /></TabsContent>
-  </Tabs>;
+    </Tabs>
+  </div>;
 }

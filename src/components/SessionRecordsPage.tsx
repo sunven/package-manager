@@ -52,7 +52,7 @@ import type { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { useSessionSelection } from "../hooks/useSessionSelection";
 import type { ObservationCoverageItem } from "../observationCoverage";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, Panel, RefreshNotice, StatCard } from "./ui";
+import { EmptyState, PageHeader, Panel, RefreshNotice, StatCard } from "./ui";
 
 const sources = [
   { key: "codex" as const, label: "Codex", empty: "没有 Codex 会话记录", fallback: "~/.codex/sessions" },
@@ -137,6 +137,10 @@ export function SessionRecordsPage({
 
   return (
     <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || scanningSources.grok || openCodeScanning}>
+      <PageHeader
+        title="会话记录"
+        description="按来源查看 Codex、Claude、Grok Build 与 OpenCode 的本机会话；移除前会复核身份与运行状态。"
+      />
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>会话记录读取失败</AlertTitle>
@@ -363,14 +367,14 @@ export function SessionRecordsPage({
               <TabsTrigger key={source.key} value={source.key}>
                 {source.label}
                 {count === undefined ? null : (
-                  <span className="font-mono text-xs tabular-nums text-muted-foreground">{count}</span>
+                  <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
                 )}
               </TabsTrigger>
             );
           })}
           <TabsTrigger value="opencode">
             OpenCode
-            {openCodeScan ? <span className="font-mono text-xs tabular-nums text-muted-foreground">{openCodeScan.records.length}</span> : null}
+            {openCodeScan ? <span className="text-xs tabular-nums text-muted-foreground">{openCodeScan.records.length}</span> : null}
           </TabsTrigger>
         </TabsList>
         {sources.map((source) => {
@@ -779,7 +783,7 @@ function SourceSection({
       <CardContent className="flex flex-col gap-2 p-3">
         <p className="text-xs text-muted-foreground" id={`${sourceKey}-age-removal-help`}>按天数移除以最后活动时间为准，作用于整个 {label} 来源，不受搜索和状态筛选限制。使用中的记录会跳过。</p>
         <p className="text-xs text-muted-foreground" id={ageEligibilityId} role="status">{!source ? "读取会话记录后显示当前符合年龄条件的数量。" : eligibleAge7 === 0 && eligibleAge30 === 0 ? `当前没有符合 7 天或 30 天门槛的记录；近 7 天 ${recentAge7Count} 条、近 30 天 ${recentAge30Count} 条未达门槛` : eligibleAge7 === 0 ? `当前没有符合 7 天门槛的记录；近 7 天 ${recentAge7Count} 条未达门槛` : eligibleAge30 === 0 ? `当前没有符合 30 天门槛的记录；近 30 天 ${recentAge30Count} 条未达门槛` : `当前符合年龄门槛：7 天 ${eligibleAge7} 条、30 天 ${eligibleAge30} 条`}{inUseCount ? `；${inUseCount} 条使用中的记录会跳过` : ""}{unknownActivityCount ? `；${unknownActivityCount} 条缺少最后活动时间，无法按年龄判断` : ""}。</p>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="stat-grid grid-cols-2">
           <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
           <StatCard label="当前结果的记录占用" value={view ? `${records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}${formatBytes(view.bytes)}` : "—"} />
         </div>
@@ -832,7 +836,7 @@ function SourceSection({
             const groupAllSelected = groupRemovable.length > 0 && groupRemovable.every((record) => selectedSet.has(record.id));
             return (
               <section key={collapseKey}>
-                <div className="flex items-center gap-3 border-b bg-muted/40 px-4 py-2">
+                <div className="flex items-center gap-3 border-b px-4 py-2">
                   <Checkbox
                     aria-label={`选择${group.label}的可移除会话记录`}
                     aria-describedby={groupRemovable.length === 0 ? ageEligibilityId : undefined}

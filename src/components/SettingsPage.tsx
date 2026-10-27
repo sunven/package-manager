@@ -1,7 +1,7 @@
 import { managerLabels, managerOrder } from "../constants";
 import type { DisplayStatus, ManagerId, ManagerSnapshot } from "../types";
 import { Checkbox } from "../../components/ui/checkbox";
-import { Panel, PanelHead, StatusBadge } from "./ui";
+import { PageHeader, Panel, PanelHead, StatusBadge } from "./ui";
 
 export function SettingsPage({
   enabledManagers,
@@ -20,18 +20,20 @@ export function SettingsPage({
 
   return (
     <main className="view-grid">
+      <PageHeader
+        title="设置"
+        description="选择要显示和扫描的包管理器，不会安装或卸载它们。至少保留一个已启用管理器。"
+      />
+      <p className="sr-only" id="manager-settings-help">选择要显示和扫描的包管理器，不会安装或卸载它们。至少保留一个已启用管理器。</p>
       <Panel className="overflow-hidden">
         <PanelHead
           action={
-            <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
-              已启用 {enabledManagers.length}/{managerOrder.length}
+            <span className="whitespace-nowrap text-xs text-muted-foreground">
+              已启用 {enabledManagers.length} / {managerOrder.length}
             </span>
           }
-          title="管理器扫描设置"
+          title="启用的包管理器"
         />
-        <p className="border-b px-4 py-3 text-sm text-muted-foreground" id="manager-settings-help">
-          选择要显示和扫描的管理器，不会安装或卸载它们。至少保留一个已启用管理器。
-        </p>
         <div className="grid grid-cols-1 gap-px bg-border min-[720px]:grid-cols-2 min-[1100px]:grid-cols-3">
           {managerOrder.map((managerId) => {
             const enabled = enabledSet.has(managerId);
@@ -43,7 +45,7 @@ export function SettingsPage({
             return (
               <label
                 className={`grid min-h-10 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-card px-4 py-3 transition-colors ${
-                  locked ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-muted/60"
+                  locked ? "cursor-not-allowed" : "cursor-pointer hover:bg-muted/60"
                 }`}
                 key={managerId}
               >
@@ -64,6 +66,18 @@ export function SettingsPage({
               </label>
             );
           })}
+        </div>
+      </Panel>
+      <Panel>
+        <PanelHead title="扫描与留存" />
+        <div className="grid gap-3 p-4">
+          <dl className="fact-list fact-list--columns">
+            <div className="fact-row"><dt>扫描方式</dt><dd>按需扫描，不做后台自动刷新</dd></div>
+            <div className="fact-row"><dt>启动时</dt><dd>仅扫描首个已启用管理器</dd></div>
+            <div className="fact-row"><dt>历史快照</dt><dd>每个管理器保留最近 20 份</dd></div>
+            <div className="fact-row"><dt>维护记录</dt><dd>保留最近 500 条已关闭记录</dd></div>
+          </dl>
+          <p className="text-xs text-muted-foreground">切换启用状态后，进入对应管理器或手动刷新即可读取；历史只读，不构成撤销或维护授权。</p>
         </div>
       </Panel>
     </main>

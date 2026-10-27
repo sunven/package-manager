@@ -54,7 +54,7 @@ import { PathPanel } from "./components/PathPanel";
 import { SettingsPage } from "./components/SettingsPage";
 import { Shell } from "./components/Shell";
 import { ManagerDiagnostics } from "./components/ManagerDiagnostics";
-import { Panel } from "./components/ui";
+import { Panel, PageHeader } from "./components/ui";
 import { Toaster } from "../components/ui/sonner";
 
 type Theme = "dark" | "light";
@@ -372,7 +372,7 @@ export function App() {
       scanning={scanningManagers.size > 0}
       theme={theme}
     >
-      {state.historyWarning ? <Alert className="mb-3"><AlertTitle>历史保存提示</AlertTitle><AlertDescription className="break-words">{state.historyWarning}</AlertDescription></Alert> : null}
+      {state.historyWarning ? <Alert className="app-notice mb-3"><AlertTitle>历史保存提示</AlertTitle><AlertDescription className="break-words">{state.historyWarning}</AlertDescription></Alert> : null}
       <MessageBanner homeDirectory={state.homeDirectory} message={state.uiMessage} />
       <MaintenanceConfirmationBanner
         operation={state.maintenance}
@@ -383,38 +383,44 @@ export function App() {
       />
       <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
         {activeView === "plugins" ? (
-          <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
-            <TabsList aria-label="Codex 管理视图">
-              <TabsTrigger value="marketplaces" disabled={codex.locked}>插件市场</TabsTrigger>
-              <TabsTrigger value="hooks" disabled={codex.locked}>Hooks</TabsTrigger>
-              <TabsTrigger value="skills" disabled={codex.locked}>Skills</TabsTrigger>
-            </TabsList>
-            <TabsContent value="marketplaces">
-              <CodexMarketplacesPage
-                coverage={{
-                  marketplaces: requireCoverageItem(coverageById, "codex:marketplaces"),
-                  plugins: requireCoverageItem(coverageById, "codex:plugins"),
-                }}
-                focusedPluginId={focusedPluginId}
-                onShowHooks={() => setCodexTab("hooks")}
-                workflow={codex.extensions}
-              />
-            </TabsContent>
-            <TabsContent value="hooks">
-              <CodexHooksPage
-                coverageItem={requireCoverageItem(coverageById, "codex:hooks")}
-                onShowPlugins={() => setCodexTab("marketplaces")}
-                workflow={codex.extensions}
-              />
-            </TabsContent>
-            <TabsContent value="skills">
-              <CodexSkillsPage
-                coverageItem={requireCoverageItem(coverageById, "codex:skills")}
-                onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); setCodexTab("marketplaces"); }}
-                workflow={codex.skills}
-              />
-            </TabsContent>
-          </Tabs>
+          <div className="view-grid">
+            <PageHeader
+              title="Codex"
+              description="管理当前 Codex 目录的插件市场、Hooks 与 Skills；写入前会说明影响范围。"
+            />
+            <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
+              <TabsList aria-label="Codex 管理视图">
+                <TabsTrigger value="marketplaces" disabled={codex.locked}>插件市场</TabsTrigger>
+                <TabsTrigger value="hooks" disabled={codex.locked}>Hooks</TabsTrigger>
+                <TabsTrigger value="skills" disabled={codex.locked}>Skills</TabsTrigger>
+              </TabsList>
+              <TabsContent value="marketplaces">
+                <CodexMarketplacesPage
+                  coverage={{
+                    marketplaces: requireCoverageItem(coverageById, "codex:marketplaces"),
+                    plugins: requireCoverageItem(coverageById, "codex:plugins"),
+                  }}
+                  focusedPluginId={focusedPluginId}
+                  onShowHooks={() => setCodexTab("hooks")}
+                  workflow={codex.extensions}
+                />
+              </TabsContent>
+              <TabsContent value="hooks">
+                <CodexHooksPage
+                  coverageItem={requireCoverageItem(coverageById, "codex:hooks")}
+                  onShowPlugins={() => setCodexTab("marketplaces")}
+                  workflow={codex.extensions}
+                />
+              </TabsContent>
+              <TabsContent value="skills">
+                <CodexSkillsPage
+                  coverageItem={requireCoverageItem(coverageById, "codex:skills")}
+                  onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); setCodexTab("marketplaces"); }}
+                  workflow={codex.skills}
+                />
+              </TabsContent>
+            </Tabs>
+          </div>
         ) : activeView === "claude" ? (
           <ClaudeCodePage
             coverage={{
@@ -500,7 +506,14 @@ export function App() {
               actions.selectManager(managerId);
               setActiveView("managers");
             }}
-            onOpenView={setActiveView}
+            onOpenView={(view) => {
+              if (view === "environment") {
+                setOverviewTab("environment");
+                setActiveView("health");
+                return;
+              }
+              setActiveView(view);
+            }}
             onOpenCoverage={() => setOverviewTab("coverage")}
           />
             </TabsContent>
@@ -517,14 +530,19 @@ export function App() {
             </TabsContent>
           </Tabs>
         ) : (
-          <ManagerTabs
-            coverageIndex={coverageById}
-            managerIds={state.enabledManagers}
-            managerSnapshots={state.managerSnapshots}
-            onSelect={actions.selectManager}
-            scanningManagers={state.scanningManagers}
-            selectedManager={selectedManager}
-          >
+          <div className="view-grid">
+            <PageHeader
+              title="包管理器"
+              description="查看已启用管理器的包清单、路径与缓存占用；维护操作在确认后执行。"
+            />
+            <ManagerTabs
+              coverageIndex={coverageById}
+              managerIds={state.enabledManagers}
+              managerSnapshots={state.managerSnapshots}
+              onSelect={actions.selectManager}
+              scanningManagers={state.scanningManagers}
+              selectedManager={selectedManager}
+            >
             <ManagerObservationHeader
               busy={state.maintenanceBusy}
               item={requireCoverageItem(coverageById, managerObservationId(selectedManager))}
@@ -569,6 +587,7 @@ export function App() {
                   onRefresh={() => void actions.refresh()}
                   onCopy={(value) => void actions.copyCommand(value)}
                 />
+                <h2 className="rail-title">路径与缓存</h2>
                 <PathPanel
                   focusedPath={searchFocus?.managerId === selectedManager && searchFocus.kind === "path" ? searchFocus.observationId : undefined}
                   homeDirectory={state.homeDirectory}
@@ -583,10 +602,11 @@ export function App() {
                 />
               </aside>
             </main>
-          </ManagerTabs>
+            </ManagerTabs>
+          </div>
         )}
       </div>
-      <Toaster />
+      <Toaster theme={theme} />
     </Shell>
   );
 }
