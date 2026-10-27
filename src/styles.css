@@ -564,6 +564,8 @@
   position: relative;
   display: flex;
   height: 100dvh;
+  /* Match the Tauri window minimum; navigation stays visible on desktop. */
+  min-width: 960px;
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
@@ -767,15 +769,6 @@
 
 .studio-nav-item[aria-current="page"] svg {
   opacity: 1;
-}
-
-.studio-nav-more {
-  display: none;
-}
-
-.studio-nav-more svg {
-  width: 16px;
-  height: 16px;
 }
 
 .app-notice {
@@ -1010,17 +1003,6 @@
 .fact-list--columns .fact-row:nth-child(-n + 2) {
   border-top: 0;
   padding-top: 2px;
-}
-
-@media (max-width: 720px) {
-  .fact-list--columns {
-    grid-template-columns: 1fr;
-  }
-
-  .fact-list--columns .fact-row:nth-child(2) {
-    border-top: 1px solid var(--rule);
-    padding-top: 7px;
-  }
 }
 
 .meta-list {
@@ -1717,126 +1699,11 @@ td[data-align="end"] {
   min-width: 0;
 }
 
-/* ------------------------------ responsive ------------------------------- */
+/* ------------------------- compact desktop window ------------------------ */
 
 @media (max-width: 1080px) {
   .studio-main {
     padding: 20px 20px 48px;
-  }
-}
-
-@media (max-width: 900px) {
-  .studio-shell {
-    height: auto;
-    min-height: 100dvh;
-    overflow: visible;
-  }
-
-  .studio-topbar {
-    padding: 8px 16px;
-    height: auto;
-    min-height: 52px;
-  }
-
-  .studio-body {
-    grid-template-columns: 1fr;
-    min-width: 0;
-  }
-
-  .studio-sidebar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-    padding: 12px 16px;
-    overflow: visible;
-    min-width: 0;
-  }
-
-  .studio-brand {
-    display: flex;
-    grid-column: 1;
-    padding: 0 2px;
-  }
-
-  .studio-brand-copy p {
-    display: none;
-  }
-
-  .studio-nav {
-    display: none;
-  }
-
-  .studio-nav-more {
-    display: inline-flex;
-    height: 34px;
-    flex: none;
-    margin: 0;
-    color: var(--foreground);
-  }
-
-  [data-slot="dialog-content"] .studio-nav-label {
-    display: block;
-  }
-
-  .studio-main {
-    overflow: visible;
-  }
-
-  [data-slot="dialog-content"] .studio-nav-item {
-    height: 44px;
-  }
-}
-
-@media (max-width: 640px) {
-  .studio-topbar {
-    padding: 8px 12px;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .studio-top-actions {
-    gap: 4px;
-  }
-
-  .studio-main {
-    padding: 16px 16px 40px;
-  }
-
-  .view-grid {
-    gap: 20px;
-  }
-
-  .page-header h1 {
-    font-size: 21px;
-  }
-
-  .stat-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .stat-grid > :last-child:nth-child(odd) {
-    grid-column: 1 / -1;
-  }
-
-  .studio-manager-tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .studio-manager-tab {
-    height: 42px;
-  }
-
-  .manager-inventory-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .manager-token .status-dot {
-    display: none;
   }
 }
 

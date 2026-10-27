@@ -5,7 +5,6 @@ import {
   Cube,
   Gear as Settings,
   House,
-  List as ListIcon,
   Moon,
   Package,
   Robot,
@@ -13,8 +12,6 @@ import {
   TerminalWindow,
   Trash as Trash2,
 } from "@phosphor-icons/react";
-import { useState } from "react";
-import { Dialog, DialogContent, DialogTitle } from "../../components/ui/dialog";
 
 type ViewId = "health" | "history" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings";
 
@@ -80,18 +77,6 @@ export function Shell({
     claude: onShowClaudeCode,
     settings: onShowSettings,
   };
-  const [menuOpen, setMenuOpen] = useState(false);
-  const groups = [
-    { label: "观察", views: observeViews },
-    { label: "维护", views: maintainViews },
-    { label: "扩展", views: extensionViews },
-  ];
-
-  const go = (id: ViewId) => {
-    setMenuOpen(false);
-    handlers[id]();
-  };
-
   const renderViews = (views: typeof observeViews) => views.map((view) => {
     const Icon = view.icon;
     const current = activeView === view.id;
@@ -160,57 +145,11 @@ export function Shell({
               {renderViews([{ id: "settings", label: "设置", icon: Settings }])}
             </div>
           </nav>
-          <button
-            className="studio-nav-item studio-nav-more"
-            onClick={() => setMenuOpen(true)}
-            type="button"
-          >
-            <ListIcon aria-hidden="true" />
-            <span>全部</span>
-          </button>
         </aside>
         <div className="studio-main" id="main-content" tabIndex={-1}>
           {children}
         </div>
       </div>
-      <Dialog open={menuOpen} onOpenChange={setMenuOpen}>
-        <DialogContent className="max-w-sm gap-4">
-          <DialogTitle>导航</DialogTitle>
-          <nav aria-label="完整导航" className="grid gap-4">
-            {groups.map((group) => (
-              <div className="grid gap-1" key={group.label}>
-                <p className="studio-nav-label">{group.label}</p>
-                {group.views.map((view) => {
-                  const Icon = view.icon;
-                  return (
-                    <button
-                      aria-current={activeView === view.id ? "page" : undefined}
-                      className="studio-nav-item"
-                      key={view.id}
-                      onClick={() => go(view.id)}
-                      type="button"
-                    >
-                      <Icon aria-hidden="true" weight={activeView === view.id ? "fill" : "regular"} />
-                      <span>{view.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-            <div className="grid gap-1 border-t pt-3">
-              <button
-                aria-current={activeView === "settings" ? "page" : undefined}
-                className="studio-nav-item"
-                onClick={() => go("settings")}
-                type="button"
-              >
-                <Settings aria-hidden="true" weight={activeView === "settings" ? "fill" : "regular"} />
-                <span>设置</span>
-              </button>
-            </div>
-          </nav>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
