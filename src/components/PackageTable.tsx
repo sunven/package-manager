@@ -14,7 +14,7 @@ import type {
   PipFilter,
 } from "../types";
 import type { MaintenanceRequest } from "../state";
-import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel } from "../utils/format";
+import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel, shorten } from "../utils/format";
 import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, searchAndSortPackages, type PackageSort, type IndexedPackage } from "../utils/filters";
 import { cleanupCopyFor } from "../cleanupCopy";
 import { cx } from "../utils/classNames";
@@ -187,7 +187,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
               </PackageName>
             </TableCell>
             <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
-            {showSourceColumn ? <TableCell className="max-w-52 truncate text-muted-foreground">{shortenPath(formatHomePathsInText(pkg.source, homeDirectory))}</TableCell> : null}
+            {showSourceColumn ? <TableCell className="max-w-52 truncate text-muted-foreground">{shorten(formatHomePathsInText(pkg.source, homeDirectory))}</TableCell> : null}
             {showPathColumn ? <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ? formatHomePath(pkg.path, homeDirectory) : "无"}</TableCell> : null}
             <TableCell className={usesCompactTable ? "w-32 text-right" : "w-24 text-right"}>
               <PackageActions
@@ -513,10 +513,4 @@ function homebrewFilterCounts(manager: ManagerSnapshot): Partial<Record<Homebrew
     Outdated: maintenance.outdatedCount,
     Leaves: maintenance.leafCount,
   };
-}
-
-function shortenPath(value: string) {
-  const parts = value.split("/");
-  if (parts.length <= 4) return value;
-  return `${parts.slice(0, 2).join("/")}/.../${parts.slice(-2).join("/")}`;
 }

@@ -24,6 +24,7 @@ const initial: OpenCodeSessionScan = {
   message: null,
   activeSessionIds: [],
   activityMessage: null,
+  ageEligible: { days7: 3, days30: 2 },
   records: [record("parent"), record("child", "parent"), record("failed"), record("unattempted")],
 };
 
@@ -215,13 +216,19 @@ describe("OpenCode sessions adapter", () => {
         { id: "unattempted", status: "notAttempted", message: "stopped" },
       ],
       completedIds: ["parent", "child"],
-    }).mockResolvedValueOnce({ status: "unavailable", records: [], message: "service stopped" });
+    }).mockResolvedValueOnce({
+      status: "unavailable",
+      records: [],
+      message: "service stopped",
+      ageEligible: { days7: 0, days30: 0 },
+    });
     await act(async () => { await view.current.confirm(view.current.operation!.id); });
     expect(view.current.outcome).toMatchObject({
       completedIds: ["parent", "child"],
       refresh: { status: "failed", message: "service stopped" },
     });
     expect(view.current.scan?.records.map(({ id }) => id)).toEqual(["failed", "unattempted"]);
+    expect(view.current.scan?.ageEligible).toEqual({ days7: 3, days30: 2 });
   });
 
   it("opens a session and returns the command error", async () => {

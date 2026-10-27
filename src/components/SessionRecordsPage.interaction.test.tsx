@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { useSessionRecords } from "../hooks/useSessionRecords";
 import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
+import { openCodeObservationFacts, sessionObservationFacts } from "../observationFacts";
+import { requireCoverageItem } from "../observationCoverage";
+import { coverageIndexFromFacts } from "../test/observationFixtures";
 import { SessionRecordsPage } from "./SessionRecordsPage";
 import { removalResult } from "../test/fixtures";
 import type {
@@ -30,12 +33,18 @@ const mockedInvoke = vi.mocked(invoke);
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 const scan: SessionRecordScan = {
-  codex: { directory: "/codex/sessions", status: "Ready", message: null, records: [
-    { id: "alpha.jsonl", title: "Alpha project", workingDirectory: "/code/alpha", lastActivityMs: 1, bytes: 100, inUse: false },
-    { id: "beta.jsonl", title: "Beta project", workingDirectory: "/code/beta", lastActivityMs: 1, bytes: 200, inUse: false },
-    { id: "busy.jsonl", title: "Busy project", workingDirectory: null, lastActivityMs: 1, bytes: 300, inUse: true },
-  ] },
-  claude: { directory: "/claude/projects", status: "Missing", records: [], message: null },
+  codex: {
+    directory: "/codex/sessions",
+    status: "Ready",
+    message: null,
+    ageEligible: { days7: 2, days30: 2 },
+    records: [
+      { id: "alpha.jsonl", title: "Alpha project", workingDirectory: "/code/alpha", lastActivityMs: 1, bytes: 100, inUse: false },
+      { id: "beta.jsonl", title: "Beta project", workingDirectory: "/code/beta", lastActivityMs: 1, bytes: 200, inUse: false },
+      { id: "busy.jsonl", title: "Busy project", workingDirectory: null, lastActivityMs: 1, bytes: 300, inUse: true },
+    ],
+  },
+  claude: { directory: "/claude/projects", status: "Missing", records: [], message: null, ageEligible: { days7: 0, days30: 0 } },
 };
 
 const openCodeScan: OpenCodeSessionScan = {
@@ -43,6 +52,7 @@ const openCodeScan: OpenCodeSessionScan = {
   message: null,
   activeSessionIds: [],
   activityMessage: null,
+  ageEligible: { days7: 2, days30: 2 },
   records: [
     { id: "ses_parent", title: "Parent session", lastActivityMs: 20, workingDirectory: "/work/project", archived: false, parentId: null, parentTitle: null },
     { id: "ses_child", title: "Archived child", lastActivityMs: 30, workingDirectory: "/work/project/subproject", archived: true, parentId: "ses_parent", parentTitle: "Parent session" },
@@ -108,7 +118,18 @@ async function setup(overrides: Options = {}) {
   planSequence = 0;
   const selected = vi.fn().mockResolvedValue(removalResult({ skipped: 1, items: [{ id: "beta.jsonl", status: "Skipped", reason: "InUse", message: null }] }));
   const age = vi.fn().mockResolvedValue(removalResult());
-  const fixtures = { scan, openCodeScan: { status: "ready", records: [], message: null, activeSessionIds: [], activityMessage: null } as OpenCodeSessionScan, ...overrides };
+  const fixtures = {
+    scan,
+    openCodeScan: {
+      status: "ready",
+      records: [],
+      message: null,
+      activeSessionIds: [],
+      activityMessage: null,
+      ageEligible: { days7: 0, days30: 0 },
+    } as OpenCodeSessionScan,
+    ...overrides,
+  };
   mockedInvoke.mockImplementation(async (command, args) => {
     const params = args as {
       source: SessionSourceId;
@@ -147,7 +168,25 @@ async function setup(overrides: Options = {}) {
   function Harness({ visible = true }: { visible?: boolean }) {
     records = useSessionRecords(true);
     openCode = useOpenCodeSessions(true);
-    return visible ? <SessionRecordsPage records={records} openCode={openCode} homeDirectory={fixtures.homeDirectory ?? null} initialSource={fixtures.initialSource} nowMs={fixtures.nowMs} /> : null;
+    const index = coverageIndexFromFacts({
+      "session:codex": sessionObservationFacts("codex", records.scan?.codex ?? null, records.scanningSources.codex, records.error),
+      "session:claude": sessionObservationFacts("claude", records.scan?.claude ?? null, records.scanningSources.claude, records.error),
+      "session:grok": sessionObservationFacts("grok", records.scan?.grok ?? null, records.scanningSources.grok, records.error),
+      "session:opencode": openCodeObservationFacts(openCode.scan, openCode.scanning, openCode.error),
+    });
+    return visible ? <SessionRecordsPage
+      coverageItems={{
+        codex: requireCoverageItem(index, "session:codex"),
+        claude: requireCoverageItem(index, "session:claude"),
+        grok: requireCoverageItem(index, "session:grok"),
+        opencode: requireCoverageItem(index, "session:opencode"),
+      }}
+      records={records}
+      openCode={openCode}
+      homeDirectory={fixtures.homeDirectory ?? null}
+      initialSource={fixtures.initialSource}
+      nowMs={fixtures.nowMs}
+    /> : null;
   }
   const { rerender } = render(<Harness />);
   await waitFor(() => expect(records.scan).not.toBeNull());
@@ -473,7 +512,13 @@ describe("session selection boundaries", () => {
       { ...scan.codex.records[1], lastActivityMs: null },
       { ...scan.codex.records[2], lastActivityMs: 1 },
     ];
-    await setup({ nowMs, scan: { ...scan, codex: { ...scan.codex, records } } });
+    await setup({
+      nowMs,
+      scan: {
+        ...scan,
+        codex: { ...scan.codex, records, ageEligible: { days7: 0, days30: 0 } },
+      },
+    });
     const inUseCheckbox = screen.getByRole("checkbox", { name: "选择 Busy project" });
     expect(inUseCheckbox.getAttribute("aria-describedby")).toBeTruthy();
     expect(screen.getByText("使用中，暂不移除")).toBeTruthy();
@@ -489,7 +534,12 @@ describe("session selection boundaries", () => {
     await setup({
       initialSource: "opencode",
       nowMs,
-      openCodeScan: { ...openCodeScan, records: [recent], activeSessionIds: [] },
+      openCodeScan: {
+        ...openCodeScan,
+        records: [recent],
+        activeSessionIds: [],
+        ageEligible: { days7: 0, days30: 0 },
+      },
     });
     expect((screen.getByRole("button", { name: "永久删除 7 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "永久删除 30 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);

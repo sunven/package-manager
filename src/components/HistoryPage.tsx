@@ -31,6 +31,7 @@ import {
 } from "../maintenanceHistory";
 import type { ManagerId } from "../types";
 import { formatBytes, formatHomePath } from "../utils/format";
+import { Notice } from "./ui";
 import { SnapshotHistory } from "./SnapshotHistory";
 
 const selectClass = "max-w-full rounded-lg border bg-background px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-ring";
@@ -375,8 +376,4 @@ function projectStatusLabel(status: string) {
   if (status === "Skipped") return "跳过";
   if (status === "Rejected") return "拒绝执行";
   return status;
-}
-
-function Notice({ title, message }: { title: string; message: string }) {
-  return <Alert><AlertTitle>{title}</AlertTitle><AlertDescription className="break-words">{message}</AlertDescription></Alert>;
 }

@@ -11,6 +11,7 @@ import {
   type ProjectDataSortDir,
 } from "../projectCleanup";
 import type { ProjectDataKind } from "../types";
+import type { ObservationCoverageItem } from "../observationCoverage";
 import type {
   CleanupBatchView,
   ProjectCleanupCandidateView,
@@ -53,6 +54,7 @@ import {
   TableRow,
 } from "../../components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
+import { ObservationState } from "./ObservationState";
 import { EmptyState, IconButton, Panel, PanelHead } from "./ui";
 import { ProjectScanHistoryDialog } from "./ProjectScanHistoryDialog";
 
@@ -60,11 +62,13 @@ export function ProjectCleanupPage({
   homeDirectory,
   view,
   workflow,
+  coverageItem,
   onShowHistory,
 }: {
   homeDirectory: string | null;
   view: ProjectCleanupView;
   workflow: ProjectCleanupWorkflow;
+  coverageItem: ObservationCoverageItem;
   onShowHistory?: (recordId: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -120,9 +124,9 @@ export function ProjectCleanupPage({
     .filter((candidate) => candidate.cleanability.kind === "cleanable")
     .map((candidate) => candidate.candidateId);
   const noVisibleEligibleCandidates = visibleCandidates.length > 0 && selectableVisibleIds.length === 0;
-  const allVisibleSelected = Boolean(selectableVisibleIds.length)
-    && selectableVisibleIds.every((candidateId) =>
-      candidates.find((candidate) => candidate.candidateId === candidateId)?.selected,
+  const allVisibleSelected = selectableVisibleIds.length > 0
+    && visibleCandidates.every((candidate) =>
+      candidate.cleanability.kind !== "cleanable" || candidate.selected,
     );
   const settingsBusy = view.settings.phase === "loading";
   const scanBusy = view.scan.phase === "discovering" || view.scan.phase === "measuring";
@@ -284,6 +288,7 @@ export function ProjectCleanupPage({
           {view.settings.activePresetId ? <Button disabled={settingsBusy || scanBusy || Boolean(view.batch)} variant="outline" size="sm" type="button" onClick={() => void workflow.removePreset(view.settings.activePresetId!).then((outcome) => report(outcome, "无法移除目录预设"))}>移除当前预设（不删除目录）</Button> : null}
           <span className="text-xs text-muted-foreground">预设只保存扫描根目录和深度，切换后需要重新扫描。</span>
         </div>
+        <ObservationState className="px-3 pb-2" item={coverageItem} showNote={false} variant="strip" />
         {activePreset ? (
           <ProjectScanSummary
             depth={view.settings.maxDepth}

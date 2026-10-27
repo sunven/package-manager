@@ -11,6 +11,7 @@ import {
   completedVscodeRemovalIds,
   removeVscodeWorkspaces,
 } from "../vscodeRemoval";
+import { recordMaintenanceFollowUp } from "../maintenanceFollowUp";
 import { recordObservationFacts, vscodeObservationFacts } from "../observationFacts";
 import {
   useSessionOperation,
@@ -67,14 +68,6 @@ const adapter: SessionOperationAdapter<
       : scans;
   },
   shouldRefresh: () => true,
-  recordFollowUp: async (_target, result, refresh) => {
-    if (!result.historyId) return;
-    await invoke("record_maintenance_followup", {
-      id: result.historyId,
-      status: refresh.status,
-      message: refresh.message,
-    });
-  },
 };
 
 export function useVscodeStorage(active: boolean) {
@@ -94,7 +87,12 @@ export function useVscodeStorage(active: boolean) {
     VscodeRemovalTarget,
     VscodeStorageRemovalResult,
     VscodeStorageRemovalProgress
-  >(adapter, { active, scopes: VSCODE_SCOPES, readOnActivate: false });
+  >(adapter, {
+    active,
+    scopes: VSCODE_SCOPES,
+    readOnActivate: false,
+    recordFollowUp: recordMaintenanceFollowUp,
+  });
 
   const [editorStatus, setEditorStatus] = useState<VscodeEditorStatus | null>(null);
   const [checkingEditor, setCheckingEditor] = useState(false);

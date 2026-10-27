@@ -1,9 +1,10 @@
 use crate::command::run_command;
 use crate::session_records::{
-    move_path_to_trash, parse_rfc3339_millis, SessionRecord, SessionRemovalItem,
-    SessionRemovalProgress, SessionRemovalReason, SessionRemovalResult, SessionRemovalStatus,
-    SessionScanStatus, SessionSourceScan,
+    age_eligible_counts, move_path_to_trash, now_ms, parse_rfc3339_millis, SessionRecord,
+    SessionRemovalItem, SessionRemovalProgress, SessionRemovalReason, SessionRemovalResult,
+    SessionRemovalStatus, SessionScanStatus, SessionSourceScan,
 };
+use crate::types::AgeEligibleCounts;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -291,6 +292,7 @@ fn empty_scan(root: &Path) -> SessionSourceScan {
         records: Vec::new(),
         message: None,
         removal_blocked_reason: None,
+        age_eligible: AgeEligibleCounts::default(),
     }
 }
 
@@ -627,6 +629,7 @@ pub(crate) fn scan_default() -> SessionSourceScan {
             scan.removal_blocked_reason.get_or_insert(message);
         }
     }
+    scan.age_eligible = age_eligible_counts(&scan.records, now_ms());
     scan
 }
 

@@ -5,6 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSessionRecords } from "../hooks/useSessionRecords";
 import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { SessionRecordsPage } from "./SessionRecordsPage";
+import { requireCoverageItem } from "../observationCoverage";
+import { openCodeObservationFacts, sessionObservationFacts } from "../observationFacts";
+import { coverageIndexFromFacts } from "../test/observationFixtures";
 import type { SessionRecord, SessionRecordScan, SessionSourceScan } from "../sessionRecords";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -28,6 +31,7 @@ function record(id: string, title: string, time: number | null): SessionRecord {
 function source(overrides: Partial<SessionSourceScan> = {}): SessionSourceScan {
   return {
     directory, status: "Ready", message: null, removalBlockedReason: null,
+    ageEligible: { days7: 1, days30: 1 },
     records: [
       record("old", "旧的设计记录", now - 40 * 86_400_000),
       record("recent", "今天的修复记录", now),
@@ -40,11 +44,25 @@ function source(overrides: Partial<SessionSourceScan> = {}): SessionSourceScan {
 function Harness() {
   const records = useSessionRecords(true);
   const openCode = useOpenCodeSessions(false);
-  return <SessionRecordsPage records={records} openCode={openCode} initialSource="grok" homeDirectory="/Users/example" nowMs={now} />;
+  const index = coverageIndexFromFacts({
+    "session:codex": sessionObservationFacts("codex", records.scan?.codex ?? null, records.scanningSources.codex, records.error),
+    "session:claude": sessionObservationFacts("claude", records.scan?.claude ?? null, records.scanningSources.claude, records.error),
+    "session:grok": sessionObservationFacts("grok", records.scan?.grok ?? null, records.scanningSources.grok, records.error),
+    "session:opencode": openCodeObservationFacts(openCode.scan, openCode.scanning, openCode.error),
+  });
+  return <SessionRecordsPage
+    coverageItems={{
+      codex: requireCoverageItem(index, "session:codex"),
+      claude: requireCoverageItem(index, "session:claude"),
+      grok: requireCoverageItem(index, "session:grok"),
+      opencode: requireCoverageItem(index, "session:opencode"),
+    }}
+    records={records} openCode={openCode} initialSource="grok" homeDirectory="/Users/example" nowMs={now}
+  />;
 }
 
 function respond(scan: SessionSourceScan, removal?: unknown) {
-  const empty: SessionSourceScan = { directory: "", status: "Missing", records: [], message: null };
+  const empty: SessionSourceScan = { directory: "", status: "Missing", records: [], message: null, ageEligible: { days7: 0, days30: 0 } };
   const all: SessionRecordScan = { codex: empty, claude: empty, grok: scan };
   mockedInvoke.mockImplementation(async (command) => {
     if (command === "scan_session_records") return all;

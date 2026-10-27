@@ -13,11 +13,14 @@ import {
   definitionHook, type CodexHook,
 } from "../codexHooks";
 import type { CodexExtensions } from "../hooks/useCodexExtensions";
+import type { ObservationCoverageItem } from "../observationCoverage";
 import { CodexHookEditor, type HookEditorSelection } from "./CodexHookEditor";
+import { ObservationState } from "./ObservationState";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
-export function CodexHooksPage({ workflow, onShowPlugins }: {
+export function CodexHooksPage({ workflow, coverageItem, onShowPlugins }: {
   workflow: CodexExtensions;
+  coverageItem: ObservationCoverageItem;
   onShowPlugins: () => void;
 }) {
   const { scan, scanning, current, error, result } = workflow.hooks;
@@ -69,6 +72,7 @@ export function CodexHooksPage({ workflow, onShowPlugins }: {
             <span className="shrink-0 text-muted-foreground">Codex 目录</span>
             <code className="min-w-0 break-all">{scan?.directory || "尚未读取"}</code>
           </div>
+          <ObservationState item={coverageItem} showNote={false} variant="strip" />
           <p className="text-xs text-muted-foreground">
             用户定义可新增、编辑和删除；插件定义只读，可单项启停。项目配置与已禁用插件未展开。{" "}
             <button className="cursor-pointer text-primary underline underline-offset-4 disabled:cursor-default disabled:opacity-50" disabled={blocked || Boolean(editor)} onClick={onShowPlugins} type="button">前往插件市场</button>

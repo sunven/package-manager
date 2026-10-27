@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CodexHooksPage } from "./CodexHooksPage";
 import { useCodexExtensions } from "../hooks/useCodexExtensions";
 import { codexHookDefinitionScanFixture } from "../test/codexHookFixtures";
+import { observationCoverageItem } from "../test/observationFixtures";
 import type { CodexHookScan, HookDefinitionPreview, HookDefinitionRequest } from "../codexHooks";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -14,7 +15,7 @@ beforeEach(() => vi.resetAllMocks());
 
 function Harness() {
   const workflow = useCodexExtensions(true, "hooks");
-  return <CodexHooksPage workflow={workflow} onShowPlugins={vi.fn()} />;
+  return <CodexHooksPage coverageItem={observationCoverageItem("codex:hooks")} workflow={workflow} onShowPlugins={vi.fn()} />;
 }
 
 function preview(request: HookDefinitionRequest): HookDefinitionPreview {

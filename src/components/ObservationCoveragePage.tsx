@@ -4,41 +4,14 @@ import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "../../components/ui/card";
-import {
-  formatObservationTime,
-  type CoverageStatus,
-  type ObservationCoverage,
-  type ObservationCoverageGroup,
-  type ObservationCoverageItem,
+import type {
+  ObservationCoverage,
+  ObservationCoverageGroup,
+  ObservationCoverageItem,
 } from "../observationCoverage";
 import type { ObservationGroupId } from "../observationItems";
+import { ObservationState } from "./ObservationState";
 import { StatCard } from "./ui";
-
-const statusLabels: Record<CoverageStatus, string> = {
-  disabled: "已停用",
-  inProgress: "观察中",
-  invalidated: "已失效",
-  scopeChanged: "范围已变化",
-  failed: "读取失败",
-  unavailable: "不可用",
-  observed: "已观察",
-  partial: "部分",
-  lastObserved: "上次观察",
-  notObserved: "未观察",
-};
-
-const badgeStyles: Record<CoverageStatus, { variant: "default" | "secondary" | "destructive" | "outline"; dataStatus: string }> = {
-  observed: { variant: "default", dataStatus: "Ready" },
-  partial: { variant: "secondary", dataStatus: "Partial" },
-  failed: { variant: "destructive", dataStatus: "Failed" },
-  unavailable: { variant: "destructive", dataStatus: "Failed" },
-  invalidated: { variant: "secondary", dataStatus: "Partial" },
-  scopeChanged: { variant: "secondary", dataStatus: "Partial" },
-  inProgress: { variant: "secondary", dataStatus: "Scanning" },
-  disabled: { variant: "outline", dataStatus: "neutral" },
-  lastObserved: { variant: "outline", dataStatus: "neutral" },
-  notObserved: { variant: "outline", dataStatus: "neutral" },
-};
 
 const defaultExpanded: Record<ObservationGroupId, boolean> = {
   managers: true,
@@ -204,77 +177,18 @@ function CoverageRow({
   onRefresh: (item: ObservationCoverageItem) => void;
   onAdjustScope: (item: ObservationCoverageItem) => void;
 }) {
-  const style = badgeStyles[item.status];
-  const detail = detailText(item);
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 border-t py-3 first:border-t-0" data-observation-item={item.id}>
-      <div className="grid min-w-0 flex-1 gap-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <strong className="text-sm">{item.label}</strong>
-          <Badge className="status-badge" data-status={style.dataStatus} variant={style.variant}>
-            {statusLabels[item.status]}
-          </Badge>
-        </div>
-        <p className="text-xs text-muted-foreground">{timeText(item)}</p>
-        {detail ? <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{detail}</p> : null}
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {item.status !== "disabled" ? (
-          <Button onClick={() => onView(item)} size="sm" type="button" variant="outline">查看</Button>
-        ) : null}
-        {item.actions.refresh ? (
-          <Button
-            disabled={busy || item.status === "inProgress"}
-            onClick={() => onRefresh(item)}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            刷新
-          </Button>
-        ) : null}
-        {item.actions.adjustScope ? (
-          <Button onClick={() => onAdjustScope(item)} size="sm" type="button" variant="ghost">
-            {item.group === "managers" ? "设置" : "调整范围"}
-          </Button>
-        ) : null}
-      </div>
-    </div>
+    <ObservationState
+      actions={{
+        view: { onClick: () => onView(item) },
+        refresh: { onClick: () => onRefresh(item), disabled: busy || item.status === "inProgress" },
+        adjustScope: {
+          onClick: () => onAdjustScope(item),
+          variant: "ghost",
+        },
+      }}
+      item={item}
+      variant="row"
+    />
   );
-}
-
-function timeText(item: ObservationCoverageItem) {
-  const parts: string[] = [];
-  if (item.lastSuccessAt) {
-    const prefix = item.status === "lastObserved"
-      ? "上次观察于"
-      : item.status === "observed" || item.status === "partial"
-        ? "观察于"
-        : "上次成功于";
-    parts.push(`${prefix} ${formatObservationTime(item.lastSuccessAt)}`);
-  }
-  if (item.lastAttemptAt && item.lastAttemptOutcome !== "succeeded") {
-    parts.push(`最近尝试于 ${formatObservationTime(item.lastAttemptAt)}`);
-  }
-  if (!parts.length) parts.push(item.status === "inProgress" ? "首次读取中" : "尚未读取");
-  if (item.status === "lastObserved") parts.push("本次会话尚未读取");
-  return parts.join(" · ");
-}
-
-function detailText(item: ObservationCoverageItem) {
-  const details: string[] = [];
-  if (item.scopeChanged) {
-    details.push(`范围已变化：上次 ${item.lastSuccessScopeLabel ?? "未知"}；当前 ${item.currentScopeLabel ?? "未知"}`);
-  } else if (item.currentScopeLabel) {
-    details.push(`范围：${item.currentScopeLabel}`);
-  }
-  if (item.status === "invalidated" && item.invalidatedAt) {
-    details.push(`失效于 ${formatObservationTime(item.invalidatedAt)}${item.invalidatedReason ? `：${item.invalidatedReason}` : ""}`);
-  }
-  if (item.note && !item.scopeChanged) details.push(item.note);
-  if (item.lastAttemptOutcome !== "succeeded" && item.lastAttemptReason && item.status !== "failed" && item.status !== "unavailable") {
-    details.push(`最近尝试失败：${item.lastAttemptReason}`);
-  }
-  if (item.completeness === "partial" && item.status !== "partial") details.push("读取不完整");
-  return details.join(" · ");
 }

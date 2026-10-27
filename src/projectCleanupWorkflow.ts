@@ -1,5 +1,6 @@
 import type {
   DirectoryMeasurement,
+  ProjectCleanupBatchProgress,
   ProjectCleanupResult,
   ProjectCleanupSettings,
   ProjectDataCandidate,
@@ -21,14 +22,13 @@ export interface ProjectCleanupEffects {
   updateDepth(id: string, maxDepth: number): Promise<ProjectCleanupSettings>;
   scan(input: { rootId: string; maxDepth: number }): Promise<ProjectDataScan>;
   measure(input: { scanId: string; candidateId: string }): Promise<DirectoryMeasurement>;
-  clean(input: { scanId: string; candidateId: string; historyId?: string | null }): Promise<ProjectCleanupResult>;
-  beginHistory(input: { scanId: string; batchId: string; candidateIds: string[] }): Promise<{ historyId: string | null; historyWarning: string | null }>;
-  finishHistory(input: {
-    historyId: string;
-    finish: "completed" | "stopped";
-    effectFailures: { candidateId: string; message: string }[];
-    message: string | null;
-  }): Promise<string | null>;
+  runBatch(input: {
+    scanId: string;
+    batchId: string;
+    candidateIds: string[];
+    onProgress: (progress: ProjectCleanupBatchProgress) => void;
+  }): Promise<CleanupBatchSummary>;
+  requestStop(batchId: string): Promise<void>;
   openRoot(rootId: string): Promise<void>;
   openCandidate(input: {
     scanId: string;
@@ -719,173 +719,141 @@ export function createProjectCleanupWorkflow(
       if (!view.batch || view.batch.phase !== "confirmation") {
         return { kind: "unavailable", reason: "batch-not-ready" };
       }
-      publish({
-        ...view,
-        batch: {
-          ...view.batch,
-          phase: "running",
-        },
-      });
-
-      let historyId: string | null = null;
-      let historyWarning: string | null = null;
-      const effectFailures: { candidateId: string; message: string }[] = [];
-      try {
-        const history = await effects.beginHistory({
-          scanId: view.batch.scanId,
-          batchId: view.batch.batchId,
-          candidateIds: view.batch.candidates.map((candidate) => candidate.candidateId),
-        });
-        historyId = history.historyId;
-        historyWarning = history.historyWarning;
-      } catch (error) {
-        historyWarning = errorText(error);
-      }
-
-      for (let index = 0; index < view.batch.candidates.length; index += 1) {
-        const batch = view.batch;
-        const session = view.scan.session;
-        if (!batch || !session) break;
-        if (batch.stopRequested) break;
-        const item = batch.candidates[index];
-        publish({
-          ...view,
-          scan: {
-            ...view.scan,
-            session: {
-              ...session,
-              candidates: session.candidates.map((candidate) =>
-                candidate.candidateId === item.candidateId
-                  ? {
-                      ...candidate,
-                      selected: false,
-                      cleanability: { kind: "requires-rescan" },
-                      cleanup: { kind: "attempting" },
-                    }
-                  : candidate,
-              ),
-            },
-          },
-          batch: {
-            ...batch,
-            candidates: batch.candidates.map((candidate, candidateIndex) =>
-              candidateIndex === index
-                ? { ...candidate, state: { kind: "running" } }
-                : candidate,
-            ),
-          },
-        });
-
-        let outcome: CandidateCleanupOutcome;
-        try {
-          const result = await effects.clean({
-            scanId: batch.scanId,
-            candidateId: item.candidateId,
-            historyId,
-          });
-          if (result.historyWarning) historyWarning = joinWarnings(historyWarning, result.historyWarning);
-          outcome = { kind: "result", result };
-        } catch (error) {
-          const message = errorText(error);
-          effectFailures.push({ candidateId: item.candidateId, message });
-          outcome = {
-            kind: "effect-failed",
-            failure: {
-              operation: "clean",
-              message,
-              candidateId: item.candidateId,
-            },
-          };
-        }
-
-        const currentBatch = view.batch;
-        const currentSession = view.scan.session;
-        if (!currentBatch || !currentSession) break;
-        publish({
-          ...view,
-          scan: {
-            ...view.scan,
-            session: {
-              ...currentSession,
-              candidates: currentSession.candidates.map((candidate) => {
-                if (candidate.candidateId !== item.candidateId) return candidate;
-                return {
-                  ...candidate,
-                  measurement:
-                    outcome.kind === "result"
-                      ? outcome.result.measurement
-                      : candidate.measurement,
-                  selected: false,
-                  cleanability: { kind: "requires-rescan" },
-                  cleanup: { kind: "attempted", outcome },
-                };
-              }),
-            },
-          },
-          batch: {
-            ...currentBatch,
-            candidates: currentBatch.candidates.map((candidate, candidateIndex) =>
-              candidateIndex === index
-                ? { ...candidate, state: { kind: "finished", outcome } }
-                : candidate,
-            ),
-            completedCount: currentBatch.completedCount + 1,
-            cleanedBytes:
-              currentBatch.cleanedBytes +
-              (outcome.kind === "result" ? outcome.result.cleanedBytes : 0),
-          },
-        });
-      }
-
-      const batch = view.batch!;
-      const finish = batch.stopRequested ? "stopped" : "completed";
-      const candidates = batch.candidates.map((candidate) =>
-        finish === "stopped" && candidate.state.kind === "not-started"
-          ? { ...candidate, state: { kind: "stopped" } as const }
-          : candidate,
-      );
-      if (historyId) {
-        try {
-          historyWarning = joinWarnings(historyWarning, await effects.finishHistory({
-            historyId,
-            finish,
-            effectFailures,
-            message: null,
-          }));
-        } catch (error) {
-          historyWarning = joinWarnings(historyWarning, errorText(error));
-        }
-      }
-      bumpHistoryRevision();
-      const summary: CleanupBatchSummary = {
-        finish,
-        totalCount: candidates.length,
-        completedCount: batch.completedCount,
-        failedCount: candidates.filter(
-          (candidate) =>
-            candidate.state.kind === "finished" &&
-            cleanupOutcomeFailed(candidate.state.outcome),
-        ).length,
-        cleanedBytes: batch.cleanedBytes,
-        historyId,
-        historyWarning,
-      };
+      const batch = view.batch;
+      const candidateIds = batch.candidates.map((candidate) => candidate.candidateId);
       publish({
         ...view,
         batch: {
           ...batch,
-          phase: "result",
-          finish,
-          candidates,
+          phase: "running",
+          candidates: batch.candidates.map((candidate, index) =>
+            index === 0 ? { ...candidate, state: { kind: "running" as const } } : candidate,
+          ),
         },
       });
-      return { kind: "succeeded", value: summary };
+
+      const applyProgress = (progress: ProjectCleanupBatchProgress) => {
+        const current = view.batch;
+        if (!current || current.phase !== "running" || progress.phase === "started") return;
+        const outcome: CandidateCleanupOutcome =
+          progress.outcome.kind === "result"
+            ? { kind: "result", result: progress.outcome.result }
+            : {
+                kind: "effect-failed",
+                failure: {
+                  operation: "clean",
+                  message: progress.outcome.message,
+                  candidateId: progress.outcome.candidateId,
+                },
+              };
+        const session = view.scan.session;
+        const completedIndex = current.candidates.findIndex(
+          (candidate) => candidate.candidateId === progress.candidateId,
+        );
+        const nextIndex = current.candidates.findIndex(
+          (candidate, index) =>
+            index > completedIndex && candidate.state.kind === "not-started",
+        );
+        publish({
+          ...view,
+          scan: session && session.scanId === current.scanId
+            ? {
+                ...view.scan,
+                session: {
+                  ...session,
+                  candidates: session.candidates.map((candidate) =>
+                    candidate.candidateId === progress.candidateId
+                      ? {
+                          ...candidate,
+                          measurement:
+                            outcome.kind === "result"
+                              ? outcome.result.measurement
+                              : candidate.measurement,
+                          selected: false,
+                          cleanability: { kind: "requires-rescan" },
+                          cleanup: { kind: "attempted", outcome },
+                        }
+                      : candidate,
+                  ),
+                },
+              }
+            : view.scan,
+          batch: {
+            ...current,
+            completedCount: progress.completedCount,
+            cleanedBytes: progress.cleanedBytes,
+            candidates: current.candidates.map((candidate, index) => {
+              if (index === completedIndex) {
+                return { ...candidate, state: { kind: "finished", outcome } };
+              }
+              if (index === nextIndex && !current.stopRequested) {
+                return { ...candidate, state: { kind: "running" } };
+              }
+              return candidate;
+            }),
+          },
+        });
+      };
+
+      try {
+        const summary = await effects.runBatch({
+          scanId: batch.scanId,
+          batchId: batch.batchId,
+          candidateIds,
+          onProgress: applyProgress,
+        });
+        const current = view.batch!;
+        const candidates = current.candidates.map((candidate) =>
+          summary.finish === "stopped"
+            && (candidate.state.kind === "not-started" || candidate.state.kind === "running")
+            ? { ...candidate, state: { kind: "stopped" as const } }
+            : candidate,
+        );
+        publish({
+          ...view,
+          batch: {
+            ...current,
+            phase: "result",
+            finish: summary.finish,
+            completedCount: summary.completedCount,
+            cleanedBytes: summary.cleanedBytes,
+            candidates,
+          },
+        });
+        bumpHistoryRevision();
+        return { kind: "succeeded", value: summary };
+      } catch (error) {
+        const failure: WorkflowFailure = { operation: "clean", message: errorText(error) };
+        const current = view.batch!;
+        publish({
+          ...view,
+          batch: {
+            ...current,
+            phase: "result",
+            finish: null,
+            candidates: current.candidates.map((candidate) =>
+              candidate.state.kind === "running"
+                ? {
+                    ...candidate,
+                    state: {
+                      kind: "finished",
+                      outcome: { kind: "effect-failed", failure },
+                    },
+                  }
+                : candidate,
+            ),
+          },
+        });
+        bumpHistoryRevision();
+        return { kind: "failed", failure };
+      }
     },
     requestCleanupStop: () => {
       if (!view.batch || view.batch.phase !== "running") {
         return { kind: "unavailable", reason: "cleanup-inactive" };
       }
       if (!view.batch.stopRequested) {
+        void effects.requestStop(view.batch.batchId).catch(() => undefined);
         publish({
           ...view,
           batch: {
@@ -948,10 +916,6 @@ export function createProjectCleanupWorkflow(
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function joinWarnings(current: string | null, next: string | null) {
-  return [current, next].filter((value): value is string => Boolean(value)).join("\n") || null;
 }
 
 function candidateView(
@@ -1056,11 +1020,4 @@ function calculateTotals(
     }
   }
   return totals;
-}
-
-function cleanupOutcomeFailed(outcome: CandidateCleanupOutcome) {
-  return (
-    outcome.kind === "effect-failed" ||
-    (outcome.result.status !== "Succeeded" && outcome.result.status !== "Skipped")
-  );
 }

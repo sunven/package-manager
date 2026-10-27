@@ -1,8 +1,7 @@
 use crate::manager_history;
-use crate::project_cleanup::{ProjectCleanupResult, ProjectDataKind};
-use crate::session_records::{SessionRemovalItem, SessionRemovalResult, SessionSourceKind};
-use crate::types::{CacheCleanupRun, CleanupOutcome, CleanupStepState, ManagerId};
-use crate::vscode_removal::{VscodeStorageRemovalItem, VscodeStorageRemovalResult};
+use crate::project_cleanup::ProjectDataKind;
+use crate::session_records::SessionSourceKind;
+use crate::types::ManagerId;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
@@ -17,7 +16,7 @@ const CLOSED_RECORD_LIMIT: usize = 500;
 const TEXT_LIMIT: usize = 2000;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -33,11 +32,11 @@ fn next_id() -> String {
     )
 }
 
-fn text(value: String) -> String {
+pub(crate) fn text(value: String) -> String {
     value.chars().take(TEXT_LIMIT).collect()
 }
 
-fn optional_text(value: Option<String>) -> Option<String> {
+pub(crate) fn optional_text(value: Option<String>) -> Option<String> {
     value.map(text)
 }
 
@@ -373,15 +372,6 @@ pub(crate) struct History {
     pub warnings: Vec<String>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Receipt<T: Serialize> {
-    #[serde(flatten)]
-    pub result: T,
-    pub history_id: Option<String>,
-    pub history_warning: Option<String>,
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LegacyRecord {
@@ -649,37 +639,13 @@ impl MaintenanceHistoryState {
         Ok(id)
     }
 
-    pub fn begin_manager(
-        &self,
-        manager: ManagerId,
-        operation: MaintenanceOperation,
-        target: Option<String>,
-        before_snapshot_id: Option<String>,
-    ) -> Result<String, String> {
-        let domain = MaintenanceDomain::Manager;
-        self.begin(
-            domain,
-            operation,
-            MaintenanceDetail::Manager(ManagerDetail {
-                manager_id: manager,
-                target,
-                steps: None,
-            }),
-            before_snapshot_id,
-        )
-    }
-
     pub fn finish(
         &self,
         id: &str,
         execution: ExecutionSummary,
         message: String,
     ) -> Result<(), String> {
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
+        self.update(id, move |record| {
             record.finished_at = Some(now());
             record.execution = execution;
             record.message = text(message);
@@ -687,378 +653,21 @@ impl MaintenanceHistoryState {
         })
     }
 
-    pub fn finish_manager(
-        &self,
-        id: &str,
-        execution: ExecutionSummary,
-        message: String,
-        steps: Option<Vec<ManagerStep>>,
-    ) -> Result<(), String> {
+    pub fn update<F>(&self, id: &str, update: F) -> Result<(), String>
+    where
+        F: FnOnce(&mut MaintenanceRecord) -> Result<(), String>,
+    {
         self.mutate(|records| {
             let record = records
                 .iter_mut()
                 .find(|record| record.id == id)
                 .ok_or("维护记录已超出保留范围")?;
-            if let MaintenanceDetail::Manager(detail) = &mut record.detail {
-                detail.steps = steps;
-            }
-            record.finished_at = Some(now());
-            record.execution = execution;
-            record.message = text(message);
-            if execution == ExecutionSummary::NotExecuted {
-                if let Some(verification) = &mut record.verification {
-                    verification.status = VerificationStatus::Skipped;
-                    verification.recorded_at = Some(now());
-                    if verification.message.is_none() {
-                        verification.message = Some("维护未执行，无需核对。".into());
-                    }
-                }
-            }
-            Ok(())
+            update(record)
         })
     }
 
-    pub fn append_project_result(
-        &self,
-        id: &str,
-        result: &ProjectCleanupResult,
-    ) -> Result<(), String> {
-        let snapshot = project_result_snapshot(result);
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
-            if let MaintenanceDetail::ProjectCleanup(detail) = &mut record.detail {
-                detail.results.retain(|item| item.candidate_id != snapshot.candidate_id);
-                detail.results.push(snapshot);
-            }
-            Ok(())
-        })
-    }
-
-    pub fn finish_project(
-        &self,
-        id: &str,
-        finish: ProjectCleanupFinish,
-        effect_failures: Vec<(String, String)>,
-        message: String,
-    ) -> Result<(), String> {
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
-            let MaintenanceDetail::ProjectCleanup(detail) = &mut record.detail else {
-                return Err("维护记录类型不匹配".into());
-            };
-            detail.finish = finish;
-            for (candidate_id, failure) in effect_failures {
-                if !detail
-                    .scope
-                    .candidates
-                    .iter()
-                    .any(|candidate| candidate.candidate_id == candidate_id)
-                {
-                    continue;
-                }
-                detail.results.retain(|item| item.candidate_id != candidate_id);
-                detail.results.push(ProjectCleanupTargetResult {
-                    candidate_id,
-                    status: "Failed".into(),
-                    command: None,
-                    before_bytes: None,
-                    after_bytes: None,
-                    cleaned_bytes: None,
-                    measurement_status: "Error".into(),
-                    message: None,
-                    failure_message: None,
-                    effect_failure_message: Some(text(failure)),
-                });
-            }
-            record.execution = project_execution(detail);
-            record.finished_at = Some(now());
-            record.message = text(message);
-            Ok(())
-        })
-    }
-
-    pub fn append_session_item(
-        &self,
-        id: &str,
-        item: &SessionRemovalItem,
-    ) -> Result<(), String> {
-        let snapshot = session_item_snapshot(item);
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
-            if let MaintenanceDetail::SessionTrash(detail) = &mut record.detail {
-                detail.results.retain(|row| row.id != snapshot.id);
-                detail.results.push(snapshot);
-            }
-            Ok(())
-        })
-    }
-
-    pub fn finish_session_trash(
-        &self,
-        id: &str,
-        execution_total: usize,
-        result: &SessionRemovalResult,
-    ) -> Result<(), String> {
-        let execution = session_execution(result);
-        let message = result
-            .message
-            .clone()
-            .or_else(|| result.operation_error.clone())
-            .unwrap_or_else(|| {
-                format!(
-                    "已移入 {} 项，跳过 {} 项，失败 {} 项，未执行 {} 项。",
-                    result.moved,
-                    result.skipped,
-                    result.failed,
-                    result
-                        .items
-                        .iter()
-                        .filter(|item| formats_item_status(&item.status, "NotAttempted"))
-                        .count()
-                )
-            });
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
-            if let MaintenanceDetail::SessionTrash(detail) = &mut record.detail {
-                detail.execution_total = Some(execution_total);
-            }
-            record.finished_at = Some(now());
-            record.execution = execution;
-            record.message = text(message);
-            Ok(())
-        })
-    }
-
-    pub fn append_vscode_item(
-        &self,
-        id: &str,
-        item: &VscodeStorageRemovalItem,
-    ) -> Result<(), String> {
-        let snapshot = vscode_item_snapshot(item);
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
-            if let MaintenanceDetail::VscodeStorage(detail) = &mut record.detail {
-                detail.results.retain(|row| row.id != snapshot.id);
-                detail.results.push(snapshot);
-            }
-            Ok(())
-        })
-    }
-
-    pub fn finish_vscode(
-        &self,
-        id: &str,
-        result: &VscodeStorageRemovalResult,
-    ) -> Result<(), String> {
-        let execution = vscode_execution(result);
-        let message = result
-            .message
-            .clone()
-            .or_else(|| result.operation_error.clone())
-            .unwrap_or_else(|| {
-                format!(
-                    "已移入 {} 项，跳过 {} 项，失败 {} 项。",
-                    result.moved, result.skipped, result.failed
-                )
-            });
-        self.finish(id, execution, message)
-    }
-
-    pub fn append_opencode_item(
-        &self,
-        id: &str,
-        item: &crate::opencode_deletion::OpenCodeDeletionItem,
-    ) -> Result<(), String> {
-        let snapshot = OpenCodeDeletionItemSnapshot {
-            id: item.id.clone(),
-            status: format!("{:?}", item.status),
-            message: optional_text(item.message.clone()),
-        };
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
-            if let MaintenanceDetail::OpenCodeDeletion(detail) = &mut record.detail {
-                detail.results.retain(|row| row.id != snapshot.id);
-                detail.results.push(snapshot);
-            }
-            Ok(())
-        })
-    }
-
-    pub fn finish_opencode(
-        &self,
-        id: &str,
-        result: &crate::opencode_deletion::OpenCodeDeletionResult,
-    ) -> Result<(), String> {
-        let execution = opencode_execution(result);
-        let message = result
-            .preflight_error
-            .clone()
-            .or_else(|| {
-                result
-                    .items
-                    .iter()
-                    .find(|item| item.message.is_some())
-                    .and_then(|item| item.message.clone())
-            })
-            .unwrap_or_else(|| {
-                format!(
-                    "已删除 {} 项，未完成 {} 项。",
-                    result
-                        .items
-                        .iter()
-                        .filter(|item| {
-                            formats_item_status(&item.status, "Deleted")
-                        })
-                        .count(),
-                    result
-                        .items
-                        .iter()
-                        .filter(|item| {
-                            !formats_item_status(&item.status, "Deleted")
-                        })
-                        .count()
-                )
-            });
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
-            if let MaintenanceDetail::OpenCodeDeletion(detail) = &mut record.detail {
-                detail.completed_ids = result.completed_ids.clone();
-            }
-            record.finished_at = Some(now());
-            record.execution = execution;
-            record.message = text(message);
-            Ok(())
-        })
-    }
-
-    pub fn verify(
-        &self,
-        id: &str,
-        status: &str,
-        message: Option<String>,
-        after_snapshot_id: Option<String>,
-    ) -> Result<(), String> {
-        let status = match status {
-            "succeeded" => VerificationStatus::Succeeded,
-            "failed" => VerificationStatus::Failed,
-            "skipped" => VerificationStatus::Skipped,
-            "notStarted" => VerificationStatus::NotStarted,
-            _ => return Err("无法识别的核对结果".into()),
-        };
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
-            if record.domain != MaintenanceDomain::Manager {
-                return Err("该维护记录没有核对步骤".into());
-            }
-            let manager = match &record.detail {
-                MaintenanceDetail::Manager(detail) => detail.manager_id,
-                _ => return Err("维护记录类型不匹配".into()),
-            };
-            let verification = record.verification.get_or_insert(Verification {
-                status: VerificationStatus::NotStarted,
-                recorded_at: None,
-                message: None,
-                before_snapshot_id: None,
-                after_snapshot_id: None,
-            });
-            verification.status = status;
-            verification.recorded_at = Some(now());
-            verification.message = optional_text(message);
-            verification.after_snapshot_id = after_snapshot_id
-                .filter(|snapshot| {
-                    manager_history::contains_snapshot(&self.directory, manager, snapshot)
-                });
-            Ok(())
-        })
-    }
-
-    pub fn record_followup(
-        &self,
-        id: &str,
-        status: &str,
-        message: Option<String>,
-    ) -> Result<(), String> {
-        let status = match status {
-            "notRequested" => FollowUpReadStatus::NotRequested,
-            "ready" => FollowUpReadStatus::Ready,
-            "failed" => FollowUpReadStatus::Failed,
-            _ => return Err("无法识别的后续读取状态".into()),
-        };
-        self.mutate(|records| {
-            let record = records
-                .iter_mut()
-                .find(|record| record.id == id)
-                .ok_or("维护记录已超出保留范围")?;
-            if !matches!(
-                record.domain,
-                MaintenanceDomain::SessionRecord | MaintenanceDomain::VscodeStorage
-            ) {
-                return Err("该维护记录没有后续读取步骤".into());
-            }
-            if record.finished_at.is_none() || record.interrupted {
-                return Err("维护记录尚未关闭".into());
-            }
-            if record.follow_up_read.is_some() {
-                return Err("后续读取结果已记录".into());
-            }
-            record.follow_up_read = Some(FollowUpRead {
-                status,
-                recorded_at: now(),
-                message: optional_text(message),
-            });
-            Ok(())
-        })
-    }
-
-    pub fn run<T: Serialize>(
-        &self,
-        manager: ManagerId,
-        operation: MaintenanceOperation,
-        target: Option<String>,
-        before: Option<String>,
-        run: impl FnOnce() -> T,
-        summarize: impl FnOnce(&T) -> (ExecutionSummary, String, Option<Vec<ManagerStep>>),
-    ) -> Receipt<T> {
-        let (id, mut warning) = match self.begin_manager(manager, operation, target, before) {
-            Ok(id) => (Some(id), None),
-            Err(error) => (None, Some(error)),
-        };
-        let result = run();
-        let (status, message, steps) = summarize(&result);
-        if let Some(id) = &id {
-            if let Err(error) = self.finish_manager(id, status, message, steps) {
-                warning = Some(error);
-            }
-        }
-        Receipt {
-            result,
-            history_id: id,
-            history_warning: warning,
-        }
+    pub fn snapshot_exists(&self, manager: ManagerId, snapshot_id: &str) -> bool {
+        manager_history::contains_snapshot(&self.directory, manager, snapshot_id)
     }
 }
 
@@ -1295,149 +904,7 @@ fn summary(record: &MaintenanceRecord) -> MaintenanceRecordSummary {
     }
 }
 
-fn project_result_snapshot(result: &ProjectCleanupResult) -> ProjectCleanupTargetResult {
-    ProjectCleanupTargetResult {
-        candidate_id: result.candidate_id.clone(),
-        status: format!("{:?}", result.status),
-        command: result.command.as_ref().map(|command| command.preview.clone()),
-        before_bytes: Some(result.before_bytes),
-        after_bytes: Some(result.after_bytes),
-        cleaned_bytes: Some(result.cleaned_bytes),
-        measurement_status: format!("{:?}", result.measurement.status),
-        message: optional_text(result.message.clone()),
-        failure_message: optional_text(result.failure.as_ref().map(|failure| failure.message.clone())),
-        effect_failure_message: None,
-    }
-}
 
-fn session_item_snapshot(item: &SessionRemovalItem) -> SessionRemovalItemSnapshot {
-    SessionRemovalItemSnapshot {
-        id: item.id.clone(),
-        status: format!("{:?}", item.status),
-        reason: item.reason.as_ref().map(|reason| format!("{reason:?}")),
-        message: optional_text(item.message.clone()),
-    }
-}
-
-fn vscode_item_snapshot(item: &VscodeStorageRemovalItem) -> VscodeStorageItemSnapshot {
-    VscodeStorageItemSnapshot {
-        id: item.id.clone(),
-        status: format!("{:?}", item.status),
-        reason: item.reason.as_ref().map(|reason| format!("{reason:?}")),
-        message: optional_text(item.message.clone()),
-    }
-}
-
-fn project_execution(detail: &ProjectCleanupDetail) -> ExecutionSummary {
-    let total = detail.scope.candidates.len();
-    let succeeded = detail
-        .results
-        .iter()
-        .filter(|result| result.status == "Succeeded")
-        .count();
-    let failed = detail
-        .results
-        .iter()
-        .filter(|result| {
-            result.status == "Failed"
-                || result.status == "Rejected"
-                || result.effect_failure_message.is_some()
-        })
-        .count();
-    let skipped = detail
-        .results
-        .iter()
-        .filter(|result| result.status == "Skipped")
-        .count();
-    execution_from_counts(
-        total,
-        succeeded,
-        failed,
-        skipped,
-        total.saturating_sub(detail.results.len()),
-    )
-}
-
-fn session_execution(result: &SessionRemovalResult) -> ExecutionSummary {
-    if result.operation_error.is_some() {
-        return ExecutionSummary::NotExecuted;
-    }
-    execution_from_counts(
-        result.items.len(),
-        result.moved as usize,
-        result.failed as usize,
-        result.skipped as usize,
-        result
-            .items
-            .iter()
-            .filter(|item| formats_item_status(&item.status, "NotAttempted"))
-            .count(),
-    )
-}
-
-fn vscode_execution(result: &VscodeStorageRemovalResult) -> ExecutionSummary {
-    if result.operation_error.is_some() {
-        return ExecutionSummary::NotExecuted;
-    }
-    execution_from_counts(
-        result.items.len(),
-        result.moved as usize,
-        result.failed as usize,
-        result.skipped as usize,
-        0,
-    )
-}
-
-fn opencode_execution(
-    result: &crate::opencode_deletion::OpenCodeDeletionResult,
-) -> ExecutionSummary {
-    if result.preflight_error.is_some() {
-        return ExecutionSummary::NotExecuted;
-    }
-    let total = result.items.len();
-    let succeeded = result
-        .items
-        .iter()
-        .filter(|item| formats_item_status(&item.status, "Deleted"))
-        .count();
-    let failed = result
-        .items
-        .iter()
-        .filter(|item| formats_item_status(&item.status, "Failed"))
-        .count();
-    let not_attempted = result
-        .items
-        .iter()
-        .filter(|item| formats_item_status(&item.status, "NotAttempted"))
-        .count();
-    execution_from_counts(total, succeeded, failed, 0, not_attempted)
-}
-
-fn execution_from_counts(
-    total: usize,
-    succeeded: usize,
-    failed: usize,
-    skipped: usize,
-    not_attempted: usize,
-) -> ExecutionSummary {
-    if succeeded == 0 && failed > 0 {
-        return ExecutionSummary::Failed;
-    }
-    if succeeded > 0 && (failed > 0 || skipped > 0 || not_attempted > 0) {
-        return ExecutionSummary::Partial;
-    }
-    if succeeded > 0 && total == succeeded {
-        return ExecutionSummary::Succeeded;
-    }
-    if total == 0 || succeeded == 0 && failed == 0 {
-        return ExecutionSummary::NotExecuted;
-    }
-    ExecutionSummary::NotExecuted
-}
-
-fn formats_item_status<T: std::fmt::Debug>(status: &T, expected: &str) -> bool {
-    format!("{status:?}") == expected
-}
 
 fn source_label(source: SessionSourceKind) -> &'static str {
     match source {
@@ -1466,137 +933,63 @@ fn verification_from_str(value: &str) -> VerificationStatus {
     }
 }
 
-pub(crate) fn cleanup_summary(
-    run: &CacheCleanupRun,
-) -> (ExecutionSummary, String, Option<Vec<ManagerStep>>) {
-    let steps = run
-        .steps
-        .iter()
-        .map(|step| ManagerStep {
-            label: step.label.clone(),
-            state: match step.state {
-                CleanupStepState::Succeeded => "succeeded".into(),
-                CleanupStepState::Failed => "failed".into(),
-                CleanupStepState::Skipped => "skipped".into(),
-            },
-            failure_message: step
-                .failure
-                .as_ref()
-                .map(|failure| text(failure.message.clone())),
-        })
-        .collect::<Vec<_>>();
-    let execution = match run.outcome {
-        CleanupOutcome::Succeeded => ExecutionSummary::Succeeded,
-        CleanupOutcome::PartiallyCompleted => ExecutionSummary::Partial,
-        CleanupOutcome::Failed => ExecutionSummary::Failed,
-        CleanupOutcome::NoPlan => ExecutionSummary::NotExecuted,
-    };
-    let step_text = steps
-        .iter()
-        .map(|step| {
-            let state = match step.state.as_str() {
-                "succeeded" => "已完成",
-                "failed" => "失败",
-                _ => "已跳过",
-            };
-            format!(
-                "{}：{state}{}",
-                step.label,
-                step.failure_message
-                    .as_ref()
-                    .map(|message| format!(" · {message}"))
-                    .unwrap_or_default()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let message = run
-        .message
-        .as_ref()
-        .map(|message| format!("{message}\n{step_text}"))
-        .unwrap_or(step_text);
-    (execution, text(message), Some(steps))
-}
-
-pub(crate) fn uninstall_summary(
-    run: &crate::types::MaintenanceRunPreview,
-) -> (ExecutionSummary, String, Option<Vec<ManagerStep>>) {
-    if matches!(run.status, crate::types::AsyncStatus::Ready) {
-        (
-            ExecutionSummary::Succeeded,
-            "全局包卸载已完成".into(),
-            None,
-        )
-    } else {
-        (
-            ExecutionSummary::Failed,
-            text(
-                run.failure
-                    .as_ref()
-                    .map(|failure| failure.message.clone())
-                    .or_else(|| run.message.clone())
-                    .unwrap_or_else(|| run.stderr.clone()),
-            ),
-            None,
-        )
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn manager_id(store: &MaintenanceHistoryState) -> String {
+    fn manager_record(store: &MaintenanceHistoryState) -> String {
         store
-            .begin_manager(
-                ManagerId::Npm,
+            .begin(
+                MaintenanceDomain::Manager,
                 MaintenanceOperation::CleanupCache,
-                None,
+                MaintenanceDetail::Manager(ManagerDetail {
+                    manager_id: ManagerId::Npm,
+                    target: None,
+                    steps: None,
+                }),
                 None,
             )
             .unwrap()
     }
 
     #[test]
-    fn manager_record_keeps_steps_and_verification() {
+    fn manager_summary_counts_recorded_steps() {
         let directory = tempfile::tempdir().unwrap();
         let store = MaintenanceHistoryState::new(directory.path().into());
-        let id = manager_id(&store);
+        let id = manager_record(&store);
         store
-            .finish_manager(
-                &id,
-                ExecutionSummary::Succeeded,
-                "缓存清理已完成".into(),
-                Some(vec![ManagerStep {
-                    label: "清理缓存".into(),
-                    state: "succeeded".into(),
-                    failure_message: None,
-                }]),
-            )
+            .update(&id, |record| {
+                if let MaintenanceDetail::Manager(detail) = &mut record.detail {
+                    detail.steps = Some(vec![ManagerStep {
+                        label: "清理缓存".into(),
+                        state: "succeeded".into(),
+                        failure_message: None,
+                    }]);
+                }
+                record.finished_at = Some(1);
+                record.execution = ExecutionSummary::Succeeded;
+                record.message = "缓存清理已完成".into();
+                Ok(())
+            })
             .unwrap();
-        store.verify(&id, "failed", Some("无法读取".into()), None).unwrap();
-        let record = store.get(&id).unwrap();
-        assert_eq!(record.domain, MaintenanceDomain::Manager);
-        assert_eq!(record.execution, ExecutionSummary::Succeeded);
-        assert_eq!(record.verification.as_ref().unwrap().status, VerificationStatus::Failed);
-        assert_eq!(record.detail.kind(), "manager");
         let summary = store.list().records[0].clone();
         assert_eq!(summary.counts.succeeded, 1);
-        assert_eq!(summary.verification_status, Some(VerificationStatus::Failed));
+        assert_eq!(summary.execution, ExecutionSummary::Succeeded);
     }
 
     #[test]
     fn unfinished_records_are_marked_interrupted_on_restart() {
         let directory = tempfile::tempdir().unwrap();
         let store = MaintenanceHistoryState::new(directory.path().into());
-        let id = manager_id(&store);
+        let id = manager_record(&store);
         let reopened = MaintenanceHistoryState::new(directory.path().into());
         let record = reopened.get(&id).unwrap();
         assert!(record.interrupted);
         assert_eq!(record.execution, ExecutionSummary::Unconfirmed);
         assert!(record.finished_at.is_none());
         assert_eq!(reopened.list().records[0].execution, ExecutionSummary::Unconfirmed);
-        assert_eq!(reopened.list().records[0].interrupted, true);
+        assert!(reopened.list().records[0].interrupted);
     }
 
     #[test]
@@ -1629,7 +1022,6 @@ mod tests {
         assert_eq!(record.domain, MaintenanceDomain::Manager);
         assert_eq!(record.operation, MaintenanceOperation::CleanupCache);
         assert!(record.interrupted);
-        assert_eq!(record.detail.kind(), "manager");
         assert!(directory.path().join("maintenance-v2.json").exists());
         assert!(directory.path().join("maintenance.json").exists());
         assert_eq!(store.list().records.len(), 1);
@@ -1682,50 +1074,117 @@ mod tests {
     }
 
     #[test]
-    fn grok_history_preserves_confirmed_scope_and_counts_unattempted_items_after_read_failure() {
+    fn summary_counts_streamed_session_results() {
         let directory = tempfile::tempdir().unwrap();
         let store = MaintenanceHistoryState::new(directory.path().into());
-        let detail = MaintenanceDetail::SessionTrash(SessionTrashDetail {
-            scope: SessionTrashScope {
-                source: SessionSourceKind::Grok,
-                mode: SessionRemovalMode::OlderThan,
-                days: Some(7),
-                confirmed_count: Some(2),
-                confirmed_records: None,
-                directory: Some("/example/.grok/sessions".into()),
-                cutoff_ms: Some(1000),
-            },
-            execution_total: None,
-            results: Vec::new(),
-        });
         let id = store
             .begin(
                 MaintenanceDomain::SessionRecord,
                 MaintenanceOperation::RemoveToTrash,
-                detail,
+                MaintenanceDetail::SessionTrash(SessionTrashDetail {
+                    scope: SessionTrashScope {
+                        source: SessionSourceKind::Codex,
+                        mode: SessionRemovalMode::OlderThan,
+                        days: Some(7),
+                        confirmed_count: Some(2),
+                        confirmed_records: None,
+                        directory: None,
+                        cutoff_ms: None,
+                    },
+                    execution_total: None,
+                    results: Vec::new(),
+                }),
                 None,
             )
             .unwrap();
-        let mut result = SessionRemovalResult::default();
-        result.record(
-            "project/first",
-            crate::session_records::SessionRemovalStatus::Moved,
-            None,
-            None,
-        );
-        result.record(
-            "project/second",
-            crate::session_records::SessionRemovalStatus::NotAttempted,
-            Some(crate::session_records::SessionRemovalReason::RuntimeBlocked),
-            Some("Grok 已启动".into()),
-        );
-        for item in &result.items {
-            store.append_session_item(&id, item).unwrap();
-        }
-        store.finish_session_trash(&id, 2, &result).unwrap();
         store
-            .record_followup(&id, "failed", Some("合成读取错误".into()))
+            .update(&id, |record| {
+                if let MaintenanceDetail::SessionTrash(detail) = &mut record.detail {
+                    detail.execution_total = Some(3);
+                    detail.results = vec![
+                        SessionRemovalItemSnapshot {
+                            id: "a".into(),
+                            status: "Moved".into(),
+                            reason: None,
+                            message: None,
+                        },
+                        SessionRemovalItemSnapshot {
+                            id: "b".into(),
+                            status: "Skipped".into(),
+                            reason: Some("InUse".into()),
+                            message: None,
+                        },
+                    ];
+                }
+                record.finished_at = Some(1);
+                record.execution = ExecutionSummary::Partial;
+                record.message = "done".into();
+                Ok(())
+            })
             .unwrap();
+        let summary = store.list().records[0].clone();
+        assert_eq!(summary.counts.total, 3);
+        assert_eq!(summary.counts.succeeded, 1);
+        assert_eq!(summary.counts.skipped, 1);
+        assert_eq!(summary.counts.not_attempted, 1);
+    }
+
+    #[test]
+    fn grok_history_preserves_confirmed_scope_and_counts_unattempted_items_after_read_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = MaintenanceHistoryState::new(directory.path().into());
+        let id = store
+            .begin(
+                MaintenanceDomain::SessionRecord,
+                MaintenanceOperation::RemoveToTrash,
+                MaintenanceDetail::SessionTrash(SessionTrashDetail {
+                    scope: SessionTrashScope {
+                        source: SessionSourceKind::Grok,
+                        mode: SessionRemovalMode::OlderThan,
+                        days: Some(7),
+                        confirmed_count: Some(2),
+                        confirmed_records: None,
+                        directory: Some("/example/.grok/sessions".into()),
+                        cutoff_ms: Some(1000),
+                    },
+                    execution_total: None,
+                    results: Vec::new(),
+                }),
+                None,
+            )
+            .unwrap();
+        store
+            .update(&id, |record| {
+                if let MaintenanceDetail::SessionTrash(detail) = &mut record.detail {
+                    detail.execution_total = Some(2);
+                    detail.results = vec![
+                        SessionRemovalItemSnapshot {
+                            id: "project/first".into(),
+                            status: "Moved".into(),
+                            reason: None,
+                            message: None,
+                        },
+                        SessionRemovalItemSnapshot {
+                            id: "project/second".into(),
+                            status: "NotAttempted".into(),
+                            reason: Some("RuntimeBlocked".into()),
+                            message: Some("Grok 已启动".into()),
+                        },
+                    ];
+                }
+                record.finished_at = Some(1);
+                record.execution = ExecutionSummary::Partial;
+                record.message = "done".into();
+                Ok(())
+            })
+            .unwrap();
+        crate::maintenance_adapters::record_followup(
+            &store,
+            &id,
+            "failed",
+            Some("合成读取错误".into()),
+        )
+        .unwrap();
         let saved = store.get(&id).unwrap();
         let summary = summary(&saved);
         assert_eq!(summary.execution, ExecutionSummary::Partial);
@@ -1756,174 +1215,62 @@ mod tests {
     }
 
     #[test]
-    fn follow_up_read_is_written_once_for_closed_session_records() {
+    fn project_summary_counts_untried_candidates() {
         let directory = tempfile::tempdir().unwrap();
         let store = MaintenanceHistoryState::new(directory.path().into());
-        let detail = MaintenanceDetail::SessionTrash(SessionTrashDetail {
-            scope: SessionTrashScope {
-                source: SessionSourceKind::Codex,
-                mode: SessionRemovalMode::Single,
-                days: None,
-                confirmed_count: Some(1),
-                confirmed_records: None,
-                directory: None,
-                cutoff_ms: None,
-            },
-            execution_total: None,
-            results: Vec::new(),
-        });
-        let id = store
-            .begin(
-                MaintenanceDomain::SessionRecord,
-                MaintenanceOperation::RemoveToTrash,
-                detail,
-                None,
-            )
-            .unwrap();
-        let result = SessionRemovalResult::default();
-        store.finish_session_trash(&id, 1, &result).unwrap();
-        store
-            .record_followup(&id, "ready", Some("列表已刷新".into()))
-            .unwrap();
-        let record = store.get(&id).unwrap();
-        assert_eq!(
-            record.follow_up_read.as_ref().unwrap().status,
-            FollowUpReadStatus::Ready
-        );
-        assert!(store.record_followup(&id, "failed", None).is_err());
-    }
-
-    #[test]
-    fn project_batch_records_effect_failures_and_untried_candidates() {
-        let directory = tempfile::tempdir().unwrap();
-        let store = MaintenanceHistoryState::new(directory.path().into());
-        let detail = MaintenanceDetail::ProjectCleanup(ProjectCleanupDetail {
-            scope: ProjectCleanupScope {
-                scan_id: "scan-1".into(),
-                scan_root_id: "root-1".into(),
-                scan_root_path: "/work".into(),
-                batch_id: "batch-1".into(),
-                candidates: vec![
-                    ProjectCleanupCandidateSnapshot {
-                        candidate_id: "candidate-1".into(),
-                        kind: ProjectDataKind::RustTarget,
-                        project_path: "/work/one".into(),
-                        directory_path: "/work/one/target".into(),
-                        order: 0,
-                        confirmed_bytes: Some(10),
-                        confirmed_complete: true,
-                    },
-                    ProjectCleanupCandidateSnapshot {
-                        candidate_id: "candidate-2".into(),
-                        kind: ProjectDataKind::NodeModules,
-                        project_path: "/work/two".into(),
-                        directory_path: "/work/two/node_modules".into(),
-                        order: 1,
-                        confirmed_bytes: Some(20),
-                        confirmed_complete: true,
-                    },
-                ],
-            },
-            finish: ProjectCleanupFinish::Completed,
-            results: Vec::new(),
-        });
+        let candidate = |id: &str, order: usize| ProjectCleanupCandidateSnapshot {
+            candidate_id: id.into(),
+            kind: ProjectDataKind::RustTarget,
+            project_path: format!("/work/{id}"),
+            directory_path: format!("/work/{id}/target"),
+            order,
+            confirmed_bytes: Some(10),
+            confirmed_complete: true,
+        };
         let id = store
             .begin(
                 MaintenanceDomain::ProjectCleanup,
                 MaintenanceOperation::CleanBatch,
-                detail,
-                None,
-            )
-            .unwrap();
-        store
-            .finish_project(
-                &id,
-                ProjectCleanupFinish::Stopped,
-                vec![("candidate-1".into(), "IPC disconnected".into())],
-                "stopped".into(),
-            )
-            .unwrap();
-        let record = store.get(&id).unwrap();
-        assert_eq!(record.execution, ExecutionSummary::Failed);
-        let summary = store.list().records[0].clone();
-        assert_eq!(summary.counts.failed, 1);
-        assert_eq!(summary.counts.not_attempted, 1);
-        let MaintenanceDetail::ProjectCleanup(detail) = record.detail else {
-            panic!("expected project detail");
-        };
-        assert_eq!(detail.finish, ProjectCleanupFinish::Stopped);
-        assert_eq!(
-            detail.results[0].effect_failure_message.as_deref(),
-            Some("IPC disconnected")
-        );
-    }
-
-    #[test]
-    fn vscode_record_counts_editor_started_skips_as_partial() {
-        use crate::vscode_removal::{
-            VscodeStorageRemovalItem, VscodeStorageRemovalReason, VscodeStorageRemovalResult,
-            VscodeStorageRemovalStatus,
-        };
-        let directory = tempfile::tempdir().unwrap();
-        let store = MaintenanceHistoryState::new(directory.path().into());
-        let workspace = |id: &str| VscodeWorkspaceSnapshot {
-            id: id.into(),
-            name: id.into(),
-            project_path: None,
-            storage_path: format!("/Code/workspaceStorage/{id}"),
-            kind: "Folder".into(),
-            project_status: "Missing".into(),
-            removable: true,
-            removal_block_reason: None,
-            bytes: Some(10),
-            usage_complete: true,
-        };
-        let id = store
-            .begin(
-                MaintenanceDomain::VscodeStorage,
-                MaintenanceOperation::RemoveWorkspaceStorage,
-                MaintenanceDetail::VscodeStorage(VscodeStorageDetail {
-                    scope: VscodeStorageScope {
-                        workspaces: vec![workspace("first"), workspace("second")],
+                MaintenanceDetail::ProjectCleanup(ProjectCleanupDetail {
+                    scope: ProjectCleanupScope {
+                        scan_id: "scan-1".into(),
+                        scan_root_id: "root-1".into(),
+                        scan_root_path: "/work".into(),
+                        batch_id: "batch-1".into(),
+                        candidates: vec![candidate("one", 0), candidate("two", 1)],
                     },
+                    finish: ProjectCleanupFinish::Completed,
                     results: Vec::new(),
                 }),
                 None,
             )
             .unwrap();
-        let items = [
-            VscodeStorageRemovalItem {
-                id: "first".into(),
-                status: VscodeStorageRemovalStatus::Moved,
-                reason: None,
-                message: None,
-            },
-            VscodeStorageRemovalItem {
-                id: "second".into(),
-                status: VscodeStorageRemovalStatus::Skipped,
-                reason: Some(VscodeStorageRemovalReason::EditorStarted),
-                message: None,
-            },
-        ];
-        for item in &items {
-            store.append_vscode_item(&id, item).unwrap();
-        }
         store
-            .finish_vscode(
-                &id,
-                &VscodeStorageRemovalResult {
-                    moved: 1,
-                    failed: 0,
-                    skipped: 1,
-                    items: items.into_iter().collect(),
-                    operation_error: None,
-                    message: None,
-                },
-            )
+            .update(&id, |record| {
+                if let MaintenanceDetail::ProjectCleanup(detail) = &mut record.detail {
+                    detail.finish = ProjectCleanupFinish::Stopped;
+                    detail.results = vec![ProjectCleanupTargetResult {
+                        candidate_id: "one".into(),
+                        status: "Failed".into(),
+                        command: None,
+                        before_bytes: None,
+                        after_bytes: None,
+                        cleaned_bytes: None,
+                        measurement_status: "Error".into(),
+                        message: None,
+                        failure_message: None,
+                        effect_failure_message: Some("IPC disconnected".into()),
+                    }];
+                }
+                record.execution = ExecutionSummary::Failed;
+                record.finished_at = Some(1);
+                record.message = "stopped".into();
+                Ok(())
+            })
             .unwrap();
-        let record = store.get(&id).unwrap();
-        assert_eq!(record.execution, ExecutionSummary::Partial);
-        assert_eq!(store.list().records[0].counts.skipped, 1);
+        let summary = store.list().records[0].clone();
+        assert_eq!(summary.counts.failed, 1);
+        assert_eq!(summary.counts.not_attempted, 1);
     }
 
     #[test]
@@ -1933,24 +1280,20 @@ mod tests {
         let store = MaintenanceHistoryState::new(directory.path().into());
         assert!(!store.list().warnings.is_empty());
         assert!(store
-            .begin_manager(ManagerId::Npm, MaintenanceOperation::CleanupCache, None, None)
+            .begin(
+                MaintenanceDomain::Manager,
+                MaintenanceOperation::CleanupCache,
+                MaintenanceDetail::Manager(ManagerDetail {
+                    manager_id: ManagerId::Npm,
+                    target: None,
+                    steps: None,
+                }),
+                None,
+            )
             .is_err());
         assert_eq!(
             fs::read_to_string(directory.path().join("maintenance-v2.json")).unwrap(),
             "not json"
         );
-    }
-}
-
-#[cfg(test)]
-impl MaintenanceDetail {
-    fn kind(&self) -> &'static str {
-        match self {
-            MaintenanceDetail::Manager(_) => "manager",
-            MaintenanceDetail::ProjectCleanup(_) => "projectCleanup",
-            MaintenanceDetail::VscodeStorage(_) => "vscodeStorage",
-            MaintenanceDetail::SessionTrash(_) => "sessionTrash",
-            MaintenanceDetail::OpenCodeDeletion(_) => "openCodeDeletion",
-        }
     }
 }

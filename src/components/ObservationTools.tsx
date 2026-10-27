@@ -1,4 +1,3 @@
-import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import {
   buildCommandLocationSummary,
@@ -18,6 +17,7 @@ import type { ObservationRecord } from "../observationLedger";
 import type { ObservationItemId } from "../observationItems";
 import type { ManagerId, ManagerSnapshot } from "../types";
 import { pathLabel } from "../utils/format";
+import { Notice } from "./ui";
 
 const time = (value: number) => new Date(value).toLocaleString();
 
@@ -216,8 +216,4 @@ function locationDetail(location: CommandLocationDescriptor) {
   if (location.kind === "package") return location.label;
   if (location.kind === "interpreter") return "Pip 观察使用的解释器";
   return pathLabel(location.label);
-}
-
-function Notice({ title, message }: { title: string; message: string }) {
-  return <Alert><AlertTitle>{title}</AlertTitle><AlertDescription className="break-words">{message}</AlertDescription></Alert>;
 }

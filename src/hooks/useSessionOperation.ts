@@ -9,7 +9,9 @@ export type SessionRead<Source extends string, Scan> = {
   globalError: string | null;
 };
 
-export interface SessionOperationAdapter<Source extends string, Scan, Target, Result, Progress = void> {
+export type OperationResult = { historyId?: string | null };
+
+export interface SessionOperationAdapter<Source extends string, Scan, Target, Result extends OperationResult, Progress = void> {
   observe?(source: Source, scan: Scan | null, failure: string | null, at: number, readFailed: boolean): void;
   read(scopes: readonly Source[], previous: Partial<Record<Source, Scan>>): Promise<SessionRead<Source, Scan>>;
   scopesFor(target: Target): readonly Source[];
@@ -21,7 +23,6 @@ export interface SessionOperationAdapter<Source extends string, Scan, Target, Re
     completedIds: readonly string[],
   ): Partial<Record<Source, Scan>>;
   shouldRefresh(target: Target, result: Result | null): boolean;
-  recordFollowUp?(target: Target, result: Result, refresh: SessionRefresh): Promise<void>;
 }
 
 export type SessionOperationPhase = "confirming" | "executing" | "refreshing";
@@ -46,9 +47,10 @@ export interface SessionOperationOptions<Source extends string> {
   active: boolean;
   scopes: readonly Source[];
   readOnActivate?: boolean;
+  recordFollowUp?(historyId: string, refresh: SessionRefresh): Promise<void>;
 }
 
-export interface SessionOperation<Source extends string, Scan, Target, Result, Progress = void> {
+export interface SessionOperation<Source extends string, Scan, Target, Result extends OperationResult, Progress = void> {
   scans: Partial<Record<Source, Scan>>;
   scanning: Partial<Record<Source, boolean>>;
   error: string | null;
@@ -67,9 +69,9 @@ function scanningPatch<Source extends string>(
   return Object.fromEntries(scopes.map((scope) => [scope, value])) as Partial<Record<Source, boolean>>;
 }
 
-export function useSessionOperation<Source extends string, Scan, Target, Result, Progress = void>(
+export function useSessionOperation<Source extends string, Scan, Target, Result extends OperationResult, Progress = void>(
   adapter: SessionOperationAdapter<Source, Scan, Target, Result, Progress>,
-  { active, scopes: initialScopes, readOnActivate = true }: SessionOperationOptions<Source>,
+  { active, scopes: initialScopes, readOnActivate = true, recordFollowUp }: SessionOperationOptions<Source>,
 ): SessionOperation<Source, Scan, Target, Result, Progress> {
   const [scans, setScans] = useState<Partial<Record<Source, Scan>>>({});
   const [scanning, setScanning] = useState<Partial<Record<Source, boolean>>>({});
@@ -213,9 +215,9 @@ export function useSessionOperation<Source extends string, Scan, Target, Result,
       refresh = await read(scopes);
     }
     let followUpWarning: string | null = null;
-    if (adapter.recordFollowUp && result) {
+    if (recordFollowUp && result?.historyId) {
       try {
-        await adapter.recordFollowUp(target, result, refresh);
+        await recordFollowUp(result.historyId, refresh);
       } catch (caught) {
         followUpWarning = errorToString(caught);
       }

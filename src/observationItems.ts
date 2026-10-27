@@ -80,8 +80,6 @@ export const OBSERVATION_ITEMS: ObservationItem[] = [
   { id: "claude:skills", group: "claude", label: "Claude Skills" },
 ];
 
-export const OBSERVATION_ITEM_IDS = OBSERVATION_ITEMS.map((item) => item.id);
-
 export const OBSERVATION_ITEM_BY_ID = new Map<ObservationItemId, ObservationItem>(
   OBSERVATION_ITEMS.map((item) => [item.id, item]),
 );

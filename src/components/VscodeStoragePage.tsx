@@ -27,7 +27,6 @@ import {
 } from "../../components/ui/table";
 import { useSessionSelection } from "../hooks/useSessionSelection";
 import type { VscodeStorageWorkflow } from "../hooks/useVscodeStorage";
-import type { SessionRefresh } from "../sessionRecords";
 import { formatBytes, formatHomePath } from "../utils/format";
 import {
   filterVscodeWorkspaces,
@@ -45,7 +44,9 @@ import {
   vscodeRemovalReasonLabels,
   vscodeRemovalResultText,
 } from "../vscodeRemoval";
-import { EmptyState, Panel, PanelHead, StatCard } from "./ui";
+import type { ObservationCoverageItem } from "../observationCoverage";
+import { ObservationState } from "./ObservationState";
+import { EmptyState, Panel, PanelHead, RefreshNotice, StatCard } from "./ui";
 
 const projectStatusLabels: Record<VscodeWorkspace["projectStatus"], string> = {
   Available: "路径存在",
@@ -64,10 +65,12 @@ const workspaceKindLabels: Record<VscodeWorkspace["kind"], string> = {
 export function VscodeStoragePage({
   workflow,
   homeDirectory,
+  coverageItem,
   onShowHistory,
 }: {
   workflow: VscodeStorageWorkflow;
   homeDirectory: string | null;
+  coverageItem: ObservationCoverageItem;
   onShowHistory?: (recordId: string) => void;
 }) {
   const {
@@ -146,10 +149,17 @@ export function VscodeStoragePage({
               ? formatHomePath(scan.storagePath, homeDirectory)
               : "~/Library/Application Support/Code/User/workspaceStorage"}
           </p>
-          <p className="text-xs text-muted-foreground" role="status">
-            {scanning
+          <ObservationState
+            extra={scanning
               ? scan ? "正在扫描，暂时显示上次结果。" : "正在读取工作区记录并测量占用…"
-              : "每个存储目录独立列出；切换页面保留结果，可手动刷新。"}
+              : null}
+            item={coverageItem}
+            live
+            showNote={coverageItem.status !== "failed" && coverageItem.status !== "partial"}
+            variant="strip"
+          />
+          <p className="text-xs text-muted-foreground">
+            每个存储目录独立列出；切换页面保留结果，可手动刷新。
           </p>
         </CardContent>
       </Panel>
@@ -465,17 +475,6 @@ export function VscodeStoragePage({
       </AlertDialog>
     </main>
   );
-}
-
-function RefreshNotice({ value, onRetry }: { value: SessionRefresh; onRetry: () => void }) {
-  if (value.status === "notRequested") return null;
-  if (value.status === "failed") return (
-    <div>
-      <p className="wrap-anywhere" role="status">列表刷新失败：{value.message} 执行结果已保留。</p>
-      <Button className="mt-2" onClick={onRetry} size="sm" type="button" variant="outline">重试刷新</Button>
-    </div>
-  );
-  return <p role="status">{value.status === "refreshing" ? "列表正在刷新。" : "列表已刷新。"}</p>;
 }
 
 function formatFootprint(bytes: number | null, complete: boolean) {

@@ -189,28 +189,6 @@ export interface PipCacheInfo {
   rawInfo: string;
 }
 
-export interface PipOutdatedPreview {
-  status: AsyncStatus;
-  command: CommandEnvelope;
-  outdated: string[];
-  message: string | null;
-  failure: CommandFailure | null;
-}
-
-export type NpmMaintenanceOperation = {
-  kind: "uninstallGlobalPackage";
-  packageName: string;
-};
-
-export type PnpmMaintenanceOperation =
-  | {
-      kind: "uninstallGlobalPackage";
-      packageName: string;
-    }
-  | {
-      kind: "storePrune";
-    };
-
 export type CleanupOutcome = "Succeeded" | "PartiallyCompleted" | "Failed" | "NoPlan";
 export type CleanupStepState = "Succeeded" | "Failed" | "Skipped";
 
@@ -267,7 +245,14 @@ export interface ManagerScanSnapshot {
   scanDurationMs: number;
   manager: ManagerSnapshot;
   diagnostics?: ScanDiagnostics;
+  problems: string | null;
 }
+
+export type ManagerScanProgress =
+  | { phase: "reading" }
+  | { phase: "measuring"; completed: number; total: number }
+  | { phase: "hydratingHomebrew" }
+  | { phase: "hydratingPip" };
 
 export interface ScanDiagnostics {
   pathEntries: string[];
@@ -433,3 +418,17 @@ export interface ProjectCleanupResult {
   message: string | null;
   failure: CommandFailure | null;
 }
+
+export type ProjectCleanupBatchOutcome =
+  | { kind: "result"; result: ProjectCleanupResult }
+  | { kind: "effect-failed"; candidateId: string; message: string };
+
+export type ProjectCleanupBatchProgress =
+  | { phase: "started"; total: number }
+  | {
+      phase: "advanced";
+      candidateId: string;
+      outcome: ProjectCleanupBatchOutcome;
+      completedCount: number;
+      cleanedBytes: number;
+    };

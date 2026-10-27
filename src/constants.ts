@@ -1,5 +1,4 @@
 import type {
-  AsyncStatus,
   DisplayStatus,
   HomebrewFilter,
   ManagerId,
@@ -130,10 +129,4 @@ export const environmentKindLabels: Record<PipEnvironmentHealth["environmentKind
   User: "用户环境",
   VirtualEnv: "虚拟环境",
   Unknown: "未知环境",
-};
-
-export const asyncStatusLabels: Record<AsyncStatus, string> = {
-  Pending: "等待中",
-  Ready: "就绪",
-  Failed: "失败",
 };

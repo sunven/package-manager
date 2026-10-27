@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
-import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { managerLabels, managerOrder } from "../constants";
 import { compareSnapshots, type ArchivedSnapshot } from "../managerHistory";
 import type { ObservationToolsState } from "../hooks/useObservationTools";
 import type { ManagerId } from "../types";
 import { formatBytes, formatHomePath } from "../utils/format";
+import { Notice } from "./ui";
 
 const selectClass = "max-w-full rounded-lg border bg-background px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-ring";
 const time = (value: number) => new Date(value).toLocaleString();
@@ -58,8 +58,4 @@ function SnapshotComparison({ before, after, homeDirectory }: { before: Archived
 
 function SnapshotDetails({ snapshot, homeDirectory }: { snapshot: ArchivedSnapshot; homeDirectory: string | null }) {
   return <details className="rounded-xl border p-4"><summary className="cursor-pointer text-sm">观察详情 · {time(snapshot.capturedAt)} · {snapshot.packages.length} 项 · {snapshot.complete ? "清单完整" : "清单不完整"}</summary><div className="mt-3 grid gap-3 text-xs text-muted-foreground">{snapshot.message ? <p className="break-words">{snapshot.message}</p> : null}<p>管理器版本：{snapshot.version ?? "未知"} · 状态：{snapshot.status}</p>{snapshot.packages.slice(0, 100).map((row, index) => <div key={index}><p className="break-all text-foreground">{row.name} · {row.observedVersions?.join("、") ?? row.version}</p>{row.path ? <code className="break-all">{formatHomePath(row.path, homeDirectory)}</code> : null}</div>)}{snapshot.packages.length > 100 ? <p>详情显示前 100 项；差异比较使用全部已保存条目。</p> : null}</div></details>;
-}
-
-function Notice({ title, message }: { title: string; message: string }) {
-  return <Alert><AlertTitle>{title}</AlertTitle><AlertDescription className="break-words">{message}</AlertDescription></Alert>;
 }

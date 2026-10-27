@@ -12,12 +12,15 @@ import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { marketplaceSourceLabel, type CodexMarketplace } from "../codexMarketplaces";
 import type { CodexExtensions } from "../hooks/useCodexExtensions";
+import type { ObservationCoverageItem } from "../observationCoverage";
 import { errorToString } from "../utils/format";
 import { CodexPluginFeedback, CodexPluginList } from "./CodexPluginList";
+import { ObservationState } from "./ObservationState";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
-export function CodexMarketplacesPage({ workflow, onShowHooks, focusedPluginId }: {
+export function CodexMarketplacesPage({ workflow, coverage, onShowHooks, focusedPluginId }: {
   workflow: CodexExtensions;
+  coverage: { marketplaces: ObservationCoverageItem; plugins: ObservationCoverageItem };
   onShowHooks?: () => void;
   focusedPluginId?: string;
 }) {
@@ -88,6 +91,11 @@ export function CodexMarketplacesPage({ workflow, onShowHooks, focusedPluginId }
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
             <span className="shrink-0 text-muted-foreground">Codex 目录</span>
             <code className="min-w-0 break-all">{scan?.directory || plugins.scan?.directory || "尚未读取"}</code>
+          </div>
+          <ObservationState item={coverage.marketplaces} showNote={false} variant="strip" />
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>插件清单</span>
+            <ObservationState item={coverage.plugins} variant="badge" />
           </div>
           <p className="text-xs text-muted-foreground" role="status">
             {pending ? "正在执行并重新核对市场，请稍候…" : pluginSaving ? "正在执行并重新核对插件…" : reading ? "正在读取市场与插件目录，已有内容为上次结果。" : "重新读取查看本机市场与插件清单；同步市场会从 Git 来源同步内容。"}

@@ -34,8 +34,14 @@ import {
   vscodeObservationFacts,
   type ObservationFactsMap,
 } from "./observationFacts";
-import { buildObservationCoverage, type ObservationCoverageItem } from "./observationCoverage";
+import {
+  buildObservationCoverage,
+  indexObservationCoverage,
+  requireCoverageItem,
+  type ObservationCoverageItem,
+} from "./observationCoverage";
 import { managerObservationId } from "./observationItems";
+import { ManagerObservationHeader } from "./components/ManagerObservationHeader";
 import { SessionRecordsPage } from "./components/SessionRecordsPage";
 import { VscodeStoragePage } from "./components/VscodeStoragePage";
 import { ProjectCleanupPage } from "./components/ProjectCleanupPage";
@@ -48,8 +54,6 @@ import { PathPanel } from "./components/PathPanel";
 import { SettingsPage } from "./components/SettingsPage";
 import { Shell } from "./components/Shell";
 import { ManagerDiagnostics } from "./components/ManagerDiagnostics";
-import { scanStateLabel } from "./managerScanning";
-import { Button } from "../components/ui/button";
 import { Panel } from "./components/ui";
 import { Toaster } from "../components/ui/sonner";
 
@@ -160,6 +164,10 @@ export function App() {
     scopes: observationScopes.scopes,
     enabledManagers: state.enabledManagers,
   }), [observationLedger.records, coverageFacts, observationScopes.scopes, state.enabledManagers]);
+  const coverageById = useMemo(
+    () => indexObservationCoverage(coverage),
+    [coverage],
+  );
   const coverageWarnings = useMemo(() => [
     ...observationLedger.warnings,
     ...(observationScopes.error ? [`观察范围无法读取：${observationScopes.error}`] : []),
@@ -383,32 +391,65 @@ export function App() {
               <TabsTrigger value="skills" disabled={codex.locked}>Skills</TabsTrigger>
             </TabsList>
             <TabsContent value="marketplaces">
-              <CodexMarketplacesPage workflow={codex.extensions} focusedPluginId={focusedPluginId} onShowHooks={() => setCodexTab("hooks")} />
+              <CodexMarketplacesPage
+                coverage={{
+                  marketplaces: requireCoverageItem(coverageById, "codex:marketplaces"),
+                  plugins: requireCoverageItem(coverageById, "codex:plugins"),
+                }}
+                focusedPluginId={focusedPluginId}
+                onShowHooks={() => setCodexTab("hooks")}
+                workflow={codex.extensions}
+              />
             </TabsContent>
             <TabsContent value="hooks">
-              <CodexHooksPage workflow={codex.extensions} onShowPlugins={() => setCodexTab("marketplaces")} />
+              <CodexHooksPage
+                coverageItem={requireCoverageItem(coverageById, "codex:hooks")}
+                onShowPlugins={() => setCodexTab("marketplaces")}
+                workflow={codex.extensions}
+              />
             </TabsContent>
             <TabsContent value="skills">
-              <CodexSkillsPage workflow={codex.skills} onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); setCodexTab("marketplaces"); }} />
+              <CodexSkillsPage
+                coverageItem={requireCoverageItem(coverageById, "codex:skills")}
+                onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); setCodexTab("marketplaces"); }}
+                workflow={codex.skills}
+              />
             </TabsContent>
           </Tabs>
         ) : activeView === "claude" ? (
-          <ClaudeCodePage workflow={claude} tab={claudeTab} onTabChange={setClaudeTab} />
+          <ClaudeCodePage
+            coverage={{
+              extensions: requireCoverageItem(coverageById, "claude:extensions"),
+              hooks: requireCoverageItem(coverageById, "claude:hooks"),
+              skills: requireCoverageItem(coverageById, "claude:skills"),
+            }}
+            onTabChange={setClaudeTab}
+            tab={claudeTab}
+            workflow={claude}
+          />
         ) : activeView === "sessions" ? (
           <SessionRecordsPage
             homeDirectory={state.homeDirectory}
             records={sessionRecords}
             openCode={openCodeSessions}
+            coverageItems={{
+              codex: requireCoverageItem(coverageById, "session:codex"),
+              claude: requireCoverageItem(coverageById, "session:claude"),
+              opencode: requireCoverageItem(coverageById, "session:opencode"),
+              grok: requireCoverageItem(coverageById, "session:grok"),
+            }}
             onShowHistory={showHistoryRecord}
           />
         ) : activeView === "vscode" ? (
           <VscodeStoragePage
             homeDirectory={state.homeDirectory}
             workflow={vscodeStorage}
+            coverageItem={requireCoverageItem(coverageById, "vscode-storage")}
             onShowHistory={showHistoryRecord}
           />
         ) : activeView === "cleanup" ? (
           <ProjectCleanupPage
+            coverageItem={requireCoverageItem(coverageById, "project-scan")}
             homeDirectory={state.homeDirectory}
             view={projectCleanup.view}
             workflow={projectCleanup.workflow}
@@ -478,16 +519,21 @@ export function App() {
           </Tabs>
         ) : (
           <ManagerTabs
+            coverageIndex={coverageById}
             managerIds={state.enabledManagers}
             managerSnapshots={state.managerSnapshots}
             onSelect={actions.selectManager}
             scanningManagers={state.scanningManagers}
             selectedManager={selectedManager}
           >
-            <div className="mb-3 mt-2 flex flex-wrap items-center justify-between gap-2" aria-live="polite">
-              <div className="text-xs text-muted-foreground"><p>{scanStateLabel(state.scanStates[selectedManager], currentManager ?? undefined)}{state.scanStates[selectedManager]?.scannedAt ? ` · 观察时间 ${new Date(state.scanStates[selectedManager]!.scannedAt!).toLocaleString()}` : ""}</p><p>{state.scanMeta}</p></div>
-              <Button variant="outline" type="button" disabled={scanning || state.maintenanceBusy} onClick={() => void actions.refresh()}>刷新当前管理器</Button>
-            </div>
+            <ManagerObservationHeader
+              busy={state.maintenanceBusy}
+              item={requireCoverageItem(coverageById, managerObservationId(selectedManager))}
+              onRefresh={() => void actions.refresh()}
+              scanMeta={state.scanMeta}
+              scanState={state.scanStates[selectedManager]}
+              scanning={scanning}
+            />
             <main className="view-grid min-[1100px]:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.7fr)] min-[1100px]:items-start">
               <Panel className="overflow-hidden">
                 <PackageTable
@@ -522,7 +568,6 @@ export function App() {
                   homeDirectory={state.homeDirectory}
                   busy={scanning || state.maintenanceBusy}
                   onRefresh={() => void actions.refresh()}
-                  onRetry={(kind) => void actions.retrySupplement(kind)}
                   onCopy={(value) => void actions.copyCommand(value)}
                 />
                 <PathPanel

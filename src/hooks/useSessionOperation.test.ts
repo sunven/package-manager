@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   useSessionOperation,
   type SessionOperationAdapter,
@@ -11,7 +11,7 @@ import {
 type Source = "a" | "b";
 type TestScan = { directory: string; rows: string[] };
 type TestTarget = { source: Source; id: string; note?: string };
-type TestResult = { completed: string[] };
+type TestResult = { completed: string[]; historyId?: string | null };
 type TestProgress = { processed: number };
 
 const SCOPES = ["a", "b"] as const;
@@ -305,5 +305,15 @@ describe("Session operation lifecycle", () => {
     await act(async () => { await result.current.refresh(["b"]); });
     expect(result.current.outcome?.refresh).toEqual({ status: "failed", message: "a failed" });
     expect(result.current.scans.b?.rows).toEqual(["b-after"]);
+  });
+
+  it("writes the follow-up read through the injected helper", async () => {
+    executeImpl = async () => ({ completed: [], historyId: "history-1" });
+    const followUp = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderOperation({ recordFollowUp: followUp });
+    await ready(result);
+    act(() => result.current.begin({ source: "a", id: "one" }));
+    await act(async () => { await result.current.confirm(result.current.operation!.id); });
+    expect(followUp).toHaveBeenCalledWith("history-1", { status: "ready", message: null });
   });
 });

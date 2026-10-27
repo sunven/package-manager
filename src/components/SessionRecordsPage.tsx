@@ -20,9 +20,8 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { formatBytes, formatHomePath } from "../utils/format";
 import {
+  ageRemovalRequest,
   bulkRemovalConfirmText,
-  bulkRemovalRequest,
-  openCodeAgeEligibleCount,
   formatSessionActivity,
   formatSessionRecordId,
   removableSessionRecords,
@@ -47,12 +46,13 @@ import {
   type SessionSectionView,
   type SessionSourceId,
   type SessionSourceScan,
-  type SessionRefresh,
 } from "../sessionRecords";
 import type { useSessionRecords } from "../hooks/useSessionRecords";
 import type { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { useSessionSelection } from "../hooks/useSessionSelection";
-import { EmptyState, Panel, StatCard } from "./ui";
+import type { ObservationCoverageItem } from "../observationCoverage";
+import { ObservationState } from "./ObservationState";
+import { EmptyState, Panel, RefreshNotice, StatCard } from "./ui";
 
 const sources = [
   { key: "codex" as const, label: "Codex", empty: "没有 Codex 会话记录", fallback: "~/.codex/sessions" },
@@ -69,6 +69,7 @@ export function SessionRecordsPage({
   nowMs,
   initialSource = "codex",
   homeDirectory,
+  coverageItems,
   onShowHistory,
 }: {
   records: ReturnType<typeof useSessionRecords>;
@@ -76,6 +77,7 @@ export function SessionRecordsPage({
   nowMs?: number;
   initialSource?: SessionSourceId | "opencode";
   homeDirectory: string | null;
+  coverageItems: Record<SessionSourceId | "opencode", ObservationCoverageItem>;
   onShowHistory?: (recordId: string) => void;
 }) {
   const { scan, scanningSources, error, refresh: onRefresh } = records;
@@ -416,6 +418,7 @@ export function SessionRecordsPage({
                 selectedIds={selection.selectedIds}
                 sort={sorts[source.key]}
                 source={data ?? null}
+                coverageItem={coverageItems[source.key]}
                 sourceKey={source.key}
                 view={view ?? null}
               />
@@ -424,6 +427,7 @@ export function SessionRecordsPage({
         })}
         <TabsContent className="min-w-0" value="opencode">
           <OpenCodeSection
+            coverageItem={coverageItems.opencode}
             error={openCodeError}
             preparing={openCodePreparing}
             prepareError={openCodePrepareError}
@@ -440,7 +444,6 @@ export function SessionRecordsPage({
             onRefresh={openCode.refresh}
             scan={openCodeScan}
             scanning={openCodeScanning}
-            nowMs={nowMs ?? Date.now()}
           />
         </TabsContent>
       </Tabs>
@@ -448,22 +451,13 @@ export function SessionRecordsPage({
   );
 }
 
-function RefreshNotice({ value, onRetry }: { value: SessionRefresh; onRetry: () => void }) {
-  if (value.status === "notRequested") return null;
-  if (value.status === "failed") return <div>
-    <p className="wrap-anywhere" role="status">列表刷新失败：{value.message} 执行结果已保留。</p>
-    <Button className="mt-2" onClick={onRetry} size="sm" type="button" variant="outline">重试刷新</Button>
-  </div>;
-  return <p role="status">{value.status === "refreshing" ? "列表正在刷新。" : "列表已刷新。"}</p>;
-}
-
 function OpenCodeSection({
   scan,
   scanning,
-  nowMs,
   preparing,
   error,
   prepareError,
+  coverageItem,
   onRefresh,
   onOpen,
   onRequestDelete,
@@ -478,10 +472,10 @@ function OpenCodeSection({
 }: {
   scan: OpenCodeSessionScan | null;
   scanning: boolean;
-  nowMs: number;
   preparing: boolean;
   error: string | null;
   prepareError: string | null;
+  coverageItem: ObservationCoverageItem;
   onRefresh: () => void;
   onOpen: (sessionId: string) => Promise<string | null>;
   onRequestDelete: (id: string) => void;
@@ -503,10 +497,10 @@ function OpenCodeSection({
   const selectedSet = new Set(selectedIds);
   const selectedRecords = records.filter((record) => selectedSet.has(record.id));
   const eligibleAge7 = scan?.status === "ready" && scan.activeSessionIds
-    ? openCodeAgeEligibleCount(scan.records, 7, nowMs, scan.activeSessionIds)
+    ? scan.ageEligible.days7
     : null;
   const eligibleAge30 = scan?.status === "ready" && scan.activeSessionIds
-    ? openCodeAgeEligibleCount(scan.records, 30, nowMs, scan.activeSessionIds)
+    ? scan.ageEligible.days30
     : null;
 
   return (
@@ -516,7 +510,14 @@ function OpenCodeSection({
         <ToggleGroup type="single" value={filter.archived} onValueChange={(archived) => { if (archived) { setFilter((current) => ({ ...current, archived: archived as OpenCodeSessionFilter["archived"] })); onClearSelection(); } }} aria-label="OpenCode 归档状态">
           <ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="active">未归档</ToggleGroupItem><ToggleGroupItem value="archived">已归档</ToggleGroupItem>
         </ToggleGroup>
-        <span className="text-xs text-muted-foreground" role="status">{scan?.status === "ready" ? `匹配 ${records.length} / 已读取 ${scan.records.length} 条` : "OpenCode 服务不可用"}</span>
+        <div className="grid min-w-0 gap-0.5">
+          <span className="text-xs text-muted-foreground" role="status">{scan?.status === "ready" ? `匹配 ${records.length} / 已读取 ${scan.records.length} 条` : "OpenCode 服务不可用"}</span>
+          <ObservationState
+            item={coverageItem}
+            showNote={coverageItem.status !== "failed" && coverageItem.status !== "unavailable"}
+            variant="strip"
+          />
+        </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2 border-b px-3 py-2">
         <Button aria-pressed="true" onClick={() => setCollapsed({})} size="sm" type="button" variant="secondary">按最后活动时间</Button>
@@ -652,6 +653,7 @@ function SourceSection({
   homeDirectory,
   collapsed,
   sourceKey,
+  coverageItem,
   onToggle,
   nowMs,
   onSortChange,
@@ -680,6 +682,7 @@ function SourceSection({
   homeDirectory: string | null;
   collapsed: Record<string, boolean>;
   sourceKey: string;
+  coverageItem: ObservationCoverageItem;
   onToggle: (groupKey: string) => void;
   nowMs: number;
   onSortChange: (sort: SessionSort) => void;
@@ -706,8 +709,8 @@ function SourceSection({
   const selected = selectedRemovalRequest(records, selectedIds);
   const selectedCount = selected?.count ?? 0;
   const selectedSet = new Set(selected?.ids ?? []);
-  const eligibleAge7 = bulkRemovalRequest(allSourceRecords, 7, nowMs)?.count ?? 0;
-  const eligibleAge30 = bulkRemovalRequest(allSourceRecords, 30, nowMs)?.count ?? 0;
+  const eligibleAge7 = source?.ageEligible.days7 ?? 0;
+  const eligibleAge30 = source?.ageEligible.days30 ?? 0;
   const inUseCount = allSourceRecords.filter((record) => record.inUse).length;
   const unknownActivityCount = allSourceRecords.filter((record) => record.lastActivityMs === null).length;
   const recentAge7Count = allSourceRecords.filter((record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs >= nowMs - 7 * 24 * 60 * 60 * 1000).length;
@@ -723,9 +726,16 @@ function SourceSection({
         <span className="text-xs text-muted-foreground" role="status">{view ? `匹配 ${view.count} / 已读取 ${view.totalCount} 条` : "尚未读取会话记录"}</span>
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
-        <p className="min-w-0 basis-48 grow break-all text-xs text-muted-foreground">
-          {source ? formatHomePath(source.directory, homeDirectory) : fallbackPath}
-        </p>
+        <div className="grid min-w-0 basis-48 grow gap-0.5">
+          <ObservationState
+            item={coverageItem}
+            showNote={coverageItem.status !== "failed" && coverageItem.status !== "partial"}
+            variant="strip"
+          />
+          <p className="break-all text-xs text-muted-foreground">
+            {source ? formatHomePath(source.directory, homeDirectory) : fallbackPath}
+          </p>
+        </div>
         <span className="flex max-w-full flex-wrap gap-2">
           <span aria-label="排序" className="flex gap-1" role="group">
             <Button aria-pressed={sort === "time"} onClick={() => onSortChange("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>
@@ -740,7 +750,7 @@ function SourceSection({
             {scanning ? "读取中" : "刷新"}
           </Button>
           {([7, 30] as const).map((days) => {
-            const request = bulkRemovalRequest(source?.records ?? [], days, nowMs);
+            const request = ageRemovalRequest(source?.ageEligible, days);
             return (
               <Button
                 aria-describedby={`${sourceKey}-age-removal-help ${ageEligibilityId}`}

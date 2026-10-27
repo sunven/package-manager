@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { useCodexSkills } from "../hooks/useCodexSkills";
 import { codexSkillsFixture } from "../test/codexSkillFixtures";
+import { observationCoverageItem } from "../test/observationFixtures";
 import type { SkillIntent, SkillOutcome, SkillPreview } from "../codexSkills";
 import { CodexSkillsPage } from "./CodexSkillsPage";
 
@@ -18,7 +19,7 @@ const calls = (command: string) => mockedInvoke.mock.calls.filter(([name]) => na
 
 function Harness({ dependency = "initial", active = true }: { dependency?: string; active?: boolean }) {
   const workflow = useCodexSkills(active, dependency);
-  return <CodexSkillsPage workflow={workflow} onShowPlugins={navigate} />;
+  return <CodexSkillsPage coverageItem={observationCoverageItem("codex:skills")} workflow={workflow} onShowPlugins={navigate} />;
 }
 beforeEach(() => {
   vi.resetAllMocks(); scan = codexSkillsFixture(); scanError = null; deferCommit = undefined;
@@ -49,6 +50,7 @@ async function openConfirmation() {
 describe("Codex skills workflow", () => {
   it("reads once, filters sources/status, renders inert details, and scopes controls by ownership", async () => {
     render(<Harness />); await ready();
+    expect(document.querySelector('[data-observation-item="codex:skills"]')).toBeTruthy();
     expect(calls("scan_codex_skills")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "卸载 research" })).toBeNull();
     expect(screen.queryByRole("button", { name: "禁用 writer:docs" })).toBeNull();

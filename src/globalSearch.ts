@@ -10,23 +10,27 @@ export const pathObservationId = (kind: string, path: string) => JSON.stringify(
 export function searchManagers(managers: ManagerId[], snapshots: Partial<Record<ManagerId, ManagerSnapshot>>, query: string): SearchResult[] {
   const needle = query.trim().toLocaleLowerCase();
   if (!needle) return [];
+  const matches = (...values: (string | null)[]) =>
+    values.join("\n").toLocaleLowerCase().includes(needle);
   const results: SearchResult[] = [];
   for (const managerId of managers) {
     const snapshot = snapshots[managerId];
     if (!snapshot) continue;
     for (const row of snapshot.packages) {
+      if (!matches(row.name, row.version, row.path)) continue;
       const observationId = packageObservationId(managerId, row);
       results.push({ key: JSON.stringify([managerId, "package", observationId]), managerId, kind: "package", observationId,
         name: row.name, version: row.version, path: row.path, objectKind: row.kind });
     }
     for (const path of snapshot.paths) {
+      if (!matches(path.label, "", path.path)) continue;
       const observationId = pathObservationId(path.kind, path.path);
       results.push({ key: JSON.stringify([managerId, "path", observationId]), managerId, kind: "path", observationId,
         name: path.label, version: "", path: path.path, objectKind: path.kind });
     }
   }
   const rank = (row: SearchResult) => row.name.toLocaleLowerCase() === needle ? 0 : row.name.toLocaleLowerCase().startsWith(needle) ? 1 : 2;
-  return results.filter((row) => `${row.name}\n${row.version}\n${row.path ?? ""}`.toLocaleLowerCase().includes(needle))
+  return results
     .sort((a, b) => rank(a) - rank(b) || managerOrder.indexOf(a.managerId) - managerOrder.indexOf(b.managerId) || a.name.localeCompare(b.name, "zh-CN", { numeric: true }) || a.version.localeCompare(b.version, undefined, { numeric: true }));
 }
 

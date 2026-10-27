@@ -1,13 +1,15 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import type {
-  SessionRecord,
-  SessionRecordScan,
-  SessionRemovalProgress,
-  SessionRemovalResult,
-  SessionSourceId,
-  SessionSourceScan,
+import {
+  removeCompletedRecords,
+  type SessionRecord,
+  type SessionRecordScan,
+  type SessionRemovalProgress,
+  type SessionRemovalResult,
+  type SessionSourceId,
+  type SessionSourceScan,
 } from "../sessionRecords";
+import { recordMaintenanceFollowUp } from "../maintenanceFollowUp";
 import { errorToString } from "../utils/format";
 import { recordObservationFacts, sessionObservationFacts } from "../observationFacts";
 import { sessionObservationId } from "../observationItems";
@@ -30,11 +32,23 @@ function confirmedRecord(record: SessionRecord) {
 const SESSION_SCOPES = ["codex", "claude", "grok"] as const;
 
 function emptySource(): SessionSourceScan {
-  return { directory: "", status: "Missing", records: [], message: null };
+  return {
+    directory: "",
+    status: "Missing",
+    records: [],
+    message: null,
+    ageEligible: { days7: 0, days30: 0 },
+  };
 }
 
 function retained(previous: SessionSourceScan | undefined, next: SessionSourceScan): SessionSourceScan {
-  return next.status === "Failed" ? { ...next, records: previous?.records ?? [] } : next;
+  return next.status === "Failed"
+    ? {
+        ...next,
+        records: previous?.records ?? [],
+        ageEligible: previous?.ageEligible ?? next.ageEligible,
+      }
+    : next;
 }
 
 function failureOf(scan: SessionSourceScan) {
@@ -135,34 +149,32 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
   completedIds: (_target, result) => result.items
     .filter((item) => item.status === "Moved")
     .map((item) => item.id),
-  removeCompleted: (scans, target, completedIds) => {
-    const scan = scans[target.source];
-    return scan
-      ? { ...scans, [target.source]: { ...scan, records: scan.records.filter((record) => !completedIds.includes(record.id)) } }
-      : scans;
-  },
+  removeCompleted: (scans, target, completedIds) =>
+    removeCompletedRecords(scans, target.source, completedIds),
   shouldRefresh: () => true,
-  recordFollowUp: async (_target, result, refresh) => {
-    if (!result.historyId) return;
-    await invoke("record_maintenance_followup", {
-      id: result.historyId,
-      status: refresh.status,
-      message: refresh.message,
-    });
-  },
 };
 
 export function useSessionRecords(active: boolean) {
   const { scans, scanning, error, operation, outcome, refresh, begin, cancel, confirm } =
-    useSessionOperation(adapter, { active, scopes: SESSION_SCOPES });
+    useSessionOperation(adapter, {
+      active,
+      scopes: SESSION_SCOPES,
+      recordFollowUp: recordMaintenanceFollowUp,
+    });
 
   const [openingGrokId, setOpeningGrokId] = useState<string | null>(null);
   const opening = useRef(false);
   const mutation = useRef(false);
-  const scan: SessionRecordScan | null = scans.codex || scans.claude || scans.grok
-    ? { codex: scans.codex ?? emptySource(), claude: scans.claude ?? emptySource(), grok: scans.grok }
-    : null;
-  const scanningSources = { codex: scanning.codex ?? false, claude: scanning.claude ?? false, grok: scanning.grok ?? false };
+  const scan = useMemo<SessionRecordScan | null>(
+    () => scans.codex || scans.claude || scans.grok
+      ? { codex: scans.codex ?? emptySource(), claude: scans.claude ?? emptySource(), grok: scans.grok }
+      : null,
+    [scans.codex, scans.claude, scans.grok],
+  );
+  const scanningSources = useMemo(
+    () => ({ codex: scanning.codex ?? false, claude: scanning.claude ?? false, grok: scanning.grok ?? false }),
+    [scanning.codex, scanning.claude, scanning.grok],
+  );
   async function openGrokSession(record: SessionRecord): Promise<string | null> {
     if (opening.current || mutation.current || operation || scanning.grok) return "当前操作尚未结束，请稍后重试。";
     const source = scans.grok;

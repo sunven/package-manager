@@ -18,13 +18,12 @@ export function commandForCopy(command: CommandEnvelope) {
   return [command.program, ...command.args].map((value) => /^[a-zA-Z0-9_@%+=:,./-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`).join(" ");
 }
 
-export function ManagerDiagnostics({ manager, state, busy, homeDirectory, onRefresh, onRetry, onCopy }: {
+export function ManagerDiagnostics({ manager, state, busy, homeDirectory, onRefresh, onCopy }: {
   manager: ManagerSnapshot | null;
   state?: ManagerScanState;
   busy: boolean;
   homeDirectory: string | null;
   onRefresh: () => void;
-  onRetry: (kind: "paths" | "homebrew" | "pip") => void;
   onCopy: (value: string) => void;
 }) {
   const failures = [...(state?.failures ?? manager?.failures ?? [])];
@@ -61,9 +60,9 @@ export function ManagerDiagnostics({ manager, state, busy, homeDirectory, onRefr
       {failedPaths.map((path) => <p className="break-all text-xs text-muted-foreground" key={path.path}>{path.label}：{text(path.size.message ?? "路径缺失或读取不完整")}</p>)}
       <div className="flex flex-wrap gap-2">
         <Button disabled={busy} onClick={onRefresh} type="button" size="sm" variant="outline">重新扫描管理器</Button>
-        {failedPaths.length ? <Button disabled={busy} onClick={() => onRetry("paths")} type="button" size="sm" variant="outline">重试目录测量</Button> : null}
-        {manager?.homebrew?.cleanup.status === "Failed" ? <Button disabled={busy} onClick={() => onRetry("homebrew")} type="button" size="sm" variant="outline">重试 Homebrew 预演</Button> : null}
-        {manager?.pip?.outdatedStatus === "Failed" ? <Button disabled={busy} onClick={() => onRetry("pip")} type="button" size="sm" variant="outline">重试 pip 更新检查</Button> : null}
+        {failedPaths.length ? <Button disabled={busy} onClick={onRefresh} type="button" size="sm" variant="outline">重试目录测量</Button> : null}
+        {manager?.homebrew?.cleanup.status === "Failed" ? <Button disabled={busy} onClick={onRefresh} type="button" size="sm" variant="outline">重试 Homebrew 预演</Button> : null}
+        {manager?.pip?.outdatedStatus === "Failed" ? <Button disabled={busy} onClick={onRefresh} type="button" size="sm" variant="outline">重试 pip 更新检查</Button> : null}
       </div>
     </CardContent>
   </Card>;

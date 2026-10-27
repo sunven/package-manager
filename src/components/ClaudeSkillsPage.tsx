@@ -9,13 +9,19 @@ import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { skillOperationLabel, skillSourceLabel, skillModeLabel, type SkillMode, type ClaudeSkill, type SkillIntent, type SkillSource } from "../claudeSkills";
 import type { ClaudeSkills } from "../hooks/useClaudeSkills";
+import type { ObservationCoverageItem } from "../observationCoverage";
 import { errorToString } from "../utils/format";
+import { ObservationState } from "./ObservationState";
 import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
 
 const selectClass = "h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50";
 const githubSource: SkillSource = { kind: "github", repo: "", subdirectory: "", reference: "", referenceKind: "branch" };
 
-export function ClaudeSkillsPage({ workflow, onShowPlugins }: { workflow: ClaudeSkills; onShowPlugins: (pluginId?: string) => void }) {
+export function ClaudeSkillsPage({ workflow, coverageItem, onShowPlugins }: {
+  workflow: ClaudeSkills;
+  coverageItem: ObservationCoverageItem;
+  onShowPlugins: (pluginId?: string) => void;
+}) {
   const { scan, current, scanning, busy, phase, preview, error, result } = workflow;
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -59,6 +65,7 @@ export function ClaudeSkillsPage({ workflow, onShowPlugins }: { workflow: Claude
       <CardContent className="grid gap-2 p-4">
         <p className="text-sm">查看当前用户的技能定义，调整调用设置，维护本应用安装的副本。</p>
         <p className="text-xs text-muted-foreground">Claude 用户目录 <code className="ml-2 break-all text-foreground">{scan?.directory || "尚未读取"}</code></p>
+        <ObservationState item={coverageItem} showNote={false} variant="strip" />
         <p className="text-xs text-muted-foreground">包含禁用项、插件和旧版命令；定义存在不代表当前会话已加载。 <button type="button" disabled={busy} onClick={() => onShowPlugins()} className="cursor-pointer text-primary underline underline-offset-4 disabled:opacity-50">前往插件市场</button></p>
         <p role="status" className="text-xs text-muted-foreground">{phase === "preparing" ? "正在取得来源并核对技能，尚未执行维护…" : phase === "executing" ? "正在执行并重新核对清单…" : scanning ? "正在读取，已有内容暂为上次结果。" : "调用设置按名称影响用户默认行为，项目或更高层配置仍可覆盖；修改后请在新会话核对。"}</p>
       </CardContent>

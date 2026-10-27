@@ -17,12 +17,18 @@ export type SessionRecord = {
   };
 };
 
+export type AgeEligibleCounts = {
+  days7: number;
+  days30: number;
+};
+
 export type SessionSourceScan = {
   directory: string;
   status: SessionScanStatus;
   records: SessionRecord[];
   message: string | null;
   removalBlockedReason?: string | null;
+  ageEligible: AgeEligibleCounts;
 };
 
 export type SessionRecordScan = {
@@ -66,6 +72,7 @@ export type OpenCodeSessionScan = {
   message: string | null;
   activeSessionIds: string[] | null;
   activityMessage: string | null;
+  ageEligible: AgeEligibleCounts;
 };
 
 export type OpenCodeDeletionItem = {
@@ -172,44 +179,9 @@ export function removalResultText(result: Pick<SessionRemovalResult, "moved" | "
   return `移入废纸篓 ${result.moved} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条${notAttempted ? `，未执行 ${notAttempted} 条` : ""}`;
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-export function recordsOlderThan(records: SessionRecord[], days: 7 | 30, nowMs: number) {
-  const cutoff = nowMs - days * DAY_MS;
-  return records.filter((record) => record.lastActivityMs !== null && !record.inUse && record.lastActivityMs < cutoff);
-}
-
-export function bulkRemovalRequest(
-  records: SessionRecord[],
-  days: 7 | 30,
-  nowMs: number,
-) {
-  const count = recordsOlderThan(records, days, nowMs).length;
-  if (count === 0) return null;
-  return { days, count };
-}
-
-export function openCodeAgeEligibleCount(
-  records: OpenCodeSessionRecord[],
-  days: 7 | 30,
-  nowMs: number,
-  activeSessionIds: readonly string[],
-) {
-  const cutoffMs = nowMs - days * DAY_MS;
-  const active = new Set(activeSessionIds);
-  const byId = new Map(records.map((record) => [record.id, record]));
-  const blocked = new Set<string>();
-
-  for (const record of records) {
-    if (record.lastActivityMs < cutoffMs && !active.has(record.id)) continue;
-    let current: OpenCodeSessionRecord | undefined = record;
-    while (current && !blocked.has(current.id)) {
-      blocked.add(current.id);
-      current = current.parentId ? byId.get(current.parentId) : undefined;
-    }
-  }
-
-  return records.filter((record) => !blocked.has(record.id)).length;
+export function ageRemovalRequest(counts: AgeEligibleCounts | null | undefined, days: 7 | 30) {
+  const count = counts ? (days === 7 ? counts.days7 : counts.days30) : 0;
+  return count > 0 ? { days, count } : null;
 }
 
 export function bulkRemovalConfirmText(sourceLabel: string, days: number, count: number) {
@@ -218,6 +190,23 @@ export function bulkRemovalConfirmText(sourceLabel: string, days: number, count:
 
 export function removableSessionRecords(records: SessionRecord[]) {
   return records.filter((record) => !record.inUse);
+}
+
+export function removeCompletedRecords<
+  Source extends string,
+  Scan extends { records: { id: string }[] },
+>(
+  scans: Partial<Record<Source, Scan>>,
+  scope: Source,
+  completedIds: readonly string[],
+): Partial<Record<Source, Scan>> {
+  const scan = scans[scope];
+  if (!scan || completedIds.length === 0) return scans;
+  const completed = new Set(completedIds);
+  return {
+    ...scans,
+    [scope]: { ...scan, records: scan.records.filter((record) => !completed.has(record.id)) },
+  };
 }
 
 export function selectedRemovalRequest(records: SessionRecord[], selectedIds: ReadonlySet<string> | readonly string[]) {

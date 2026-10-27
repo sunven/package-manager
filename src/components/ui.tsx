@@ -9,9 +9,11 @@ import {
 } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Empty, EmptyDescription } from "../../components/ui/empty";
 import { statusLabels } from "../constants";
 import type { DisplayStatus } from "../types";
+import type { SessionRefresh } from "../sessionRecords";
 import { cn } from "../../lib/utils";
 
 export function Panel({
@@ -72,6 +74,21 @@ export function SkeletonRows({ label }: { label: string }) {
       <span />
     </div>
   );
+}
+
+export function Notice({ title, message }: { title: string; message: string }) {
+  return <Alert><AlertTitle>{title}</AlertTitle><AlertDescription className="break-words">{message}</AlertDescription></Alert>;
+}
+
+export function RefreshNotice({ value, onRetry }: { value: SessionRefresh; onRetry: () => void }) {
+  if (value.status === "notRequested") return null;
+  if (value.status === "failed") return (
+    <div>
+      <p className="wrap-anywhere" role="status">列表刷新失败：{value.message} 执行结果已保留。</p>
+      <Button className="mt-2" onClick={onRetry} size="sm" type="button" variant="outline">重试刷新</Button>
+    </div>
+  );
+  return <p role="status">{value.status === "refreshing" ? "列表正在刷新。" : "列表已刷新。"}</p>;
 }
 
 export function StatusBadge({ status, className }: { status: DisplayStatus; className?: string }) {

@@ -1,5 +1,5 @@
 import { managerLabels } from "../constants";
-import type { CommandEnvelope, DiskUsage, ManagerId, PathKind } from "../types";
+import type { CommandEnvelope, ManagerId, PathKind } from "../types";
 
 export function managerLabel(managerId: ManagerId) {
   return managerLabels[managerId];
@@ -259,16 +259,4 @@ export function errorToString(error: unknown) {
   } catch {
     return "未知错误";
   }
-}
-
-export function sizeScanError(error: unknown): DiskUsage {
-  return {
-    status: "Error",
-    bytes: null,
-    human: null,
-    files: 0,
-    directories: 0,
-    skipped: 0,
-    message: errorToString(error),
-  };
 }

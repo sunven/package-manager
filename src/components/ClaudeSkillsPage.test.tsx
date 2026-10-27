@@ -10,6 +10,7 @@ import { ClaudeSkillsPage } from "./ClaudeSkillsPage";
 import { App } from "../App";
 import { claudeExtensionFixture, claudeHookFixture } from "../test/claudeCodeFixtures";
 import { managerFixture } from "../test/fixtures";
+import { observationCoverageItem } from "../test/observationFixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/path", () => ({ homeDir: async () => "/Users/example" }));
@@ -22,7 +23,7 @@ const navigate = vi.fn(); const invalidate = vi.fn();
 const calls = (command: string) => mockedInvoke.mock.calls.filter(([name]) => name === command);
 function Harness({ dependency = "initial", active = true }: { dependency?: string; active?: boolean }) {
   const workflow = useClaudeSkills(active, dependency, false, invalidate);
-  return <ClaudeSkillsPage workflow={workflow} onShowPlugins={navigate} />;
+  return <ClaudeSkillsPage coverageItem={observationCoverageItem("claude:skills")} workflow={workflow} onShowPlugins={navigate} />;
 }
 beforeEach(() => {
   vi.resetAllMocks(); scan = claudeSkillsFixture(); scanError = null; deferCommit = undefined;
@@ -61,6 +62,7 @@ describe("Claude Skills", () => {
     await user.click(screen.getByRole("button", { name: "Claude Code" }));
     await waitFor(() => expect((screen.getByRole("tab", { name: "Skills" }) as HTMLButtonElement).disabled).toBe(false));
     await user.click(screen.getByRole("tab", { name: "Skills" })); await ready();
+    expect(document.querySelector('[data-observation-item="claude:skills"]')).toBeTruthy();
     expect(calls("scan_claude_skills")).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "reviewer@team-tools" }));
     expect(await screen.findByRole("button", { name: /reviewer收起详情/ })).toBeTruthy();

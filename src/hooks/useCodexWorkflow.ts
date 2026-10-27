@@ -11,5 +11,3 @@ export function useCodexWorkflow(active: boolean, tab: string) {
 
   return { extensions, skills, locked: Boolean(extensions.operation || skills.phase) };
 }
-
-export type CodexWorkflow = ReturnType<typeof useCodexWorkflow>;

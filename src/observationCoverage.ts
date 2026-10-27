@@ -274,6 +274,21 @@ export function buildObservationCoverage(input: ObservationCoverageInput): Obser
   return { items, groups, summary };
 }
 
+export type ObservationCoverageIndex = ReadonlyMap<ObservationItemId, ObservationCoverageItem>;
+
+export function indexObservationCoverage(coverage: ObservationCoverage): ObservationCoverageIndex {
+  return new Map(coverage.items.map((item) => [item.id, item]));
+}
+
+export function requireCoverageItem(
+  index: ObservationCoverageIndex,
+  id: ObservationItemId,
+): ObservationCoverageItem {
+  const item = index.get(id);
+  if (!item) throw new Error(`Missing observation coverage item: ${id}`);
+  return item;
+}
+
 export function formatObservationTime(at: number, now = Date.now()) {
   return `${new Date(at).toLocaleString()}（${relativeObservationTime(at, now)}）`;
 }

@@ -1,6 +1,5 @@
 import type { EnvironmentInspection } from "./environmentInspection";
 import type { ManagerScanState } from "./managerScanning";
-import { scanProblems } from "./managerScanning";
 import type { ProjectCleanupView } from "./projectCleanupWorkflow";
 import type { ManagerSnapshot } from "./types";
 import type { OpenCodeSessionScan, SessionSourceScan } from "./sessionRecords";
@@ -26,10 +25,6 @@ export interface ObservationFacts {
 }
 
 export type ObservationFactsMap = Partial<Record<ObservationItemId, ObservationFacts>>;
-
-export function idleObservationFacts(): ObservationFacts {
-  return { phase: "idle", success: null, failure: null, invalidated: null, currentScope: null };
-}
 
 export function recordObservationFacts(itemId: ObservationItemId, facts: ObservationFacts, at = Date.now()) {
   if (facts.failure) {
@@ -79,7 +74,7 @@ export function managerObservationFacts(
         : null;
   let success: ObservationFacts["success"] = null;
   if (!failure && snapshot && ["Ready", "Partial", "Unsupported"].includes(snapshot.status)) {
-    const problem = notes(scanProblems(snapshot), state?.error);
+    const problem = state?.error ?? null;
     const completeness: ObservationCompleteness = snapshot.status === "Partial" || problem ? "partial" : "complete";
     success = {
       at: state?.scannedAt ?? null,

@@ -1,5 +1,5 @@
 use super::scan_support::{
-    empty_snapshot, expand_tilde, finish, home_dir, package_row, path_scope_key,
+    empty_snapshot, finish, home_dir, package_row, path_scope_key, resolve_env_path,
     split_package_version, trimmed,
 };
 use crate::command::{
@@ -103,12 +103,7 @@ fn resolve_bun_install_from_env(home: Option<&Path>) -> PathBuf {
 }
 
 fn resolve_bun_install(bun_install: Option<&str>, home: Option<&Path>) -> PathBuf {
-    if let Some(value) = bun_install.map(str::trim).filter(|value| !value.is_empty()) {
-        return expand_tilde(value, home);
-    }
-
-    home.map(|home| home.join(".bun"))
-        .unwrap_or_else(|| PathBuf::from(".bun"))
+    resolve_env_path(bun_install, home, ".bun")
 }
 
 fn parse_bun_global_packages(stdout: &str, global_bin: &str) -> Vec<PackageRow> {

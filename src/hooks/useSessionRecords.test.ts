@@ -29,7 +29,14 @@ function record(id: string): SessionRecord {
 }
 
 function source(title: string, overrides: Partial<SessionSourceScan> = {}): SessionSourceScan {
-  return { directory: "/sessions", status: "Ready", message: null, records: [record(title)], ...overrides };
+  return {
+    directory: "/sessions",
+    status: "Ready",
+    message: null,
+    ageEligible: { days7: 0, days30: 0 },
+    records: [record(title)],
+    ...overrides,
+  };
 }
 
 const initial: SessionRecordScan = { codex: source("initial"), claude: source("claude") };
@@ -77,6 +84,28 @@ describe("Session records adapter", () => {
     expect(result.current.error).toBe("full failure");
     expect(result.current.scan?.codex).toMatchObject({ status: "Failed", message: "full failure" });
     expect(result.current.scan?.codex.records[0].title).toBe("initial");
+  });
+
+  it("retains the age counts that belong to retained records", async () => {
+    mockedInvoke.mockResolvedValueOnce({
+      codex: source("kept", { ageEligible: { days7: 2, days30: 1 } }),
+      claude: source("claude"),
+    });
+    const { result } = renderHook(() => useSessionRecords(false));
+    await act(async () => { await result.current.refresh(); });
+
+    mockedInvoke.mockResolvedValueOnce({
+      codex: source("ignored", {
+        status: "Failed",
+        records: [],
+        message: "source failed",
+        ageEligible: { days7: 0, days30: 0 },
+      }),
+      claude: source("claude-new"),
+    });
+    await act(async () => { await result.current.refresh(); });
+
+    expect(result.current.scan?.codex.ageEligible).toEqual({ days7: 2, days30: 1 });
   });
 
   const removals: { target: Parameters<ReturnType<typeof useSessionRecords>["request"]>[0]; command: string; args: unknown }[] = [

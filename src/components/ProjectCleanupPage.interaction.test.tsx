@@ -4,12 +4,80 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProjectCleanupPage } from "./ProjectCleanupPage";
-import { createProjectCleanupWorkflow } from "../projectCleanupWorkflow";
+import {
+  createProjectCleanupWorkflow,
+  type CleanupBatchSummary,
+  type ProjectCleanupEffects,
+  type ProjectCleanupView,
+} from "../projectCleanupWorkflow";
 import { createInMemoryProjectCleanupEffects } from "../projectCleanupInMemoryEffects";
+import { projectObservationFacts } from "../observationFacts";
+import { coverageIndexFromFacts } from "../test/observationFixtures";
+import {
+  requireCoverageItem,
+  type ObservationCoverageItem,
+} from "../observationCoverage";
+import { resetObservationLedgerForTests, type ObservationRecord } from "../observationLedger";
 import { presetSettings } from "../test/fixtures";
-import type { DirectoryMeasurement, ProjectDataCandidate, ProjectScanRecord } from "../types";
+import type {
+  DirectoryMeasurement,
+  ProjectCleanupBatchProgress,
+  ProjectCleanupResult,
+  ProjectDataCandidate,
+  ProjectScanRecord,
+} from "../types";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetObservationLedgerForTests();
+});
+
+function projectCoverageItem(view: ProjectCleanupView, record?: ObservationRecord): ObservationCoverageItem {
+  const index = coverageIndexFromFacts(
+    { "project-scan": projectObservationFacts(view) },
+    record ? { "project-scan": record } : {},
+  );
+  return requireCoverageItem(index, "project-scan");
+}
+
+function observationRecord(at: number): ObservationRecord {
+  return {
+    itemId: "project-scan",
+    lastSuccess: {
+      at,
+      scope: "/code\n8",
+      scopeLabel: "/code · 深度 8",
+      completeness: "complete",
+      note: null,
+    },
+    lastAttempt: { at, outcome: "succeeded", scope: "/code\n8", reason: null },
+    invalidated: null,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function cleanupResult(candidateId: string, cleanedBytes: number): ProjectCleanupResult {
+  return {
+    candidateId,
+    status: "Succeeded",
+    command: null,
+    beforeBytes: cleanedBytes,
+    afterBytes: 0,
+    cleanedBytes,
+    measurement: { status: "Ready", bytes: 0, human: "0 B", files: 0, directories: 0, skipped: 0, latestModifiedMs: null, message: null },
+    stdout: "",
+    stderr: "",
+    message: null,
+    failure: null,
+  };
+}
 
 function scanRecord(overrides: Partial<ProjectScanRecord> = {}): ProjectScanRecord {
   return {
@@ -36,7 +104,7 @@ it("lets a user edit a multi-digit depth before saving it for the next scan", as
   await workflow.initialize();
   function Page() {
     const view = useSyncExternalStore(workflow.subscribe, workflow.read);
-    return <ProjectCleanupPage homeDirectory={null} view={view} workflow={workflow} />;
+    return <ProjectCleanupPage coverageItem={projectCoverageItem(view)} homeDirectory={null} view={view} workflow={workflow} />;
   }
   render(<Page />);
   const depth = screen.getByRole("spinbutton", { name: /深度/ });
@@ -67,7 +135,7 @@ it("filters candidate types by keyboard while retaining the selected candidates"
   await workflow.startScan();
   function Page() {
     const view = useSyncExternalStore(workflow.subscribe, workflow.read);
-    return <ProjectCleanupPage homeDirectory={null} view={view} workflow={workflow} />;
+    return <ProjectCleanupPage coverageItem={projectCoverageItem(view)} homeDirectory={null} view={view} workflow={workflow} />;
   }
   render(<Page />);
   const filters = screen.getByRole("radiogroup", { name: "候选类型" });
@@ -116,7 +184,7 @@ it("shows candidate qualification reasons beside disabled checkboxes", async () 
   await workflow.startScan();
   function Page() {
     const view = useSyncExternalStore(workflow.subscribe, workflow.read);
-    return <ProjectCleanupPage homeDirectory={null} view={view} workflow={workflow} />;
+    return <ProjectCleanupPage coverageItem={projectCoverageItem(view)} homeDirectory={null} view={view} workflow={workflow} />;
   }
   render(<Page />);
 
@@ -155,7 +223,7 @@ it("shows the current-depth scan summary and opens all retained records", async 
   await workflow.initialize();
   function Page() {
     const view = useSyncExternalStore(workflow.subscribe, workflow.read);
-    return <ProjectCleanupPage homeDirectory={null} view={view} workflow={workflow} />;
+    return <ProjectCleanupPage coverageItem={projectCoverageItem(view)} homeDirectory={null} view={view} workflow={workflow} />;
   }
   render(<Page />);
 
@@ -171,6 +239,33 @@ it("shows the current-depth scan summary and opens all retained records", async 
   expect(within(dialog).getAllByText(/深度 6/).length).toBeGreaterThan(0);
 });
 
+it("keeps scan-history time and observation time independent", async () => {
+  const current = scanRecord({ id: "current", finishedAt: 300 });
+  const measurement: DirectoryMeasurement = { status: "Ready", bytes: 0, human: "0 B", files: 0, directories: 0, skipped: 0, latestModifiedMs: null, message: null };
+  const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
+    readSettings: async () => presetSettings({ maxDepth: 8 }),
+    readScanHistory: async () => ({ histories: { "preset-1": { records: [current] } }, warning: null }),
+    scan: async () => ({
+      rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8,
+      status: "Ready", projects: { total: 0, rust: 0, node: 0, maven: 0 },
+      candidates: [], skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null, mavenAvailable: true, mavenMessage: null,
+    }),
+    measure: async () => measurement,
+  }));
+  await workflow.initialize();
+  await workflow.startScan();
+  function Page() {
+    const view = useSyncExternalStore(workflow.subscribe, workflow.read);
+    return <ProjectCleanupPage coverageItem={projectCoverageItem(view, observationRecord(500))} homeDirectory={null} view={view} workflow={workflow} />;
+  }
+  render(<Page />);
+
+  expect(screen.getByText(/上次扫描/)).toBeTruthy();
+  expect(screen.getByText(/观察于/)).toBeTruthy();
+  expect(screen.getByText(/读取完整/)).toBeTruthy();
+  expect(screen.queryByText(/观察时间未知/)).toBeNull();
+});
+
 it("does not present another depth as the current-depth scan", async () => {
   const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
     readSettings: async () => presetSettings({ maxDepth: 8 }),
@@ -182,11 +277,85 @@ it("does not present another depth as the current-depth scan", async () => {
   await workflow.initialize();
   function Page() {
     const view = useSyncExternalStore(workflow.subscribe, workflow.read);
-    return <ProjectCleanupPage homeDirectory={null} view={view} workflow={workflow} />;
+    return <ProjectCleanupPage coverageItem={projectCoverageItem(view)} homeDirectory={null} view={view} workflow={workflow} />;
   }
   render(<Page />);
 
   expect(screen.getByText(/当前深度（8）尚未扫描/)).toBeTruthy();
   expect(screen.getByText(/该预设其他深度有 1 条记录/)).toBeTruthy();
   expect(screen.queryByText(/较基线/)).toBeNull();
+});
+
+it("renders cleanup batch progress and the final summary", async () => {
+  const user = userEvent.setup();
+  const measurement: DirectoryMeasurement = { status: "Ready", bytes: 1024, human: "1 KiB", files: 1, directories: 1, skipped: 0, latestModifiedMs: null, message: null };
+  const candidates: ProjectDataCandidate[] = ["one", "two"].map((id) => ({
+    candidateId: id,
+    kind: "NodeModules" as const,
+    projectPath: `/code/${id}`,
+    directoryPath: `/code/${id}/node_modules`,
+    status: "Ready" as const,
+    message: null,
+    measurement,
+  }));
+  const completion = deferred<CleanupBatchSummary>();
+  let onProgress!: (progress: ProjectCleanupBatchProgress) => void;
+  const runBatch = vi.fn((input: Parameters<ProjectCleanupEffects["runBatch"]>[0]) => {
+    onProgress = input.onProgress;
+    return completion.promise;
+  });
+  const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
+    readSettings: async () => presetSettings(),
+    scan: async () => ({
+      rootId: "root-1",
+      scanId: "scan-1",
+      rootPath: "/code",
+      maxDepth: 8,
+      status: "Ready",
+      projects: { total: 2, rust: 0, node: 2, maven: 0 },
+      candidates,
+      skipped: 0,
+      errors: [],
+      cargoAvailable: true,
+      cargoMessage: null,
+      mavenAvailable: true,
+      mavenMessage: null,
+    }),
+    measure: async () => measurement,
+    runBatch,
+  }));
+  await workflow.initialize();
+  await workflow.startScan();
+  workflow.setSelected(["one", "two"], true);
+  workflow.prepareCleanupBatch(["one", "two"]);
+  function Page() {
+    const view = useSyncExternalStore(workflow.subscribe, workflow.read);
+    return <ProjectCleanupPage coverageItem={projectCoverageItem(view)} homeDirectory={null} view={view} workflow={workflow} />;
+  }
+  render(<Page />);
+
+  expect(screen.getByText("确认项目清理")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "清理选中项" }));
+  await waitFor(() => expect(screen.getByText("正在清理项目目录")).toBeTruthy());
+
+  onProgress({
+    phase: "advanced",
+    candidateId: "one",
+    outcome: { kind: "result", result: cleanupResult("one", 1024) },
+    completedCount: 1,
+    cleanedBytes: 1024,
+  });
+  await waitFor(() => expect(screen.getByText(/正在处理第 2\/2 项/)).toBeTruthy());
+
+  completion.resolve({
+    finish: "completed",
+    totalCount: 2,
+    completedCount: 2,
+    failedCount: 0,
+    cleanedBytes: 1024,
+    historyId: null,
+    historyWarning: null,
+  });
+  await waitFor(() => expect(screen.getByText("项目清理结果")).toBeTruthy());
+  expect(screen.getByText(/已处理 2\/2 项/)).toBeTruthy();
 });

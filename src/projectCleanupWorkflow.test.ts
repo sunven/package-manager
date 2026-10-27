@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createProjectCleanupWorkflow,
+  type CleanupBatchSummary,
+  type ProjectCleanupEffects,
 } from "./projectCleanupWorkflow";
 import { getObservationLedgerSnapshot, resetObservationLedgerForTests } from "./observationLedger";
 import { createInMemoryProjectCleanupEffects as effects } from "./projectCleanupInMemoryEffects";
@@ -8,6 +10,7 @@ import type {
   DirectoryMeasurement,
   ProjectDataCandidate,
   ProjectDataScan,
+  ProjectCleanupBatchProgress,
   ProjectCleanupSettings,
   ProjectScanRecord,
   ProjectScanRecordDraft,
@@ -570,23 +573,21 @@ describe("Project Cleanup workflow", () => {
     await expect(workflow.setMaxDepth(12)).resolves.toEqual({ kind: "unavailable", reason: "batch-lock" });
   });
 
-  it("runs a Cleanup Batch sequentially and continues after invocation failure", async () => {
+  it("runs the frozen batch through one effect and applies per-candidate progress", async () => {
     const candidates = ["one", "two", "three"].map((id) => pendingCandidate(id));
-    const cleanupGates = new Map(candidates.map((candidate) => [
-      candidate.candidateId,
-      deferred<import("./types").ProjectCleanupResult>(),
-    ]));
-    const cleanupCalls: string[] = [];
+    const completion = deferred<CleanupBatchSummary>();
+    let onProgress!: (progress: ProjectCleanupBatchProgress) => void;
+    const runBatch = vi.fn((input: Parameters<ProjectCleanupEffects["runBatch"]>[0]) => {
+      onProgress = input.onProgress;
+      return completion.promise;
+    });
     const workflow = createProjectCleanupWorkflow(
       effects({
         readSettings: async () => settings(),
         scan: async () => scan(candidates),
         measure: async ({ candidateId }) =>
           measurement({ one: 100, two: 200, three: 300 }[candidateId]!),
-        clean: async ({ candidateId }) => {
-          cleanupCalls.push(candidateId);
-          return cleanupGates.get(candidateId)!.promise;
-        },
+        runBatch,
       }),
     );
     await workflow.initialize();
@@ -596,21 +597,61 @@ describe("Project Cleanup workflow", () => {
 
     const running = workflow.runCleanupBatch();
     await Promise.resolve();
-    expect(cleanupCalls).toEqual(["three"]);
+    expect(runBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scanId: "scan-1",
+        batchId: "batch-1",
+        candidateIds: ["three", "one", "two"],
+      }),
+    );
+    expect(workflow.read().batch?.candidates.map((candidate) => candidate.state.kind)).toEqual([
+      "running",
+      "not-started",
+      "not-started",
+    ]);
+
+    onProgress({
+      phase: "advanced",
+      candidateId: "three",
+      outcome: { kind: "result", result: cleanupResult("three", 300) },
+      completedCount: 1,
+      cleanedBytes: 300,
+    });
     expect(
       workflow.read().scan.session?.candidates.find(({ candidateId }) => candidateId === "three"),
     ).toMatchObject({
       selected: false,
       cleanability: { kind: "requires-rescan" },
     });
+    expect(workflow.read().batch?.candidates.map((candidate) => candidate.state.kind)).toEqual([
+      "finished",
+      "running",
+      "not-started",
+    ]);
 
-    cleanupGates.get("three")!.resolve(cleanupResult("three", 300));
-    await waitFor(() => cleanupCalls.length === 2);
-    expect(cleanupCalls).toEqual(["three", "one"]);
-    cleanupGates.get("one")!.reject(new Error("IPC disconnected"));
-    await waitFor(() => cleanupCalls.length === 3);
-    expect(cleanupCalls).toEqual(["three", "one", "two"]);
-    cleanupGates.get("two")!.resolve(cleanupResult("two", 50, "Failed"));
+    onProgress({
+      phase: "advanced",
+      candidateId: "one",
+      outcome: { kind: "effect-failed", candidateId: "one", message: "IPC disconnected" },
+      completedCount: 2,
+      cleanedBytes: 300,
+    });
+    onProgress({
+      phase: "advanced",
+      candidateId: "two",
+      outcome: { kind: "result", result: cleanupResult("two", 50, "Failed") },
+      completedCount: 3,
+      cleanedBytes: 350,
+    });
+    completion.resolve({
+      finish: "completed",
+      totalCount: 3,
+      completedCount: 3,
+      failedCount: 2,
+      cleanedBytes: 350,
+      historyId: null,
+      historyWarning: null,
+    });
 
     await expect(running).resolves.toEqual({
       kind: "succeeded",
@@ -646,19 +687,22 @@ describe("Project Cleanup workflow", () => {
     });
   });
 
-  it("stops after the active candidate and keeps unstarted candidates eligible", async () => {
+  it("requests a stop from Rust and marks unstarted candidates stopped", async () => {
     const candidates = ["one", "two", "three"].map((id) => pendingCandidate(id));
-    const firstCleanup = deferred<import("./types").ProjectCleanupResult>();
-    const cleanupCalls: string[] = [];
+    const completion = deferred<CleanupBatchSummary>();
+    let onProgress!: (progress: ProjectCleanupBatchProgress) => void;
+    const requestStop = vi.fn(async () => undefined);
+    const runBatch = vi.fn((input: Parameters<ProjectCleanupEffects["runBatch"]>[0]) => {
+      onProgress = input.onProgress;
+      return completion.promise;
+    });
     const workflow = createProjectCleanupWorkflow(
       effects({
         readSettings: async () => settings(),
         scan: async () => scan(candidates),
         measure: async () => measurement(100),
-        clean: async ({ candidateId }) => {
-          cleanupCalls.push(candidateId);
-          return firstCleanup.promise;
-        },
+        runBatch,
+        requestStop,
       }),
     );
     await workflow.initialize();
@@ -668,12 +712,29 @@ describe("Project Cleanup workflow", () => {
 
     const running = workflow.runCleanupBatch();
     await Promise.resolve();
-    expect(cleanupCalls).toEqual(["one"]);
     expect(workflow.requestCleanupStop()).toEqual({
       kind: "succeeded",
       value: undefined,
     });
-    firstCleanup.resolve(cleanupResult("one", 100));
+    expect(requestStop).toHaveBeenCalledWith("batch-1");
+    expect(workflow.read().batch?.stopRequested).toBe(true);
+
+    onProgress({
+      phase: "advanced",
+      candidateId: "one",
+      outcome: { kind: "result", result: cleanupResult("one", 100) },
+      completedCount: 1,
+      cleanedBytes: 100,
+    });
+    completion.resolve({
+      finish: "stopped",
+      totalCount: 3,
+      completedCount: 1,
+      failedCount: 0,
+      cleanedBytes: 100,
+      historyId: "history-1",
+      historyWarning: null,
+    });
 
     await expect(running).resolves.toMatchObject({
       kind: "succeeded",
@@ -683,7 +744,6 @@ describe("Project Cleanup workflow", () => {
         completedCount: 1,
       },
     });
-    expect(cleanupCalls).toEqual(["one"]);
     expect(workflow.read().batch?.candidates.map((candidate) => candidate.state.kind)).toEqual([
       "finished",
       "stopped",

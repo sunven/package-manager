@@ -1,6 +1,6 @@
 # Codex 市场与插件管理补全
 
-Status: ready-for-agent
+Status: done
 
 日期：2026-10-15。通过 `grill-with-docs` 完成三轮、九项范围与行为确认，用户已确认整体方案。已完成实施、自动化验证与独立界面审阅；结果和覆盖边界见[验证记录](VERIFICATION.md)。
 

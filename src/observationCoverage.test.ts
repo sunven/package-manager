@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildObservationCoverage,
   formatObservationTime,
+  indexObservationCoverage,
   relativeObservationTime,
+  requireCoverageItem,
   type ObservationCoverageItem,
 } from "./observationCoverage";
 import { managerOrder } from "./constants";
@@ -203,5 +205,13 @@ describe("observation coverage model", () => {
     expect(relativeObservationTime(now - 25 * 60 * 60_000, now)).toBe("昨天");
     expect(formatObservationTime(now, now)).toContain("刚刚");
     expect(managerObservationId("Npm")).toBe("manager:npm");
+  });
+
+  it("indexes coverage and requires every observation item", () => {
+    const coverage = build();
+    const index = indexObservationCoverage(coverage);
+    expect(index.size).toBe(26);
+    expect(requireCoverageItem(index, "manager:npm")).toBe(item(coverage, "manager:npm"));
+    expect(() => requireCoverageItem(index, "unknown" as ObservationItemId)).toThrow("unknown");
   });
 });

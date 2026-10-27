@@ -1,12 +1,13 @@
 //! Scan-session-backed cleanup for project-owned derived data.
 
 use crate::command::{command_failure, envelope_owned};
+use crate::disk_usage::format_bytes;
 use crate::types::{CommandEnvelope, CommandFailure, CommandRun, FailureKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
@@ -231,13 +232,16 @@ struct Registry {
     root: Option<AuthorizedRoot>,
     scan: Option<ScanSession>,
     pending_scan_id: Option<String>,
+    active_batch: Option<String>,
+    stop_requested: bool,
 }
 
-pub(crate) struct ProjectCleanupState(Mutex<Registry>);
+#[derive(Clone)]
+pub(crate) struct ProjectCleanupState(Arc<Mutex<Registry>>);
 
 impl ProjectCleanupState {
     pub(crate) fn load(settings_path: PathBuf) -> Self {
-        Self(Mutex::new(Registry::load(settings_path)))
+        Self(Arc::new(Mutex::new(Registry::load(settings_path))))
     }
 
     pub(crate) fn settings(&self) -> Result<ProjectCleanupSettings, String> {
@@ -358,10 +362,63 @@ impl ProjectCleanupState {
         self.lock()?.history_scope(scan_id, candidate_ids)
     }
 
+    pub(crate) fn begin_batch(&self, batch_id: &str) -> Result<BatchGuard<'_>, String> {
+        let mut registry = self.lock()?;
+        if registry.active_batch.is_some() {
+            return Err("另一个项目清理批次仍在执行".into());
+        }
+        registry.active_batch = Some(batch_id.to_string());
+        registry.stop_requested = false;
+        Ok(BatchGuard {
+            state: self,
+            batch_id: batch_id.to_string(),
+        })
+    }
+
+    pub(crate) fn request_stop(&self, batch_id: &str) -> bool {
+        let Ok(mut registry) = self.lock() else {
+            return false;
+        };
+        if registry.active_batch.as_deref() != Some(batch_id) {
+            return false;
+        }
+        registry.stop_requested = true;
+        true
+    }
+
+    pub(crate) fn batch_stopped(&self, batch_id: &str) -> bool {
+        self.lock()
+            .map(|registry| {
+                registry.active_batch.as_deref() != Some(batch_id)
+                    || registry.stop_requested
+            })
+            .unwrap_or(true)
+    }
+
+    fn finish_batch(&self, batch_id: &str) {
+        if let Ok(mut registry) = self.lock() {
+            if registry.active_batch.as_deref() == Some(batch_id) {
+                registry.active_batch = None;
+                registry.stop_requested = false;
+            }
+        }
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Registry>, String> {
         self.0
             .lock()
             .map_err(|_| "Project cleanup state is unavailable".to_string())
+    }
+}
+
+pub(crate) struct BatchGuard<'a> {
+    state: &'a ProjectCleanupState,
+    batch_id: String,
+}
+
+impl Drop for BatchGuard<'_> {
+    fn drop(&mut self) {
+        self.state.finish_batch(&self.batch_id);
     }
 }
 
@@ -413,6 +470,8 @@ impl Registry {
             root: None,
             scan: None,
             pending_scan_id: None,
+            active_batch: None,
+            stop_requested: false,
         };
         registry.activate_current();
         registry
@@ -1376,6 +1435,7 @@ fn failed_measurement(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn run_project_cleanup_with_runner<F>(
     root: &Path,
     candidate: &CandidateRecord,
@@ -1392,7 +1452,7 @@ where
     )
 }
 
-fn run_project_cleanup_with_runner_and_deleter<F, D>(
+pub(crate) fn run_project_cleanup_with_runner_and_deleter<F, D>(
     root: &Path,
     candidate: &CandidateRecord,
     runner: &F,
@@ -1690,7 +1750,7 @@ where
     }
 }
 
-fn remove_dependency_directory(path: &Path) -> Result<(), String> {
+pub(crate) fn remove_dependency_directory(path: &Path) -> Result<(), String> {
     fs::remove_dir_all(path).map_err(|err| format!("Could not remove node_modules: {err}"))
 }
 
@@ -1831,21 +1891,6 @@ fn canonical_directory(path: &Path) -> Result<PathBuf, String> {
         return Err(format!("{} is not a directory", canonical.display()));
     }
     Ok(canonical)
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{} {}", bytes, UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
 }
 
 #[cfg(test)]

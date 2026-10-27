@@ -1,6 +1,6 @@
 # 命令位置关联
 
-Status: ready-for-agent
+Status: done
 
 ## 目标与范围
 

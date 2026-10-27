@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { CodexHooksPage } from "./CodexHooksPage";
 import { useCodexExtensions } from "../hooks/useCodexExtensions";
 import { codexHookScanFixture } from "../test/codexHookFixtures";
+import { observationCoverageItem } from "../test/observationFixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const mockedInvoke = vi.mocked(invoke);
@@ -13,13 +14,14 @@ beforeEach(() => vi.resetAllMocks());
 
 function Harness({ onShowPlugins = vi.fn() }: { onShowPlugins?: () => void }) {
   const workflow = useCodexExtensions(true, "hooks");
-  return <CodexHooksPage workflow={workflow} onShowPlugins={onShowPlugins} />;
+  return <CodexHooksPage coverageItem={observationCoverageItem("codex:hooks")} workflow={workflow} onShowPlugins={onShowPlugins} />;
 }
 
 describe("Codex hooks management", () => {
   it("shows full details and native trust states without enabling untrusted hooks", async () => {
     mockedInvoke.mockResolvedValue(codexHookScanFixture());
     render(<Harness />);
+    expect(document.querySelector('[data-observation-item="codex:hooks"]')).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: /PostToolUse.*查看配置详情/ }));
     expect(screen.getByText("Edit|Write|apply_patch")).toBeTruthy();
     expect(screen.getByText("/Users/example/.codex/plugins/cache/team-tools/review/local/hooks/hooks.json")).toBeTruthy();

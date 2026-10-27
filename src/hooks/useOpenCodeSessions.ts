@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  removeCompletedRecords,
   type OpenCodeDeletionPlan,
   type OpenCodeDeletionResult,
   type OpenCodeSessionScan,
 } from "../sessionRecords";
+import { recordMaintenanceFollowUp } from "../maintenanceFollowUp";
 import { errorToString } from "../utils/format";
 import { openCodeObservationFacts, recordObservationFacts } from "../observationFacts";
 import { useSessionOperation, type SessionOperationAdapter, type SessionRead } from "./useSessionOperation";
@@ -26,7 +28,13 @@ const adapter: SessionOperationAdapter<"opencode", OpenCodeSessionScan, OpenCode
   read: async (_scopes, previous): Promise<SessionRead<"opencode", OpenCodeSessionScan>> => {
     try {
       const next = await invoke<OpenCodeSessionScan>("scan_opencode_sessions");
-      const scan = next.status === "ready" ? next : { ...next, records: previous.opencode?.records ?? [] };
+      const scan = next.status === "ready"
+        ? next
+        : {
+            ...next,
+            records: previous.opencode?.records ?? [],
+            ageEligible: previous.opencode?.ageEligible ?? next.ageEligible,
+          };
       return {
         scans: { opencode: scan },
         failures: next.status === "ready" ? {} : { opencode: next.message ?? "OpenCode 会话暂不可读取。" },
@@ -45,21 +53,9 @@ const adapter: SessionOperationAdapter<"opencode", OpenCodeSessionScan, OpenCode
   scopesFor: () => ["opencode"],
   execute: (target) => invoke<OpenCodeDeletionResult>("commit_opencode_deletion", { planId: target.planId }),
   completedIds: (_target, result) => result.completedIds,
-  removeCompleted: (scans, _target, completedIds) => {
-    const scan = scans.opencode;
-    return scan
-      ? { ...scans, opencode: { ...scan, records: scan.records.filter((record) => !completedIds.includes(record.id)) } }
-      : scans;
-  },
+  removeCompleted: (scans, _target, completedIds) =>
+    removeCompletedRecords(scans, "opencode", completedIds),
   shouldRefresh: (target, result) => target.kind === "age" || !result?.preflightError,
-  recordFollowUp: async (_target, result, refresh) => {
-    if (!result.historyId) return;
-    await invoke("record_maintenance_followup", {
-      id: result.historyId,
-      status: refresh.status,
-      message: refresh.message,
-    });
-  },
 };
 
 type PrepareIntent =
@@ -68,7 +64,11 @@ type PrepareIntent =
 
 export function useOpenCodeSessions(active: boolean) {
   const { scans, scanning, error, operation, outcome, refresh: refreshScans, begin, cancel, confirm } =
-    useSessionOperation(adapter, { active, scopes: OPENCODE_SCOPES });
+    useSessionOperation(adapter, {
+      active,
+      scopes: OPENCODE_SCOPES,
+      recordFollowUp: recordMaintenanceFollowUp,
+    });
   const [preparing, setPreparing] = useState(false);
   const [prepareError, setPrepareError] = useState<string | null>(null);
   const preparingRef = useRef(false);
