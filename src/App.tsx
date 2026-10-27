@@ -335,7 +335,6 @@ export function App() {
       search={<GlobalSearch managers={state.enabledManagers} snapshots={state.managerSnapshots} scanStates={state.scanStates} homeDirectory={state.homeDirectory} busy={state.maintenanceBusy || state.scanningAll} onRefresh={() => void actions.refreshEnabled()} onLocate={locate} />}
       activeView={activeView}
       managerCount={state.enabledManagers.length}
-      managerSnapshots={state.managerSnapshots}
       onShowProjectCleanup={() => {
         actions.closePackageActions();
         setActiveView("cleanup");

@@ -11,7 +11,6 @@ import {
   Sun,
   Trash as Trash2,
 } from "@phosphor-icons/react";
-import type { ManagerId, ManagerSnapshot } from "../types";
 
 type ViewId = "health" | "history" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings";
 
@@ -44,7 +43,6 @@ export function Shell({
   scanning,
   theme,
   managerCount,
-  managerSnapshots,
 }: {
   children: React.ReactNode;
   search?: React.ReactNode;
@@ -62,7 +60,6 @@ export function Shell({
   scanning: boolean;
   theme: "dark" | "light";
   managerCount: number;
-  managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
 }) {
   const handlers: Record<ViewId, () => void> = {
     health: onShowHealth,
@@ -151,18 +148,6 @@ export function Shell({
               );
             })}
           </nav>
-          <section aria-label="环境信息" className="studio-env">
-            <h2>环境信息</h2>
-            <ul>
-              {environmentRows(managerSnapshots).map((row) => (
-                <li key={row.label}>
-                  <span aria-hidden="true" className="studio-env-dot" data-tone={row.tone} />
-                  <span>{row.label}</span>
-                  <strong>{row.value}</strong>
-                </li>
-              ))}
-            </ul>
-          </section>
           <div aria-hidden="true" className="studio-slogan">
             <p>Better Dev<br />Better Life</p>
             <SloganMark />
@@ -174,32 +159,6 @@ export function Shell({
       </div>
     </div>
   );
-}
-
-function environmentRows(snapshots: Partial<Record<ManagerId, ManagerSnapshot>>) {
-  const optional = [
-    fact("npm", snapshots.Npm?.version, "npm"),
-    fact("Python", snapshots.Pip?.pip?.pythonVersion, "python"),
-    fact("nvm", snapshots.Nvm?.version, "node"),
-    fact("Maven", snapshots.Maven?.version, "maven"),
-  ].flatMap((row) => (row ? [row] : []));
-
-  return [...optional.slice(0, 3), { label: "系统", value: systemLabel(), tone: "os" }];
-}
-
-function fact(label: string, value: string | null | undefined, tone: string) {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-  return { label, value: trimmed, tone };
-}
-
-function systemLabel() {
-  if (typeof navigator === "undefined") return "本机";
-  const ua = navigator.userAgent || "";
-  if (/Mac/.test(ua)) return "macOS";
-  if (/Win/.test(ua)) return "Windows";
-  if (/Linux/.test(ua)) return "Linux";
-  return "本机";
 }
 
 function SloganMark() {
