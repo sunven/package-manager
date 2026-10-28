@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorToString } from "../utils/format";
 
 export type SkillInventoryPhase = "preparing" | "confirming" | "executing";
@@ -144,7 +144,7 @@ export function useSkillInventory<
     if (active && !externalBusy && !pending.current && attempted.current !== generation.current) void read();
   }, [active, externalBusy, revision, phase, read]);
 
-  async function request(intent: Intent) {
+  const request = useCallback(async (intent: Intent) => {
     const snapshotId = native.current?.snapshotId;
     if (pending.current || running.current || externalBusy || !valid.current || !snapshotId) {
       return "清单已过期或正在维护，请刷新后重试。";
@@ -170,18 +170,18 @@ export function useSkillInventory<
       setPhase(null);
       return errorToString(caught);
     }
-  }
+  }, [adapter, externalBusy]);
 
-  function cancel() {
+  const cancel = useCallback(() => {
     if (!pending.current || typeof pending.current === "string") return;
     const planId = pending.current.planId;
     try { void adapter.cancel(planId).catch(() => undefined); } catch { /* cancellation is best-effort */ }
     pending.current = null;
     setPreview(null);
     setPhase(null);
-  }
+  }, [adapter]);
 
-  async function confirm() {
+  const confirm = useCallback(async () => {
     if (!pending.current || typeof pending.current === "string") return null;
     const selected = pending.current;
     pending.current = "executing";
@@ -204,19 +204,23 @@ export function useSkillInventory<
     setPreview(null);
     setPhase(null);
     return outcome;
-  }
+  }, [adapter, read]);
 
-  async function details(path: string) {
+  const details = useCallback(async (path: string) => {
     const snapshotId = native.current?.snapshotId;
     if (!valid.current || !snapshotId) throw new Error("清单已过期，请刷新后查看说明。");
     return adapter.readDetails(snapshotId, path);
-  }
+  }, [adapter]);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     if (!pending.current && !externalBusy) await read();
-  }
+  }, [externalBusy, read]);
 
-  return {
+  const busy = externalBusy || scanning || phase !== null;
+
+  // Stable identity between state updates: App uses this object as a memo
+  // dependency for observation coverage facts.
+  return useMemo(() => ({
     scan,
     current,
     scanning,
@@ -225,11 +229,14 @@ export function useSkillInventory<
     error,
     result,
     revision,
-    busy: externalBusy || scanning || phase !== null,
+    busy,
     request,
     cancel,
     confirm,
     details,
     refresh,
-  };
+  }), [
+    scan, current, scanning, phase, preview, error, result, revision, busy,
+    request, cancel, confirm, details, refresh,
+  ]);
 }

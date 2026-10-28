@@ -36,7 +36,8 @@ import { SnapshotHistory } from "./SnapshotHistory";
 
 const selectClass = "select-control";
 const PAGE_SIZE = 50;
-const time = (value: number | null) => value === null ? "—" : new Date(value).toLocaleString();
+const dateTimeFormatter = new Intl.DateTimeFormat();
+const time = (value: number | null) => value === null ? "—" : dateTimeFormatter.format(value);
 
 export interface HistoryRequest {
   domain?: MaintenanceDomain;

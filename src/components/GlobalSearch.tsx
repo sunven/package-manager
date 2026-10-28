@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
@@ -25,7 +25,8 @@ export function GlobalSearch({ managers, snapshots, scanStates, homeDirectory, b
   const opener = useRef<HTMLElement | null>(null);
   const navigating = useRef(false);
   const list = useRef<HTMLDivElement>(null);
-  const results = useMemo(() => searchManagers(managers, snapshots, query), [managers, snapshots, query]);
+  const deferredQuery = useDeferredValue(query);
+  const results = useMemo(() => searchManagers(managers, snapshots, deferredQuery), [managers, snapshots, deferredQuery]);
   const visible = results.slice(0, limit);
   const selected = Math.min(active, Math.max(0, visible.length - 1));
   const scanned = managers.filter((id) => snapshots[id]);

@@ -88,6 +88,8 @@ export function SessionRecordsPage({
     prepareError: openCodePrepareError,
     error: openCodeError,
   } = openCode;
+  // Age cut-offs follow the latest scan instead of drifting on every render.
+  const currentTime = useMemo(() => nowMs ?? Date.now(), [nowMs, scan]);
   const pending = records.operation?.phase !== "refreshing" ? records.operation?.target ?? null : null;
   const removing = records.operation !== null && records.operation.phase !== "confirming";
   const removalProgress = records.operation?.phase === "executing" ? records.operation.progress : null;
@@ -399,7 +401,7 @@ export function SessionRecordsPage({
                 label={source.label}
                 onOpen={source.key === "grok" ? records.openGrokSession : undefined}
                 openingId={source.key === "grok" ? records.openingGrokId : null}
-                nowMs={nowMs ?? Date.now()}
+                nowMs={currentTime}
                 onClearSelection={() => selection.clear()}
                 onRequestAgeRemoval={(days, count) => {
                   records.request({ kind: "age", source: source.key, label: source.label, days, count });
@@ -498,8 +500,8 @@ function OpenCodeSection({
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const records = useMemo(() => filterOpenCodeSessions(scan?.records ?? [], filter), [scan, filter]);
   const groups = useMemo(() => groupOpenCodeSessions(records), [records]);
-  const selectedSet = new Set(selectedIds);
-  const selectedRecords = records.filter((record) => selectedSet.has(record.id));
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedRecords = useMemo(() => records.filter((record) => selectedSet.has(record.id)), [records, selectedSet]);
   const eligibleAge7 = scan?.status === "ready" && scan.activeSessionIds
     ? scan.ageEligible.days7
     : null;
@@ -707,18 +709,32 @@ function SourceSection({
   const grok = sourceKey === "grok";
   const blockedReason = grok ? source?.status === "Failed" ? "请先成功读取 Grok Build 会话记录。" : source?.removalBlockedReason : null;
   const mutationBlocked = removing || (grok && (scanning || Boolean(blockedReason)));
-  const records = view?.groups.flatMap((group) => group.records) ?? [];
-  const allSourceRecords = source?.records ?? [];
-  const removable = removableSessionRecords(records);
-  const selected = selectedRemovalRequest(records, selectedIds);
+  const records = useMemo(() => view?.groups.flatMap((group) => group.records) ?? [], [view]);
+  const removable = useMemo(() => removableSessionRecords(records), [records]);
+  const selected = useMemo(() => selectedRemovalRequest(records, selectedIds), [records, selectedIds]);
   const selectedCount = selected?.count ?? 0;
-  const selectedSet = new Set(selected?.ids ?? []);
+  const selectedSet = useMemo(() => new Set(selected?.ids ?? []), [selected]);
   const eligibleAge7 = source?.ageEligible.days7 ?? 0;
   const eligibleAge30 = source?.ageEligible.days30 ?? 0;
-  const inUseCount = allSourceRecords.filter((record) => record.inUse).length;
-  const unknownActivityCount = allSourceRecords.filter((record) => record.lastActivityMs === null).length;
-  const recentAge7Count = allSourceRecords.filter((record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs >= nowMs - 7 * 24 * 60 * 60 * 1000).length;
-  const recentAge30Count = allSourceRecords.filter((record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs >= nowMs - 30 * 24 * 60 * 60 * 1000).length;
+  const { inUseCount, unknownActivityCount, recentAge7Count, recentAge30Count } = useMemo(() => {
+    let inUse = 0;
+    let unknownActivity = 0;
+    let recent7 = 0;
+    let recent30 = 0;
+    const sevenDaysAgo = nowMs - 7 * 24 * 60 * 60 * 1000;
+    const thirtyDaysAgo = nowMs - 30 * 24 * 60 * 60 * 1000;
+    for (const record of source?.records ?? []) {
+      if (record.inUse) inUse += 1;
+      if (record.lastActivityMs === null) {
+        unknownActivity += 1;
+        continue;
+      }
+      if (record.inUse) continue;
+      if (record.lastActivityMs >= sevenDaysAgo) recent7 += 1;
+      if (record.lastActivityMs >= thirtyDaysAgo) recent30 += 1;
+    }
+    return { inUseCount: inUse, unknownActivityCount: unknownActivity, recentAge7Count: recent7, recentAge30Count: recent30 };
+  }, [source?.records, nowMs]);
   const ageEligibilityId = `${sourceKey}-age-removal-eligibility`;
   return (
     <Panel className="overflow-hidden">

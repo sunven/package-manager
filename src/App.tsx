@@ -6,7 +6,7 @@ import { useObservationTools } from "./hooks/useObservationTools";
 import { locateSearchTarget, type SearchTarget } from "./globalSearch";
 import { toast } from "sonner";
 import { Alert, AlertTitle, AlertDescription } from "../components/ui/alert";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
@@ -206,15 +206,19 @@ export function App() {
     }
   }, [theme]);
 
+  const handleEscape = useEffectEvent(() => {
+    actions.closePackageActions();
+  });
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        actions.closePackageActions();
+        handleEscape();
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [actions]);
+  }, []);
 
   function showHistoryRecord(recordId: string) {
     actions.closePackageActions();
@@ -381,7 +385,7 @@ export function App() {
         onRetryVerification={() => void actions.retryVerification()}
         onShowHistory={showHistoryRecord}
       />
-      <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
+      <div className="telemetry-view-stage" data-view={activeView}>
         {activeView === "plugins" ? (
           <div className="view-grid">
             <PageHeader
@@ -558,13 +562,13 @@ export function App() {
                   homeDirectory={state.homeDirectory}
                   manager={currentManager}
                   menuOpenIndex={state.openPackageActionMenuIndex}
-                  onCopyPath={(path) => void actions.copyPath(path)}
-                  onCopyPackage={(index) => void actions.copyPackage(index)}
-                  onCopyPackageAction={(index, actionIndex) => void actions.copyPackageAction(index, actionIndex)}
+                  onCopyPath={actions.copyPath}
+                  onCopyPackage={actions.copyPackage}
+                  onCopyPackageAction={actions.copyPackageAction}
                   onHomebrewFilter={actions.setHomebrewFilter}
                   onMavenFilter={actions.setMavenFilter}
-                  onOpenPath={(path) => void actions.openPath(path)}
-                  onOpenPackage={(index) => void actions.openPackage(index)}
+                  onOpenPath={actions.openPath}
+                  onOpenPackage={actions.openPackage}
                   onPipFilter={actions.setPipFilter}
                   onRequestCacheCleanup={actions.requestCacheCleanup}
                   onRequestPackageUninstall={actions.requestPackageUninstall}

@@ -28,8 +28,9 @@ export function useSessionSelection<Item extends { id: string }>({
 
   useEffect(() => {
     if (!completedIds?.length) return;
+    const completed = new Set(completedIds);
     setSelectedIds((current) => {
-      const next = current.filter((id) => !completedIds.includes(id));
+      const next = current.filter((id) => !completed.has(id));
       return next.length === current.length ? current : next;
     });
   }, [completedIds]);

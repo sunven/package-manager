@@ -1,5 +1,5 @@
 import { packageObservationId } from "../managerHistory";
-import { useState } from "react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
 import { Input } from "../../components/ui/input";
 import { ArrowSquareOut as ExternalLink, Copy, Trash as Trash2 } from "@phosphor-icons/react";
 import { environmentKindLabels, homebrewFilterLabels, mavenFilterLabels, packageKindLabels, pipFilterLabels, signalLabels } from "../constants";
@@ -24,6 +24,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
+import { TooltipProvider } from "../../components/ui/tooltip";
 
 interface PackageTableProps {
   homeDirectory: string | null;
@@ -49,17 +50,24 @@ interface PackageTableProps {
   selectedPipFilter: PipFilter;
 }
 
-export function PackageTable(props: PackageTableProps) {
+export const PackageTable = memo(function PackageTable(props: PackageTableProps) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<PackageSort>("name");
   const [descending, setDescending] = useState(false);
   const manager = props.manager;
-  const original = !manager ? [] : manager.id === "Homebrew" ? filteredHomebrewPackages(manager, props.selectedHomebrewFilter)
-    : manager.id === "Maven" ? filteredMavenPackages(manager, props.selectedMavenFilter)
-      : manager.id === "Pip" ? filteredPipPackages(manager, props.selectedPipFilter) : indexedPackages(manager);
-  const rows = searchAndSortPackages(original, query, sort, descending);
+  const original = useMemo(
+    () => !manager ? [] : manager.id === "Homebrew" ? filteredHomebrewPackages(manager, props.selectedHomebrewFilter)
+      : manager.id === "Maven" ? filteredMavenPackages(manager, props.selectedMavenFilter)
+        : manager.id === "Pip" ? filteredPipPackages(manager, props.selectedPipFilter) : indexedPackages(manager),
+    [manager, props.selectedHomebrewFilter, props.selectedMavenFilter, props.selectedPipFilter],
+  );
+  const deferredQuery = useDeferredValue(query);
+  const rows = useMemo(
+    () => searchAndSortPackages(original, deferredQuery, sort, descending),
+    [original, deferredQuery, sort, descending],
+  );
   const changed = () => { props.onSelectPackage(null); };
-  return <>
+  return <TooltipProvider>
     <div className="flex flex-wrap items-center gap-2 border-b p-3">
       <Input aria-label="搜索当前管理器的软件包" placeholder="搜索名称、版本或路径" type="search" value={query} onChange={(event) => { setQuery(event.target.value); changed(); }} className="min-w-40 flex-1" />
       <ToggleGroup type="single" value={sort} onValueChange={(value) => { if (value) { setSort(value as PackageSort); changed(); } }} aria-label="软件包排序字段">
@@ -69,8 +77,8 @@ export function PackageTable(props: PackageTableProps) {
       <span className="text-xs text-muted-foreground" role="status">{manager ? `${rows.length} / ${manager.packages.length} 项` : "尚未扫描"}</span>
     </div>
     <PackageTableContent {...props} rows={rows} />
-  </>;
-}
+  </TooltipProvider>;
+});
 
 function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[] }) {
   const { homeDirectory, manager, scanning } = props;

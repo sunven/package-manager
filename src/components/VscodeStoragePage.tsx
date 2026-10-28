@@ -91,18 +91,27 @@ export function VscodeStoragePage({
     () => filterVscodeWorkspaces(scan?.workspaces ?? [], query),
     [scan, query],
   );
-  const summary = scan ? summarizeVscodeStorage(scan) : null;
+  const summary = useMemo(() => (scan ? summarizeVscodeStorage(scan) : null), [scan]);
   const selection = useSessionSelection({
     records: scan ? workspaces : null,
     isSelectable: (workspace: VscodeWorkspace) => workspace.removable,
     completedIds: outcome?.completedIds ?? null,
   });
-  const selectedSet = new Set(selection.selectedIds);
-  const selectedWorkspaces = workspaces.filter((workspace) => selectedSet.has(workspace.id));
+  const selectedSet = useMemo(() => new Set(selection.selectedIds), [selection.selectedIds]);
   const selectedCount = selection.selectedIds.length;
-  const selectableVisible = workspaces.filter((workspace) => workspace.removable);
-  const allVisibleSelected = selectableVisible.length > 0
-    && selectableVisible.every((workspace) => selectedSet.has(workspace.id));
+  const { selectedWorkspaces, selectableVisible } = useMemo(() => {
+    const selected: VscodeWorkspace[] = [];
+    const selectable: VscodeWorkspace[] = [];
+    for (const workspace of workspaces) {
+      if (selectedSet.has(workspace.id)) selected.push(workspace);
+      if (workspace.removable) selectable.push(workspace);
+    }
+    return { selectedWorkspaces: selected, selectableVisible: selectable };
+  }, [workspaces, selectedSet]);
+  const allVisibleSelected = useMemo(
+    () => selectableVisible.length > 0 && selectableVisible.every((workspace) => selectedSet.has(workspace.id)),
+    [selectableVisible, selectedSet],
+  );
   const selectionTrigger = useRef<HTMLButtonElement | null>(null);
 
   const pending = operation && operation.phase !== "refreshing" ? operation.target : null;

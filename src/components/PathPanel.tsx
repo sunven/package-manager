@@ -65,6 +65,7 @@ export function PathPanel({
           : null;
 
   return (
+    <TooltipProvider>
     <div className="@container flex flex-col gap-2">
       {manager.paths.filter((path) => pathObservationId(path.kind, path.path) === focusedPath).map((path) => <div key={path.path} data-path-observation={focusedPath} tabIndex={-1} className="rounded-xl border bg-card p-4">
         <h3 className="text-sm font-semibold">已定位：{path.label}</h3><code className="mt-2 block break-all text-xs">{formatHomePath(path.path, homeDirectory)}</code>
@@ -121,6 +122,7 @@ export function PathPanel({
         <EmptyState message="未解析到缓存或存储路径" />
       )}
     </div>
+    </TooltipProvider>
   );
 }
 
@@ -279,18 +281,16 @@ function InlinePathCell({
 
 function PathNoteTooltip({ label, note }: { label: string; note: string }) {
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button aria-label={label} className="size-5 text-muted-foreground hover:text-foreground" size="icon-xs" type="button" variant="ghost">
-            <Info />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent align="start">
-          {note}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button aria-label={label} className="size-5 text-muted-foreground hover:text-foreground" size="icon-xs" type="button" variant="ghost">
+          <Info />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent align="start">
+        {note}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

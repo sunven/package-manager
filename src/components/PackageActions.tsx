@@ -10,7 +10,6 @@ import {
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "../../components/ui/tooltip";
 import type { PackageRow } from "../types";
@@ -41,24 +40,22 @@ export function PackageActions({
 }) {
   if (managerId === "Npm" || managerId === "Pnpm") {
     return (
-      <TooltipProvider>
-        <div className="flex justify-end gap-1">
-          <InlineAction label="复制包名" onClick={() => onCopyPackage(index)}>
-            <Copy />
+      <div className="flex justify-end gap-1">
+        <InlineAction label="复制包名" onClick={() => onCopyPackage(index)}>
+          <Copy />
+        </InlineAction>
+        {pkg.actions.map((action, actionIndex) => (
+          <InlineAction key={`${action.preview}-${actionIndex}`} label={actionLabel(action)} onClick={() => onCopyPackageAction(index, actionIndex)}>
+            <Terminal />
           </InlineAction>
-          {pkg.actions.map((action, actionIndex) => (
-            <InlineAction key={`${action.preview}-${actionIndex}`} label={actionLabel(action)} onClick={() => onCopyPackageAction(index, actionIndex)}>
-              <Terminal />
-            </InlineAction>
-          ))}
-          <InlineAction disabled={!pkg.path} label="打开路径" onClick={() => onOpenPackage(index)}>
-            <ExternalLink />
-          </InlineAction>
-          <InlineAction disabled={pendingUninstall} label={pendingUninstall ? "卸载中" : "卸载全局包"} onClick={() => onRequestUninstall(index)} variant="destructive">
-            <Trash2 />
-          </InlineAction>
-        </div>
-      </TooltipProvider>
+        ))}
+        <InlineAction disabled={!pkg.path} label="打开路径" onClick={() => onOpenPackage(index)}>
+          <ExternalLink />
+        </InlineAction>
+        <InlineAction disabled={pendingUninstall} label={pendingUninstall ? "卸载中" : "卸载全局包"} onClick={() => onRequestUninstall(index)} variant="destructive">
+          <Trash2 />
+        </InlineAction>
+      </div>
     );
   }
 

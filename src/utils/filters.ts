@@ -7,11 +7,13 @@ export interface IndexedPackage {
 
 export type PackageSort = "name" | "version";
 
+const packageCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
 export function searchAndSortPackages(rows: IndexedPackage[], query: string, sort: PackageSort, descending: boolean) {
   const needle = query.trim().toLocaleLowerCase();
   return rows.filter(({ pkg }) => !needle || [pkg.name, pkg.version, pkg.path ?? ""].some((value) => value.toLocaleLowerCase().includes(needle)))
     .sort((a, b) => {
-      const comparison = a.pkg[sort].localeCompare(b.pkg[sort], undefined, { numeric: true, sensitivity: "base" });
+      const comparison = packageCollator.compare(a.pkg[sort], b.pkg[sort]);
       return (descending ? -comparison : comparison) || a.index - b.index;
     });
 }
