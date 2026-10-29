@@ -14,9 +14,17 @@ export function createManagerMaintenanceTauriEffects(): ManagerMaintenanceEffect
     saveSnapshot: (draft) => invoke("save_manager_snapshot", { draft }),
     recordVerification: (id, status, message, afterSnapshotId) => invoke("update_maintenance_verification", { id, status, message, afterSnapshotId }),
     clean: (manager, beforeSnapshotId) => invoke("run_cache_cleanup", { manager, beforeSnapshotId: beforeSnapshotId ?? null }),
-    uninstall: (manager, packageName, beforeSnapshotId) => invoke(manager === "Pnpm" ? "run_pnpm_maintenance" : "run_npm_maintenance", {
-      beforeSnapshotId: beforeSnapshotId ?? null,
-      operation: { kind: "uninstallGlobalPackage", packageName },
-    }),
+    uninstall: (manager, packageName, beforeSnapshotId, sdkRoot) => {
+      if (manager === "AndroidSdk") {
+        return invoke("run_android_sdk_maintenance", {
+          beforeSnapshotId: beforeSnapshotId ?? null,
+          operation: { kind: "uninstallSdkComponent", packageId: packageName, sdkRoot: sdkRoot ?? "" },
+        });
+      }
+      return invoke(manager === "Pnpm" ? "run_pnpm_maintenance" : "run_npm_maintenance", {
+        beforeSnapshotId: beforeSnapshotId ?? null,
+        operation: { kind: "uninstallGlobalPackage", packageName },
+      });
+    },
   };
 }

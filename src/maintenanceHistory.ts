@@ -11,6 +11,7 @@ export type MaintenanceDomain = "manager" | "projectCleanup" | "vscodeStorage" |
 export type MaintenanceOperation =
   | "cleanupCache"
   | "uninstallGlobalPackage"
+  | "uninstallSdkComponent"
   | "cleanBatch"
   | "removeWorkspaceStorage"
   | "removeToTrash"
@@ -236,6 +237,7 @@ export const maintenanceDomainLabels: Record<MaintenanceDomain, string> = {
 export const maintenanceOperationLabels: Record<MaintenanceOperation, string> = {
   cleanupCache: "缓存清理",
   uninstallGlobalPackage: "全局包卸载",
+  uninstallSdkComponent: "SDK 组件卸载",
   cleanBatch: "项目清理批次",
   removeWorkspaceStorage: "工作区存储移除",
   removeToTrash: "会话记录移入废纸篓",
@@ -306,6 +308,7 @@ export function maintenanceRecordState(record: Pick<MaintenanceRecordSummary, "e
 }
 
 export function maintenanceRecoveryBoundary(record: Pick<MaintenanceRecordSummary, "operation" | "domain">) {
+  if (record.operation === "uninstallSdkComponent") return "SDK 组件由 Android SDK 自带 CLI 永久删除，不进入废纸篓，无法由本工具恢复。";
   if (record.operation === "deletePermanently") return "OpenCode 服务永久删除会话及其子会话，无法由本工具恢复。";
   if (record.operation === "removeToTrash" || record.operation === "removeWorkspaceStorage") {
     return "记录已移入系统废纸篓，清空废纸篓前可恢复；磁盘空间不会立即释放。";

@@ -3,6 +3,7 @@ import type { ManagerId } from "./types";
 
 export const enabledManagersStorageKey = "package-manager.enabledManagers";
 export const fvmMigrationStorageKey = "package-manager.migratedFvm";
+export const androidSdkMigrationStorageKey = "package-manager.migratedAndroidSdk";
 
 type ManagerStorage = Pick<Storage, "getItem" | "setItem">;
 
@@ -31,17 +32,24 @@ export function readEnabledManagers(storage = browserStorage()): ManagerId[] {
   try {
     const rawValue = storage.getItem(enabledManagersStorageKey);
     const enabledManagers = parseEnabledManagers(rawValue);
-    // One-time migration: prefs saved before FVM existed lack it. Add it as
-    // enabled (read-only observation), then never touch the choice again so a
-    // later explicit disable persists.
-    if (rawValue && !enabledManagers.includes("Fvm") && !migrationDone(storage)) {
-      markMigrated(storage);
-      const migrated = normalizeEnabledManagers([...enabledManagers, "Fvm"]);
-      writeEnabledManagers(migrated, storage);
-      return migrated;
+    if (!rawValue) return enabledManagers;
+
+    // Managers added after a preference was saved are enabled once, then the
+    // explicit choice is never touched again (including a later disable).
+    let migrated = enabledManagers;
+    let changed = false;
+    if (!migrated.includes("Fvm") && !migrationDone(storage, fvmMigrationStorageKey)) {
+      migrated = normalizeEnabledManagers([...migrated, "Fvm"]);
+      changed = true;
     }
-    if (rawValue) markMigrated(storage);
-    return enabledManagers;
+    if (!migrated.includes("AndroidSdk") && !migrationDone(storage, androidSdkMigrationStorageKey)) {
+      migrated = normalizeEnabledManagers([...migrated, "AndroidSdk"]);
+      changed = true;
+    }
+    markMigrated(storage, fvmMigrationStorageKey);
+    markMigrated(storage, androidSdkMigrationStorageKey);
+    if (changed) writeEnabledManagers(migrated, storage);
+    return migrated;
   } catch {
     return [...managerOrder];
   }
@@ -61,17 +69,17 @@ function isManagerId(value: unknown): value is ManagerId {
   return typeof value === "string" && managerOrder.includes(value as ManagerId);
 }
 
-function migrationDone(storage: ManagerStorage): boolean {
+function migrationDone(storage: ManagerStorage, key: string): boolean {
   try {
-    return storage.getItem(fvmMigrationStorageKey) !== null;
+    return storage.getItem(key) !== null;
   } catch {
     return true;
   }
 }
 
-function markMigrated(storage: ManagerStorage) {
+function markMigrated(storage: ManagerStorage, key: string) {
   try {
-    storage.setItem(fvmMigrationStorageKey, "1");
+    storage.setItem(key, "1");
   } catch {
     // Best-effort local preference; scanning still works with defaults.
   }

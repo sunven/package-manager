@@ -1,6 +1,6 @@
 # DevScope
 
-一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv 和 FVM 的包、缓存/仓库占用与维护信号，清理 Rust / Maven / Node 项目派生数据，以及查看 VS Code 占用和 Codex、Claude Code、OpenCode、Grok Build、Qoder、Qoder CN 会话记录。
+一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv、FVM 和 Android SDK 的包、缓存/仓库占用与维护信号，清理 Rust / Maven / Node 项目派生数据，以及查看 VS Code 占用和 Codex、Claude Code、OpenCode、Grok Build、Qoder、Qoder CN 会话记录。
 
 当前目标是 **observe first, then act**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；其中 8 个管理器支持确认后执行 allowlisted 的缓存清理。
 
@@ -10,14 +10,14 @@
 
 ## 功能
 
-- 扫描 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv、FVM。
+- 扫描 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv、FVM、Android SDK。
 - 总览展示已扫描／已启用数量、未扫描状态、维护建议与目录占用 Top 5；其他本机数据提供独立页面入口。
 - 手动刷新当前管理器，或一次扫描所有已启用管理器；共享扫描队列最多同时处理 2 个管理器。
 - 查看全局安装的包名、版本、包路径。
 - 在当前管理器中按名称、版本、路径搜索，按名称或版本自然排序并切换升降序；可与已有信号筛选组合。
 - 顶部「搜索」或 `⌘K` 跨已启用管理器搜索当前观察，支持键盘选择并定位到具体包、运行时、资源或目录。
 - 总览「环境诊断」按应用 PATH 顺序查看命令候选、不同安装来源、同一文件的多个路径及读取异常。
-- 顶层「历史」比较自动留存的管理器快照，并查看跨领域维护记录：管理器缓存清理／npm、pnpm 全局包卸载、项目清理、VS Code 工作区存储移除和会话记录操作。
+- 顶层「历史」比较自动留存的管理器快照，并查看跨领域维护记录：管理器缓存清理／npm、pnpm 全局包卸载／Android SDK 组件卸载、项目清理、VS Code 工作区存储移除和会话记录操作。
 - 查看 cache / store / global modules 等路径。
 - 测量各 cache / store 目录占用；读取不完整时标记为已测下限，不承诺清理后的实际释放量。
 - pnpm store/global modules 使用 hardlink 去重统计，避免重复计算同一物理文件。
@@ -36,6 +36,8 @@
 - Bun 支持全局包列表、Bun 安装目录与缓存目录。
 - uv 支持已安装工具、uv 管理的 Python 版本、tools/pythons/cache 三个路径。
 - FVM 支持已安装 Flutter 版本清单（含捆绑 Dart 版本）、全局默认标记、未引用标记、版本目录与 git 缓存路径。
+- Android SDK 支持读取 SDK 根目录下的组件清单（platforms、build-tools、platform-tools、cmdline-tools、emulator、system-images、ndk、cmake 等），展示组件 ID、版本、说明和安装路径，并测量根目录总占用；清单来自本地 `package.xml` / `source.properties`，扫描不启动 CLI。
+- 复制 Android SDK 更新命令，如 `android --sdk=<root> sdk update platforms/android-36`；确认后通过 SDK 自带 CLI 永久卸载选中的组件（不进入废纸篓）。
 - 复制路径、复制扫描命令、复制包名版本。
 - 复制 Homebrew 维护命令，如 `brew upgrade <formula>`、`brew upgrade --cask <cask>`、`brew cleanup --dry-run`。
 - 复制 Maven/pip 维护命令，如 `mvn dependency:tree -Dincludes=...`、`python3 -m pip show <pkg>`、`python3 -m pip install --upgrade <pkg>`。
@@ -65,8 +67,8 @@
 - 主要面向 macOS 自用。
 - 不做后台自动刷新。启动时只扫描首个已启用管理器，其他管理器首次进入时扫描，之后手动刷新；手动全量扫描仅覆盖已启用管理器。
 - 不做 per-package size，只展示 manager/path 级别总大小。
-- 只有 npm 和 pnpm 支持确认后卸载全局包；其他管理器不做 uninstall。
-- 缓存清理覆盖 8 个管理器。**nvm、Maven、Cargo、FVM 的管理器缓存没有清理能力，这是有意的架构决定**，不是遗漏：nvm、Maven、Cargo 都没有官方子命令能清自己的缓存，做它们就意味着本工具自己 `rm -rf` 推导出来的路径；FVM 的 `fvm remove` 删除的是用户安装的 SDK（按卸载对待，需单独安全论证），`fvm destroy` 则超出本工具的能力范围。Rust 项目构建产物是独立功能，不计入 Cargo 管理器缓存或健康汇总。
+- 只有 npm 和 pnpm 支持确认后卸载全局包；Android SDK 支持确认后卸载单个 SDK 组件；其他管理器不做 uninstall。
+- 缓存清理覆盖 8 个管理器。**nvm、Maven、Cargo、FVM、Android SDK 的管理器缓存没有清理能力，这是有意的架构决定**，不是遗漏：nvm、Maven、Cargo 都没有官方子命令能清自己的缓存，做它们就意味着本工具自己 `rm -rf` 推导出来的路径；FVM 的 `fvm remove` 删除的是用户安装的 SDK（按卸载对待，需单独安全论证），`fvm destroy` 则超出本工具的能力范围；Android SDK 的组件属于用户安装的资产，按卸载单独处理，不做缓存清理。Rust 项目构建产物是独立功能，不计入 Cargo 管理器缓存或健康汇总。
 - Rust 构建产物 v1 只认 `Cargo.toml` 同级、非符号链接且根级包含 `CACHEDIR.TAG` 或 `.rustc_info.json` 的 `target`；不解析自定义或共享 `target-dir`。
 - Maven 构建产物 v1 只认 `pom.xml` 同级、非符号链接且根级包含 Maven 产物目录（如 `maven-status`、`classes`、`test-classes`）的 `target`；不解析 pom 自定义的 `<directory>`，也不偏好项目内 `mvnw`。
 - Node 依赖目录只认常规文件 `package.json` 同级、非符号链接的 `node_modules`；扫描不深入依赖目录，清理不自动重新安装。
@@ -77,6 +79,7 @@
 - Yarn 2+ 没有 npm/pnpm/Yarn Classic 等价的全局包列表，因此不伪装出一个全局列表。
 - nvm 是 Node 版本管理器，v1 只展示已安装的 Node runtime 版本，不把每个 Node 版本里的 npm 全局包混入 nvm tab。
 - FVM 是 Flutter 版本管理器，v1 只展示已安装的 Flutter 版本、全局默认标记和版本目录占用，不执行 `fvm install/use/remove`，不提供清理方案，不扫描项目级 `.fvmrc`/`.fvm`。
+- Android SDK v1 只观察单一 SDK 根目录（`ANDROID_HOME` → `ANDROID_SDK_ROOT` → `~/Library/Android/sdk`）内的组件；AVD、Gradle 缓存和 Android Studio 不在范围内。组件卸载要求根目录内有 `android` 或 `sdkmanager` CLI，`cmdline-tools` 不能在应用内卸载；不检查 AVD 或运行中进程对组件的引用。
 - Homebrew leaves 只标记为 review candidate，不等于“安全删除”。
 - Maven v1 是本地仓库健康检查，不是全局 Java 包管理器。
 - pip v1 只扫描当前 Python interpreter，不递归发现全机器所有 virtualenv。
@@ -317,7 +320,7 @@ Docker cleanup plan:
 docker builder prune -f
 docker image prune -f
 
-nvm / Maven / Cargo / FVM: no cleanup plan (ADR-0001)
+nvm / Maven / Cargo / FVM / Android SDK: no cleanup plan (ADR-0001)
 
 Rust build artifact cleanup:
 cargo clean --offline --manifest-path <Cargo.toml> --target-dir <target>
@@ -388,6 +391,7 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 - 复制文本到剪贴板。
 - 用系统 opener 打开本机目录。
 - 确认后执行 allowlisted 全局包卸载：`npm uninstall -g <pkg>`、`pnpm remove --global <pkg>`。
+- 确认后通过 Android SDK 自带 CLI 永久卸载单个 SDK 组件：优先根目录内的 `android --sdk=<root> sdk remove <斜杠 ID>`，回退 `sdkmanager --sdk_root=<root> --uninstall <分号 ID>`；执行前重新核对组件仍在清单中，`cmdline-tools` 不在可卸载范围内。
 - 确认后执行 allowlisted 缓存清理，命令固定在 Rust 静态表里（见上方功能列表）。
 - 确认后清理扫描会话中的 Rust / Maven 构建目录候选；前端只能提交后端签发的根目录、扫描和候选 ID，执行前会重新验证项目、`target` 身份及根目录边界。
 - 确认后永久清理同一扫描会话中已验证的 Node 依赖目录；执行前再次检查项目、目录身份和根目录边界。
@@ -397,7 +401,7 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 
 清理的执行边界：
 
-- 管理器缓存通过 `run_cache_cleanup` 接受一个 12 值管理器枚举；可选的维护前快照 ID 仅用于历史关联，不影响执行资格。前端**在语法上无法表达"执行哪条命令"**，allowlist 因此是类型系统的性质而不是约定。
+- 管理器缓存通过 `run_cache_cleanup` 接受一个 13 值管理器枚举；可选的维护前快照 ID 仅用于历史关联，不影响执行资格。前端**在语法上无法表达"执行哪条命令"**，allowlist 因此是类型系统的性质而不是约定。
 - 项目派生数据清理只接受后端当前扫描会话中的 candidate ID，不接受前端提供路径或 Cargo 参数；重扫和切换预设会使旧会话立即失效。
 - 结构化 args，不拼 shell string。
 - 清理专用 300 秒超时，与扫描的 5–15 秒、卸载的 30 秒分开——避免"缓存很大"被误报成"超时"，而超时会 kill 子进程、留下删了一半的状态。
@@ -419,8 +423,9 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 - 自动执行 Maven purge/get/tree 命令。
 - 自动执行 pip uninstall、upgrade。
 - 自动执行 Cargo install、uninstall、update、search、cache 命令。
+- 自动执行 Android SDK install/update（只复制更新命令）。
 - 后台或定时清理。
-- 不提供派生数据清理撤销。维护历史覆盖管理器缓存清理／npm、pnpm 全局包卸载、项目清理、VS Code 工作区存储移除和会话记录操作；会话记录与 VS Code 工作区存储记录可在清空废纸篓前通过系统恢复，OpenCode 永久删除无法恢复。
+- 不提供派生数据清理撤销。维护历史覆盖管理器缓存清理／npm、pnpm 全局包卸载／Android SDK 组件卸载、项目清理、VS Code 工作区存储移除和会话记录操作；会话记录与 VS Code 工作区存储记录可在清空废纸篓前通过系统恢复，Android SDK 组件卸载与 OpenCode 永久删除无法恢复。
 
 新增管理器的清理能力，只需在 Rust 静态表和 `src/cleanupCopy.ts` 各加一条；新增"自行删除目录"这类例外，需要和 `_npx` 同等强度的身份断言论证。
 
@@ -442,6 +447,7 @@ src/
   maintenanceHistory.ts 跨领域维护记录类型、计数、标签与日期分组
   historyRevision.ts 跨领域操作完成后的历史页重读信号
   cleanupCopy.ts   每个管理器的清理文案、按钮位置、回收量来源
+  androidSdk.ts    Android SDK 组件移除命令与可移除资格文案
 
 src-tauri/
   src/lib.rs       Tauri command 定义与注册

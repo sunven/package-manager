@@ -54,6 +54,7 @@ pub(crate) enum MaintenanceDomain {
 pub(crate) enum MaintenanceOperation {
     CleanupCache,
     UninstallGlobalPackage,
+    UninstallSdkComponent,
     CleanBatch,
     RemoveWorkspaceStorage,
     RemoveToTrash,

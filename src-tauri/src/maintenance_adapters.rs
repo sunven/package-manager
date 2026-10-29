@@ -838,6 +838,31 @@ pub(crate) fn uninstall_summary(
     }
 }
 
+pub(crate) fn sdk_component_uninstall_summary(
+    run: &MaintenanceRunPreview,
+) -> (ExecutionSummary, String, Option<Vec<ManagerStep>>) {
+    let command = run.command.preview.clone();
+    if matches!(run.status, crate::types::AsyncStatus::Ready) {
+        (
+            ExecutionSummary::Succeeded,
+            text(format!("SDK 组件卸载已完成：{command}")),
+            None,
+        )
+    } else {
+        let reason = run
+            .failure
+            .as_ref()
+            .map(|failure| failure.message.clone())
+            .or_else(|| run.message.clone())
+            .unwrap_or_else(|| run.stderr.clone());
+        (
+            ExecutionSummary::Failed,
+            text(format!("{reason}（命令：{command}）")),
+            None,
+        )
+    }
+}
+
 fn abort(history: &MaintenanceHistoryState, id: &str, error: &str) -> Result<(), String> {
     history.finish(id, ExecutionSummary::NotExecuted, error.to_string())
 }

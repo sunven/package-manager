@@ -17,6 +17,7 @@ import type { MaintenanceRequest } from "../state";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel, shorten } from "../utils/format";
 import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, searchAndSortPackages, type PackageSort, type IndexedPackage } from "../utils/filters";
 import { cleanupCopyFor } from "../cleanupCopy";
+import { androidSdkUninstallBlockReason } from "../androidSdk";
 import { cx } from "../utils/classNames";
 import { EmptyState, IconButton, SignalBadge, SkeletonRows, StatCard, StatusBadge } from "./ui";
 import { PackageActions } from "./PackageActions";
@@ -93,6 +94,16 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
       : `${manager.label} 扫描不完整，暂未读到条目，请查看扫描诊断后重新扫描`
     : null;
 
+  if (manager.status === "Unsupported") {
+    return (
+      <div className="px-4 py-4">
+        <p className="font-medium text-foreground">{manager.label} 不提供等价的全局软件包清单。</p>
+        {manager.unsupportedReason ? <p className="mt-2 text-sm text-muted-foreground">{formatHomePathsInText(displayMessage(manager.unsupportedReason), homeDirectory)}</p> : null}
+        <p className="mt-2 text-sm text-muted-foreground">仍可在路径面板查看路径、占用和可用的清理操作。</p>
+      </div>
+    );
+  }
+
   if (manager.id === "Homebrew") {
     const packages = props.rows;
     return (
@@ -150,13 +161,17 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
     );
   }
 
-  if (manager.status === "Unsupported") {
+  if (manager.id === "AndroidSdk") {
     return (
-      <div className="px-4 py-4">
-        <p className="font-medium text-foreground">Yarn 现代版本不提供全局软件包列表。</p>
-        {manager.unsupportedReason ? <p className="mt-2 text-sm text-muted-foreground">{formatHomePathsInText(displayMessage(manager.unsupportedReason), homeDirectory)}</p> : null}
-        <p className="mt-2 text-sm text-muted-foreground">仍可在路径面板查看缓存目录、占用和可用的清理操作。</p>
-      </div>
+      <SpecializedTable
+        emptyMessage={unreadMessage ?? "未找到可识别的 SDK 组件"}
+        heading={["组件", "版本", "说明", "路径", "操作"]}
+        middleColumn="description"
+        showKindBadge={false}
+        uninstallBlockedReason={(pkg) => androidSdkUninstallBlockReason(manager, pkg)}
+        packages={props.rows}
+        {...props}
+      />
     );
   }
 
@@ -264,10 +279,16 @@ function SpecializedTable({
   selectedPackageIndex,
   homeDirectory,
   manager,
+  middleColumn = "signals",
+  showKindBadge = true,
+  uninstallBlockedReason,
 }: PackageTableProps & {
   emptyMessage: string;
   heading: string[];
   packages: IndexedPackage[];
+  middleColumn?: "signals" | "description";
+  showKindBadge?: boolean;
+  uninstallBlockedReason?: (pkg: PackageRow) => string | null;
 }) {
   if (!packages.length) return <EmptyState message={emptyMessage} />;
 
@@ -283,12 +304,16 @@ function SpecializedTable({
         >
           <TableCell className="min-w-45 max-w-70 truncate">
             <PackageName pkg={pkg} selected={index === selectedPackageIndex} onSelect={() => onSelectPackage(index)}>
-              <Badge className="shrink-0" variant="secondary">{packageKindLabels[pkg.kind]}</Badge>
+              {showKindBadge ? <Badge className="shrink-0" variant="secondary">{packageKindLabels[pkg.kind]}</Badge> : null}
             </PackageName>
           </TableCell>
           <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
           <TableCell>
-            <span className="flex min-w-0 flex-wrap gap-1.5">{renderPackageSignals(pkg)}</span>
+            {middleColumn === "description" ? (
+              <span className="block max-w-70 truncate text-muted-foreground" title={pkg.source}>{formatHomePathsInText(pkg.source, homeDirectory)}</span>
+            ) : (
+              <span className="flex min-w-0 flex-wrap gap-1.5">{renderPackageSignals(pkg)}</span>
+            )}
           </TableCell>
           <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ? formatHomePath(pkg.path, homeDirectory) : "无"}</TableCell>
           <TableCell className="w-24 text-right">
@@ -303,6 +328,7 @@ function SpecializedTable({
               onToggle={onToggleActions}
               pendingUninstall={isPendingUninstall(pendingMaintenance, manager?.id, index, pkg.name)}
               pkg={pkg}
+              uninstallBlockedReason={uninstallBlockedReason?.(pkg) ?? null}
             />
           </TableCell>
         </TableRow>
@@ -312,7 +338,7 @@ function SpecializedTable({
 }
 
 function isPendingUninstall(pending: MaintenanceRequest | null, managerId: ManagerSnapshot["id"] | undefined, index: number, packageName: string) {
-  return pending?.kind === "uninstallGlobalPackage" && pending.managerId === managerId && pending.packageIndex === index && pending.packageName === packageName;
+  return (pending?.kind === "uninstallGlobalPackage" || pending?.kind === "uninstallSdkComponent") && pending.managerId === managerId && pending.packageIndex === index && pending.packageName === packageName;
 }
 
 function TableShell({

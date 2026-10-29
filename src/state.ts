@@ -13,6 +13,14 @@ export type MaintenanceRequest =
       packageIndex: number;
       packageName: string;
     }
+  | {
+      kind: "uninstallSdkComponent";
+      managerId: "AndroidSdk";
+      packageIndex: number;
+      packageName: string;
+      sdkRoot: string;
+      commandPreview?: string | null;
+    }
   /**
    * One request kind covers every manager. With a single backend entry point,
    * "clean npm's cache" and "prune pnpm's store" are the same operation applied

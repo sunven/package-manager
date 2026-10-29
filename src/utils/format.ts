@@ -34,6 +34,7 @@ const pathLabels: Record<string, string> = {
   "pip cache": "pip 缓存",
   "site-packages": "site-packages",
   "User site": "用户 site-packages",
+  "Android SDK root": "SDK 根目录",
 };
 
 export function pathLabel(label: string) {
@@ -164,6 +165,7 @@ export function actionLabel(action: CommandEnvelope) {
   if (command.includes("python install")) return "复制安装 Python 命令";
   if (command.includes("cache prune")) return "复制缓存精简命令";
   if (command.includes("cache clean")) return "复制清空缓存命令";
+  if (command.includes("sdk update") || (action.program.endsWith("sdkmanager") && secondArg === "--install")) return "复制更新命令";
   if (command.includes("nvm use")) return "复制切换版本命令";
   if (firstArg === "upgrade" && secondArg === "--cask") return "复制应用包升级命令";
   if (firstArg === "upgrade") return "复制升级命令";

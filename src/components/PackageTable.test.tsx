@@ -62,6 +62,51 @@ function renderPackageTable(manager: ManagerSnapshot) {
 }
 
 describe("PackageTable", () => {
+  it("renders Android SDK components with descriptions and blocks cmdline-tools removal", () => {
+    const manager: ManagerSnapshot = {
+      id: "AndroidSdk",
+      label: "Android SDK",
+      status: "Ready",
+      version: "22.0",
+      packages: [
+        { name: "platforms;android-36", version: "2", path: "/sdk/platforms/android-36", source: "Android SDK Platform 36", kind: "AndroidSdkComponent", signals: [], actions: [] },
+        { name: "cmdline-tools;22.0", version: "22.0", path: "/sdk/cmdline-tools/latest", source: "Android SDK Command-line Tools", kind: "AndroidSdkComponent", signals: [], actions: [] },
+      ],
+      paths: [],
+      commands: [],
+      failures: [],
+      unsupportedReason: null,
+      homebrew: null,
+      maven: null,
+      pip: null,
+      docker: null,
+      androidSdk: { cli: { program: "/sdk/cmdline-tools/latest/bin/android", flavor: "Android", sdkRoot: "/sdk" } },
+    };
+
+    const html = renderPackageTable(manager);
+
+    expect(html).toContain("说明");
+    expect(html).toContain("Android SDK Platform 36");
+    expect(html).toContain("卸载 SDK 组件");
+    expect(html).toContain("cmdline-tools 提供维护 CLI");
+  });
+
+  it("explains an unsupported Android SDK layout without the Yarn copy", () => {
+    const manager: ManagerSnapshot = {
+      ...packageManager("Npm"),
+      id: "AndroidSdk",
+      label: "Android SDK",
+      status: "Unsupported",
+      packages: [],
+      unsupportedReason: "旧版 Android SDK 布局只提供集中式包索引，无法提供逐组件清单。",
+    };
+
+    const html = renderPackageTable(manager);
+
+    expect(html).toContain("旧版 Android SDK 布局");
+    expect(html).not.toContain("Yarn 现代版本");
+  });
+
   it.each(["Missing", "Failed", "Partial"] as const)("does not present an unread %s list as an empty installation", (status) => {
     const html = renderPackageTable({ ...packageManager("Npm"), status, packages: [] });
 

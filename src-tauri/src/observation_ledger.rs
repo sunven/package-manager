@@ -24,6 +24,7 @@ const ITEM_IDS: &[&str] = &[
     "manager:bun",
     "manager:uv",
     "manager:fvm",
+    "manager:androidsdk",
     "environment",
     "project-scan",
     "vscode-storage",

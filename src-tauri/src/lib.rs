@@ -37,8 +37,8 @@ mod vscode_storage;
 
 use crate::command::{run_command, run_command_owned};
 use crate::managers::{
-    run_cache_cleanup_with_runner, run_npm_maintenance_with_runner,
-    run_pnpm_maintenance_with_runner, scan_manager_snapshot,
+    run_android_sdk_uninstall_with_runner, run_cache_cleanup_with_runner,
+    run_npm_maintenance_with_runner, run_pnpm_maintenance_with_runner, scan_manager_snapshot,
 };
 use crate::project_cleanup::{
     discover_project_data, measure_project_data, DirectoryMeasurement, ProjectCleanupSettings,
@@ -46,8 +46,8 @@ use crate::project_cleanup::{
     ProjectDataOpenTarget, ProjectDataScan, ToolAvailability,
 };
 use crate::types::{
-    CacheCleanupRun, MaintenanceRunPreview, ManagerId, ManagerScanProgress, ManagerScanSnapshot,
-    NpmMaintenanceOperation, PnpmMaintenanceOperation,
+    AndroidSdkMaintenanceOperation, CacheCleanupRun, MaintenanceRunPreview, ManagerId,
+    ManagerScanProgress, ManagerScanSnapshot, NpmMaintenanceOperation, PnpmMaintenanceOperation,
 };
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
@@ -961,6 +961,28 @@ async fn run_pnpm_maintenance(
     .map_err(|err| format!("pnpm maintenance failed: {err}"))?
 }
 
+#[tauri::command]
+async fn run_android_sdk_maintenance(
+    operation: AndroidSdkMaintenanceOperation,
+    before_snapshot_id: Option<String>,
+    state: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_operation::Receipt<MaintenanceRunPreview>, String> {
+    let state = state.inner().clone();
+    let AndroidSdkMaintenanceOperation::UninstallSdkComponent { ref package_id, .. } = operation;
+    let target = package_id.clone();
+    tauri::async_runtime::spawn_blocking(move || maintenance_adapters::run_manager_maintenance(
+        &state,
+        ManagerId::AndroidSdk,
+        maintenance_history::MaintenanceOperation::UninstallSdkComponent,
+        Some(target),
+        before_snapshot_id,
+        || run_android_sdk_uninstall_with_runner(operation, &run_command_owned),
+        maintenance_adapters::sdk_component_uninstall_summary,
+    ))
+    .await
+    .map_err(|err| format!("Android SDK maintenance failed: {err}"))?
+}
+
 /// Execution remains manager-only and allowlisted. The optional archive ID is
 /// observation metadata and grants no authority over commands or paths.
 #[tauri::command]
@@ -1093,6 +1115,7 @@ pub fn run() {
             scan_manager,
             run_npm_maintenance,
             run_pnpm_maintenance,
+            run_android_sdk_maintenance,
             run_cache_cleanup
         ])
         .run(tauri::generate_context!())

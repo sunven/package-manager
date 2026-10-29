@@ -54,11 +54,11 @@ function item(coverage: ReturnType<typeof build>, id: ObservationItemId): Observ
 }
 
 describe("observation coverage model", () => {
-  it("contains the 28-item catalog in fixed groups", () => {
-    expect(OBSERVATION_ITEMS).toHaveLength(28);
-    expect(new Set(OBSERVATION_ITEMS.map((entry) => entry.id)).size).toBe(28);
+  it("contains the 29-item catalog in fixed groups", () => {
+    expect(OBSERVATION_ITEMS).toHaveLength(29);
+    expect(new Set(OBSERVATION_ITEMS.map((entry) => entry.id)).size).toBe(29);
     const coverage = build();
-    expect(coverage.items).toHaveLength(28);
+    expect(coverage.items).toHaveLength(29);
     expect(coverage.groups.map((group) => group.id)).toEqual([
       "managers", "environment", "project", "vscode", "sessions", "codex", "claude",
     ]);
@@ -71,7 +71,7 @@ describe("observation coverage model", () => {
     expect(disabled.attention).toBe(false);
     expect(disabled.actions.refresh).toBe(false);
     expect(disabled.actions.adjustScope).toBe(true);
-    expect(coverage.groups[0].enabledCount).toBe(11);
+    expect(coverage.groups[0].enabledCount).toBe(12);
     expect(coverage.summary.disabled).toBe(1);
   });
 
@@ -184,11 +184,11 @@ describe("observation coverage model", () => {
 
   it("counts observed, partial, unobserved and attention without percentages", () => {
     const empty = build();
-    expect(empty.summary).toMatchObject({ observed: 0, notObserved: 28, attention: 28, disabled: 0 });
+    expect(empty.summary).toMatchObject({ observed: 0, notObserved: 29, attention: 29, disabled: 0 });
     const observed = build({ facts: { environment: fact({ success: success() }) } });
-    expect(observed.summary).toMatchObject({ observed: 1, partial: 0, notObserved: 27, attention: 27 });
+    expect(observed.summary).toMatchObject({ observed: 1, partial: 0, notObserved: 28, attention: 28 });
     const partial = build({ facts: { environment: fact({ success: success({ completeness: "partial" }) }) } });
-    expect(partial.summary).toMatchObject({ observed: 1, partial: 1, attention: 28 - 1 + 1 });
+    expect(partial.summary).toMatchObject({ observed: 1, partial: 1, attention: 29 - 1 + 1 });
   });
 
   it("exposes source actions and formats observation times", () => {
@@ -210,7 +210,7 @@ describe("observation coverage model", () => {
   it("indexes coverage and requires every observation item", () => {
     const coverage = build();
     const index = indexObservationCoverage(coverage);
-    expect(index.size).toBe(28);
+    expect(index.size).toBe(29);
     expect(requireCoverageItem(index, "manager:npm")).toBe(item(coverage, "manager:npm"));
     expect(() => requireCoverageItem(index, "unknown" as ObservationItemId)).toThrow("unknown");
   });

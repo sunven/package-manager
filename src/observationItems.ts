@@ -20,6 +20,7 @@ export type ObservationItemId =
   | "manager:bun"
   | "manager:uv"
   | "manager:fvm"
+  | "manager:androidsdk"
   | "environment"
   | "project-scan"
   | "vscode-storage"
@@ -66,6 +67,7 @@ export const OBSERVATION_ITEMS: ObservationItem[] = [
   { id: "manager:bun", group: "managers", label: "Bun" },
   { id: "manager:uv", group: "managers", label: "uv" },
   { id: "manager:fvm", group: "managers", label: "FVM" },
+  { id: "manager:androidsdk", group: "managers", label: "Android SDK" },
   { id: "environment", group: "environment", label: "环境诊断" },
   { id: "project-scan", group: "project", label: "项目派生数据扫描" },
   { id: "vscode-storage", group: "vscode", label: "VS Code 工作区存储" },

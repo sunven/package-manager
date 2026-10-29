@@ -177,4 +177,5 @@ const markGlyph: Record<ManagerId, string> = {
   Bun: "bu",
   Uv: "uv",
   Fvm: "fv",
+  AndroidSdk: "as",
 };
