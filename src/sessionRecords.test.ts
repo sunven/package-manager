@@ -3,6 +3,7 @@ import {
   ageRemovalRequest,
   bulkRemovalConfirmText,
   filterOpenCodeSessions,
+  formatSessionRecordId,
   groupOpenCodeSessions,
   groupSessionRecords,
   removeCompletedRecords,
@@ -196,6 +197,24 @@ describe("session record grouping", () => {
     expect(selectedRemovalConfirmText("Codex", 2)).toBe(
       "将选中的 2 条 Codex 会话记录移入废纸篓。移除前会再次检查，使用中或已不符合移除条件的记录会跳过。",
     );
+  });
+});
+
+describe("Qoder session records", () => {
+  it("shows the session id without the workspace slug", () => {
+    expect(formatSessionRecordId("qoder", "-Users-example-work/1111-2222")).toBe("1111-2222");
+    expect(formatSessionRecordId("qoder-cn", "plain-id")).toBe("plain-id");
+    expect(formatSessionRecordId("codex", "2026/09/chat.jsonl")).toBe("2026/09/chat.jsonl");
+  });
+
+  it("keeps the international and domestic editions as separate sections", () => {
+    const qoder = source([record({ id: "-Users-me-work/a", lastActivityMs: 2, bytes: 10 })]);
+    const cn = source([record({ id: "-Users-me-work/b", lastActivityMs: 1, bytes: 20 })]);
+    const sections = sessionSections({ codex: source([]), claude: source([]), qoder, "qoder-cn": cn });
+    expect(sections.qoder?.count).toBe(1);
+    expect(sections["qoder-cn"]?.count).toBe(1);
+    expect(sections["qoder-cn"]?.bytes).toBe(20);
+    expect(sections.grok).toBeUndefined();
   });
 });
 

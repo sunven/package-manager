@@ -29,7 +29,11 @@ function confirmedRecord(record: SessionRecord) {
   };
 }
 
-const SESSION_SCOPES = ["codex", "claude", "grok"] as const;
+const SESSION_SCOPES = ["codex", "claude", "grok", "qoder", "qoder-cn"] as const;
+
+function isDirectoryScoped(source: SessionSourceId) {
+  return source === "grok" || source === "qoder" || source === "qoder-cn";
+}
 
 function emptySource(): SessionSourceScan {
   return {
@@ -118,7 +122,7 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
   },
   scopesFor: (target) => [target.source],
   execute: (target, report) => {
-    const scope = target.source === "grok" ? { expectedDirectory: target.expectedDirectory } : {};
+    const scope = isDirectoryScoped(target.source) ? { expectedDirectory: target.expectedDirectory } : {};
     if (target.kind === "one") {
       return invoke<SessionRemovalResult>("remove_session_record", {
         source: target.source,
@@ -134,7 +138,7 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
         days: target.days,
         confirmedCount: target.count,
         ...scope,
-        ...(target.source === "grok" ? { cutoffMs: target.cutoffMs } : {}),
+        ...(isDirectoryScoped(target.source) ? { cutoffMs: target.cutoffMs } : {}),
         onProgress,
       });
     }
@@ -162,42 +166,61 @@ export function useSessionRecords(active: boolean) {
       recordFollowUp: recordMaintenanceFollowUp,
     });
 
-  const [openingGrokId, setOpeningGrokId] = useState<string | null>(null);
+  const [openingSession, setOpeningSession] = useState<{ source: SessionSourceId; id: string } | null>(null);
   const opening = useRef(false);
   const mutation = useRef(false);
   const scan = useMemo<SessionRecordScan | null>(
-    () => scans.codex || scans.claude || scans.grok
-      ? { codex: scans.codex ?? emptySource(), claude: scans.claude ?? emptySource(), grok: scans.grok }
+    () => scans.codex || scans.claude || scans.grok || scans.qoder || scans["qoder-cn"]
+      ? {
+          codex: scans.codex ?? emptySource(),
+          claude: scans.claude ?? emptySource(),
+          grok: scans.grok,
+          qoder: scans.qoder,
+          "qoder-cn": scans["qoder-cn"],
+        }
       : null,
-    [scans.codex, scans.claude, scans.grok],
+    [scans.codex, scans.claude, scans.grok, scans.qoder, scans["qoder-cn"]],
   );
   const scanningSources = useMemo(
-    () => ({ codex: scanning.codex ?? false, claude: scanning.claude ?? false, grok: scanning.grok ?? false }),
-    [scanning.codex, scanning.claude, scanning.grok],
+    () => ({
+      codex: scanning.codex ?? false,
+      claude: scanning.claude ?? false,
+      grok: scanning.grok ?? false,
+      qoder: scanning.qoder ?? false,
+      "qoder-cn": scanning["qoder-cn"] ?? false,
+    }),
+    [scanning.codex, scanning.claude, scanning.grok, scanning.qoder, scanning["qoder-cn"]],
   );
-  async function openGrokSession(record: SessionRecord): Promise<string | null> {
-    if (opening.current || mutation.current || operation || scanning.grok) return "当前操作尚未结束，请稍后重试。";
-    const source = scans.grok;
-    if (!source || source.status === "Failed" || !record.grok) return "请先刷新 Grok Build 会话记录。";
-    if (record.grok.resumeError) return record.grok.resumeError;
+  async function openSession(source: SessionSourceId, record: SessionRecord): Promise<string | null> {
+    if (opening.current || mutation.current || operation || scanning[source]) return "当前操作尚未结束，请稍后重试。";
+    const scanSource = scans[source];
+    if (!scanSource || scanSource.status === "Failed") return "请先刷新会话记录。";
+    if (source === "grok") {
+      if (!record.grok) return "请先刷新 Grok Build 会话记录。";
+      if (record.grok.resumeError) return record.grok.resumeError;
+    }
     opening.current = true;
-    setOpeningGrokId(record.id);
+    setOpeningSession({ source, id: record.id });
     try {
-      await invoke("open_grok_session", { id: record.id, expectedDirectory: source.directory });
-      await refresh(["grok"]);
+      if (source === "grok") {
+        await invoke("open_grok_session", { id: record.id, expectedDirectory: scanSource.directory });
+      } else if (source === "qoder" || source === "qoder-cn") {
+        await invoke("open_qoder_session", { source, id: record.id, expectedDirectory: scanSource.directory });
+      }
+      await refresh([source]);
       return null;
     } catch (caught) {
       return errorToString(caught);
     } finally {
       opening.current = false;
-      setOpeningGrokId(null);
+      setOpeningSession(null);
     }
   }
   function request(target: PendingRemoval) {
     if (opening.current || mutation.current) return;
-    if (target.source === "grok") {
-      const source = scans.grok;
-      if (!source || scanning.grok || source.status === "Failed" || source.removalBlockedReason) return;
+    if (isDirectoryScoped(target.source)) {
+      const source = scans[target.source];
+      if (!source || scanning[target.source] || source.status === "Failed" || source.removalBlockedReason) return;
       target = { ...target, expectedDirectory: source.directory,
         ...(target.kind === "age" ? { cutoffMs: Date.now() - target.days * 86_400_000 } : {}),
       };
@@ -223,7 +246,7 @@ export function useSessionRecords(active: boolean) {
     request,
     confirm: async (id: number) => { try { await confirm(id); } finally { mutation.current = false; } },
     cancel: (id: number) => { cancel(id); mutation.current = false; },
-    openGrokSession,
-    openingGrokId,
+    openSession,
+    openingSession,
   };
 }

@@ -911,6 +911,8 @@ fn source_label(source: SessionSourceKind) -> &'static str {
         SessionSourceKind::Codex => "codex",
         SessionSourceKind::Claude => "claude",
         SessionSourceKind::Grok => "grok",
+        SessionSourceKind::Qoder => "qoder",
+        SessionSourceKind::QoderCn => "qoder-cn",
     }
 }
 

@@ -172,6 +172,8 @@ async function setup(overrides: Options = {}) {
       "session:codex": sessionObservationFacts("codex", records.scan?.codex ?? null, records.scanningSources.codex, records.error),
       "session:claude": sessionObservationFacts("claude", records.scan?.claude ?? null, records.scanningSources.claude, records.error),
       "session:grok": sessionObservationFacts("grok", records.scan?.grok ?? null, records.scanningSources.grok, records.error),
+      "session:qoder": sessionObservationFacts("qoder", records.scan?.qoder ?? null, records.scanningSources.qoder, records.error),
+      "session:qoder-cn": sessionObservationFacts("qoder-cn", records.scan?.["qoder-cn"] ?? null, records.scanningSources["qoder-cn"], records.error),
       "session:opencode": openCodeObservationFacts(openCode.scan, openCode.scanning, openCode.error),
     });
     return visible ? <SessionRecordsPage
@@ -179,6 +181,8 @@ async function setup(overrides: Options = {}) {
         codex: requireCoverageItem(index, "session:codex"),
         claude: requireCoverageItem(index, "session:claude"),
         grok: requireCoverageItem(index, "session:grok"),
+        qoder: requireCoverageItem(index, "session:qoder"),
+        "qoder-cn": requireCoverageItem(index, "session:qoder-cn"),
         opencode: requireCoverageItem(index, "session:opencode"),
       }}
       records={records}

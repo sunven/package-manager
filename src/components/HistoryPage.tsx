@@ -234,12 +234,13 @@ function VscodeScope({ detail, homeDirectory }: { detail: VscodeStorageDetail; h
 }
 
 function SessionScope({ detail }: { detail: SessionTrashDetail }) {
-  const source = detail.scope.source === "grok" ? "Grok Build" : detail.scope.source === "codex" ? "Codex" : "Claude Code";
+  const source = detail.scope.source === "grok" ? "Grok Build" : detail.scope.source === "codex" ? "Codex" : detail.scope.source === "qoder" ? "Qoder" : detail.scope.source === "qoder-cn" ? "Qoder CN" : "Claude Code";
   return <div className="grid gap-2 text-sm">
     <Row label="来源" value={source} />
     {detail.scope.directory ? <Row label="确认来源目录" value={detail.scope.directory} /> : null}
     {detail.scope.cutoffMs != null ? <Row label="确认年龄门槛" value={time(detail.scope.cutoffMs)} /> : null}
     {detail.scope.source === "grok" ? <p className="text-xs text-muted-foreground">移入废纸篓仅作用于本机会话目录，外部搜索索引与远端副本保留，独立关联记录不自动连带移除。</p> : null}
+    {detail.scope.source === "qoder" || detail.scope.source === "qoder-cn" ? <p className="text-xs text-muted-foreground">一条记录的转写与配套目录会一起移入废纸篓，诊断日志不在操作范围内。</p> : null}
     <Row label="模式" value={detail.scope.mode === "olderThan" ? `按年龄 · ${detail.scope.days} 天` : detail.scope.mode === "selected" ? "明确选择" : "单条"} />
     {detail.scope.confirmedCount !== null ? <Row label="确认时条数" value={String(detail.scope.confirmedCount)} /> : null}
     {detail.executionTotal !== null ? <Row label="执行时目标总数" value={String(detail.executionTotal)} /> : null}

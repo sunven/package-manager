@@ -135,6 +135,12 @@ export function App() {
     facts["session:grok"] = sessionObservationFacts(
       "grok", sessionRecords.scan?.grok ?? null, sessionRecords.scanningSources.grok, sessionRecords.error,
     );
+    facts["session:qoder"] = sessionObservationFacts(
+      "qoder", sessionRecords.scan?.qoder ?? null, sessionRecords.scanningSources.qoder, sessionRecords.error,
+    );
+    facts["session:qoder-cn"] = sessionObservationFacts(
+      "qoder-cn", sessionRecords.scan?.["qoder-cn"] ?? null, sessionRecords.scanningSources["qoder-cn"], sessionRecords.error,
+    );
     facts["session:opencode"] = openCodeObservationFacts(
       openCodeSessions.scan,
       openCodeSessions.scanning,
@@ -153,7 +159,7 @@ export function App() {
     observations.environment, observations.environmentBusy, observations.environmentError,
     projectCleanup.view,
     vscodeStorage.scan, vscodeStorage.scanning, vscodeStorage.error,
-    sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.scanningSources.grok, sessionRecords.error,
+    sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.scanningSources.grok, sessionRecords.scanningSources.qoder, sessionRecords.scanningSources["qoder-cn"], sessionRecords.error,
     openCodeSessions.scan, openCodeSessions.scanning, openCodeSessions.error,
     codex.extensions.marketplaces, codex.extensions.plugins, codex.extensions.hooks, codex.skills,
     claude.state.extensionsView, claude.state.hooksView, claude.skills,
@@ -178,7 +184,7 @@ export function App() {
     || claude.locked
     || Boolean(vscodeStorage.operation)
     || Boolean(sessionRecords.operation)
-    || Boolean(sessionRecords.openingGrokId)
+    || Boolean(sessionRecords.openingSession)
     || Boolean(openCodeSessions.operation)
     || Boolean(projectCleanup.view.batch);
 
@@ -253,6 +259,8 @@ export function App() {
       case "session:codex":
       case "session:claude":
       case "session:grok":
+      case "session:qoder":
+      case "session:qoder-cn":
       case "session:opencode":
         setActiveView("sessions");
         return;
@@ -304,6 +312,8 @@ export function App() {
       case "session:codex": await sessionRecords.refresh("codex"); return;
       case "session:claude": await sessionRecords.refresh("claude"); return;
       case "session:grok": await sessionRecords.refresh("grok"); return;
+      case "session:qoder": await sessionRecords.refresh("qoder"); return;
+      case "session:qoder-cn": await sessionRecords.refresh("qoder-cn"); return;
       case "session:opencode": await openCodeSessions.refresh(); return;
       case "codex:marketplaces": await codex.extensions.readMarketplaces(); return;
       case "codex:plugins": await codex.extensions.readPlugins(); return;
@@ -446,6 +456,8 @@ export function App() {
               claude: requireCoverageItem(coverageById, "session:claude"),
               opencode: requireCoverageItem(coverageById, "session:opencode"),
               grok: requireCoverageItem(coverageById, "session:grok"),
+              qoder: requireCoverageItem(coverageById, "session:qoder"),
+              "qoder-cn": requireCoverageItem(coverageById, "session:qoder-cn"),
             }}
             onShowHistory={showHistoryRecord}
           />

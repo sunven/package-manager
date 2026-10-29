@@ -1,6 +1,6 @@
 # DevScope
 
-一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv 和 FVM 的包、缓存/仓库占用与维护信号，清理 Rust / Maven / Node 项目派生数据，以及查看 VS Code 占用和 Codex、Claude Code、OpenCode、Grok Build 会话记录。
+一个个人自用的 Tauri 桌面工具，用来查看本机 npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv 和 FVM 的包、缓存/仓库占用与维护信号，清理 Rust / Maven / Node 项目派生数据，以及查看 VS Code 占用和 Codex、Claude Code、OpenCode、Grok Build、Qoder、Qoder CN 会话记录。
 
 当前目标是 **observe first, then act**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；其中 8 个管理器支持确认后执行 allowlisted 的缓存清理。
 
@@ -136,6 +136,8 @@ Codex 与 Claude Code 来源分别扫描、搜索、筛选和移除。搜索及�
 Grok Build 来源读取当前 `GROK_HOME`（默认 `~/.grok`）下所有项目的本机会话摘要，支持标题／工作目录搜索、年月分组、大小排序，以及在 macOS Terminal 中继续指定会话。最后活动时间使用 `last_active_at`；原工作目录或恢复日志缺失、ID 无法精确继续时说明原因，保留可识别记录的其他操作。
 
 Grok 支持单条、多选和整个来源的 7／30 天移除。确认后逐条复核身份、运行状态、文件占用与适用的年龄条件，再将整条会话目录移入废纸篓。Grok Build 或会话宿主仍在运行、检测结果无法确认时暂停移除；普通单条失败继续，运行状态变化则停止剩余项，分别报告已移入、跳过、失败和未执行。独立关联记录不自动连带，外部搜索索引与远端副本保留，旧片段仍可能出现在 Grok 搜索中。基于 Grok Build 1.0.70 的本机格式验证，前置检查不构成与 Grok 启动之间的原子互斥。详见 [ADR-0030](./docs/adr/0030-grok-session-removal-preserves-local-recovery-boundary.md)。
+
+Qoder 国际版与 Qoder CN（国内版）是两个独立来源，分别读取 `~/.qoder/projects` 与 `~/.qoder-cn/projects`。一条记录由转写文件与同名配套目录（本地状态、子代理对话）共同构成；只有配套目录而没有转写的记录以「未命名会话」显示并同样可移除。刷新诊断日志不属于会话记录，不展示也不移除。来源支持搜索、使用状态筛选、年月分组、大小排序，以及在 macOS Terminal 中按原工作目录执行 `qodercli --resume`（国内版 `qoderclicn --resume`）继续会话。单条、多选和整个来源的 7／30 天移除都会把转写与配套目录一起移入废纸篓；CLI 运行中未被进程打开的记录仍可移除，使用中的记录保留。详见 [ADR-0034](./docs/adr/0034-qoder-editions-are-two-sources-and-records-include-sidecar-data.md)。
 
 OpenCode 来源通过已登记且运行中的本地服务分页读取元数据，不启动服务、不读取消息正文，也不管理配置。它全局展示各项目的活动与归档会话及父子关系，按最后活动时间的年月分组并可折叠；进入页面时读取，可手动刷新。官方元数据没有单条记录大小，因此不提供按大小排序。打开前复核会话仍存在，再通过 macOS Terminal 的 `opencode attach` 连接指定会话和工作目录，不创建分支或解除归档。单条及明确选择的批量删除通过 OpenCode 服务执行，连带删除子会话；删除前核对运行状态，确认框说明此操作不进入废纸篓且无法恢复。
 

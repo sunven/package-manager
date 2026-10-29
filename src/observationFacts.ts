@@ -2,7 +2,7 @@ import type { EnvironmentInspection } from "./environmentInspection";
 import type { ManagerScanState } from "./managerScanning";
 import type { ProjectCleanupView } from "./projectCleanupWorkflow";
 import type { ManagerSnapshot } from "./types";
-import type { OpenCodeSessionScan, SessionSourceScan } from "./sessionRecords";
+import type { OpenCodeSessionScan, SessionSourceId, SessionSourceScan } from "./sessionRecords";
 import type { VscodeStorageScan } from "./vscodeStorage";
 import { recordObservation, type ObservationCompleteness, type ObservationScope } from "./observationLedger";
 import type { ObservationItemId } from "./observationItems";
@@ -189,8 +189,16 @@ export function vscodeObservationFacts(
   };
 }
 
+const sessionScopeLabels: Record<SessionSourceId, string> = {
+  codex: "Codex 会话目录",
+  claude: "Claude 会话目录",
+  grok: "Grok Build 会话目录",
+  qoder: "Qoder 会话目录",
+  "qoder-cn": "Qoder CN 会话目录",
+};
+
 export function sessionObservationFacts(
-  source: "codex" | "claude" | "grok",
+  source: SessionSourceId,
   scan: SessionSourceScan | null,
   scanning: boolean,
   error: string | null,
@@ -200,9 +208,9 @@ export function sessionObservationFacts(
     : scan?.status === "Failed"
       ? { outcome: "failed" as const, reason: scan.message ?? "会话记录读取失败" }
       : null;
+  const label = sessionScopeLabels[source];
   let success: ObservationFacts["success"] = null;
   if (scan && scan.status !== "Failed") {
-    const label = source === "grok" ? "Grok Build 会话目录" : source === "codex" ? "Codex 会话目录" : "Claude 会话目录";
     success = {
       at: null,
       scope: `session:${source}:${scan.directory}`,
@@ -219,7 +227,7 @@ export function sessionObservationFacts(
     currentScope: scan?.directory
       ? {
           key: `session:${source}:${scan.directory}`,
-          label: source === "grok" ? "Grok Build 会话目录" : source === "codex" ? "Codex 会话目录" : "Claude 会话目录",
+          label,
         }
       : null,
   };

@@ -31,6 +31,8 @@ const ITEM_IDS: &[&str] = &[
     "session:claude",
     "session:opencode",
     "session:grok",
+    "session:qoder",
+    "session:qoder-cn",
     "codex:marketplaces",
     "codex:plugins",
     "codex:hooks",
@@ -217,6 +219,25 @@ pub(crate) fn scopes(enabled_managers: &[ManagerId]) -> BTreeMap<String, Option<
                 label: "Grok Build 会话目录".into(),
             }),
         );
+    }
+    for (id, edition) in [
+        ("session:qoder", crate::qoder_sessions::QoderEdition::International),
+        ("session:qoder-cn", crate::qoder_sessions::QoderEdition::Cn),
+    ] {
+        if let Ok(directory) = edition.projects_dir() {
+            scopes.insert(
+                id.into(),
+                Some(ObservationScope {
+                    key: format!("{id}:{}", directory.display()),
+                    label: match edition {
+                        crate::qoder_sessions::QoderEdition::International => {
+                            "Qoder 会话目录".into()
+                        }
+                        crate::qoder_sessions::QoderEdition::Cn => "Qoder CN 会话目录".into(),
+                    },
+                }),
+            );
+        }
     }
     if let Ok(home) = codex_plugins::resolve_home() {
         let config = home.join("config.toml");

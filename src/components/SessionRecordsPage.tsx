@@ -58,7 +58,13 @@ const sources = [
   { key: "codex" as const, label: "Codex", empty: "没有 Codex 会话记录", fallback: "~/.codex/sessions" },
   { key: "claude" as const, label: "Claude", empty: "没有 Claude 会话记录", fallback: "~/.claude/projects" },
   { key: "grok" as const, label: "Grok Build", empty: "没有 Grok Build 会话记录", fallback: "~/.grok/sessions" },
+  { key: "qoder" as const, label: "Qoder（国际版）", empty: "没有 Qoder 会话记录", fallback: "~/.qoder/projects" },
+  { key: "qoder-cn" as const, label: "Qoder CN（国内版）", empty: "没有 Qoder CN 会话记录", fallback: "~/.qoder-cn/projects" },
 ];
+
+function openableSource(key: SessionSourceId) {
+  return key === "grok" || key === "qoder" || key === "qoder-cn";
+}
 
 const selectableSession = (record: SessionRecord) => !record.inUse;
 const selectableOpenCode = () => true;
@@ -109,8 +115,8 @@ export function SessionRecordsPage({
     ? openCode.operation.target.roots[0]?.id ?? null
     : null;
   const openCodeDeleteResult = openCode.outcome;
-  const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time", grok: "time" });
-  const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" }, grok: { query: "", usage: "all" } });
+  const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time", grok: "time", qoder: "time", "qoder-cn": "time" });
+  const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" }, grok: { query: "", usage: "all" }, qoder: { query: "", usage: "all" }, "qoder-cn": { query: "", usage: "all" } });
   const sections = useMemo(() => (scan ? sessionSections(scan, sorts, filters) : null), [scan, sorts, filters]);
   const [activeSource, setActiveSource] = useState<SessionSourceId | "opencode">(initialSource);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -131,6 +137,23 @@ export function SessionRecordsPage({
     isSelectable: selectableSession,
     completedIds: records.outcome?.source === "grok" ? completedSessionIds : null,
   });
+  const qoderSelection = useSessionSelection({
+    records: scan?.qoder?.records ?? null,
+    isSelectable: selectableSession,
+    completedIds: records.outcome?.source === "qoder" ? completedSessionIds : null,
+  });
+  const qoderCnSelection = useSessionSelection({
+    records: scan?.["qoder-cn"]?.records ?? null,
+    isSelectable: selectableSession,
+    completedIds: records.outcome?.source === "qoder-cn" ? completedSessionIds : null,
+  });
+  const selections = {
+    codex: codexSelection,
+    claude: claudeSelection,
+    grok: grokSelection,
+    qoder: qoderSelection,
+    "qoder-cn": qoderCnSelection,
+  };
   const openCodeSelection = useSessionSelection({
     records: openCode.scan?.records ?? null,
     isSelectable: selectableOpenCode,
@@ -138,10 +161,10 @@ export function SessionRecordsPage({
   });
 
   return (
-    <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || scanningSources.grok || openCodeScanning}>
+    <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || scanningSources.grok || scanningSources.qoder || scanningSources["qoder-cn"] || openCodeScanning}>
       <PageHeader
         title="会话记录"
-        description="按来源查看 Codex、Claude、Grok Build 与 OpenCode 的本机会话；移除前会复核身份与运行状态。"
+        description="按来源查看 Codex、Claude、Grok Build、Qoder、Qoder CN 与 OpenCode 的本机会话；移除前会复核身份与运行状态。"
       />
       {error ? (
         <Alert variant="destructive">
@@ -233,6 +256,9 @@ export function SessionRecordsPage({
           <p className="shrink-0 text-sm text-foreground/80">清空废纸篓前可恢复记录；移入废纸篓不代表磁盘空间立即释放。</p>
           {pending?.source === "grok" ? (
             <p className="shrink-0 text-sm text-foreground/80">整条本机会话目录会移入废纸篓。搜索索引与远端副本保留，Grok 搜索中仍可能出现旧片段。独立关联记录不会自动连带移除，指向原记录的引用可能失效。执行前及每条移除前会复核 Grok Build 已退出。</p>
+          ) : null}
+          {pending?.source === "qoder" || pending?.source === "qoder-cn" ? (
+            <p className="shrink-0 text-sm text-foreground/80">一条记录的转写与配套目录会一起移入废纸篓；CLI 运行中未被进程打开的记录仍可移除。诊断日志不在操作范围内。</p>
           ) : null}
           <AlertDialogFooter className="shrink-0">
             <AlertDialogCancel asChild>
@@ -382,7 +408,7 @@ export function SessionRecordsPage({
         {sources.map((source) => {
           const data = scan?.[source.key];
           const view = sections?.[source.key];
-          const selection = source.key === "codex" ? codexSelection : source.key === "grok" ? grokSelection : claudeSelection;
+          const selection = selections[source.key];
           return (
             <TabsContent className="min-w-0" key={source.key} value={source.key}>
               <SourceSection
@@ -399,8 +425,8 @@ export function SessionRecordsPage({
                 fallbackPath={source.fallback}
                 homeDirectory={homeDirectory}
                 label={source.label}
-                onOpen={source.key === "grok" ? records.openGrokSession : undefined}
-                openingId={source.key === "grok" ? records.openingGrokId : null}
+                onOpen={openableSource(source.key) ? (record) => records.openSession(source.key, record) : undefined}
+                openingId={records.openingSession?.source === source.key ? records.openingSession.id : null}
                 nowMs={currentTime}
                 onClearSelection={() => selection.clear()}
                 onRequestAgeRemoval={(days, count) => {
@@ -419,7 +445,7 @@ export function SessionRecordsPage({
                 onRefresh={() => onRefresh(source.key)}
                 onSortChange={(next) => setSorts((current) => ({ ...current, [source.key]: next }))}
                 onToggle={(groupKey) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: !current[`${source.key}:${groupKey}`] }))}
-                removing={removing || Boolean(records.openingGrokId)}
+                removing={removing || Boolean(records.openingSession)}
                 scanning={scanningSources[source.key]}
                 selectedIds={selection.selectedIds}
                 sort={sorts[source.key]}
@@ -707,6 +733,7 @@ function SourceSection({
 }) {
   const [openError, setOpenError] = useState<string | null>(null);
   const grok = sourceKey === "grok";
+  const qoder = sourceKey === "qoder" || sourceKey === "qoder-cn";
   const blockedReason = grok ? source?.status === "Failed" ? "请先成功读取 Grok Build 会话记录。" : source?.removalBlockedReason : null;
   const mutationBlocked = removing || (grok && (scanning || Boolean(blockedReason)));
   const records = useMemo(() => view?.groups.flatMap((group) => group.records) ?? [], [view]);
@@ -795,7 +822,12 @@ function SourceSection({
           <p>移除只把本机会话目录移入废纸篓；外部搜索索引、远端副本及未选中的独立关联记录保留。</p>
         </div>
       ) : null}
-      {openError ? <Alert variant="destructive"><AlertTitle>无法继续 Grok Build 会话</AlertTitle><AlertDescription>{openError}</AlertDescription></Alert> : null}
+      {qoder ? (
+        <div className="space-y-1 border-b px-3 py-2 text-xs text-muted-foreground">
+          <p>移除会把一条记录的转写与配套目录一起移入废纸篓；使用中的记录会跳过，CLI 运行中未被进程打开的记录仍可移除。</p>
+        </div>
+      ) : null}
+      {openError ? <Alert variant="destructive"><AlertTitle>无法继续 {label} 会话</AlertTitle><AlertDescription>{openError}</AlertDescription></Alert> : null}
       <CardContent className="flex flex-col gap-2 p-3">
         <p className="text-xs text-muted-foreground" id={`${sourceKey}-age-removal-help`}>按天数移除以最后活动时间为准，作用于整个 {label} 来源，不受搜索和状态筛选限制。使用中的记录会跳过。</p>
         <p className="text-xs text-muted-foreground" id={ageEligibilityId} role="status">{!source ? "读取会话记录后显示当前符合年龄条件的数量。" : eligibleAge7 === 0 && eligibleAge30 === 0 ? `当前没有符合 7 天或 30 天门槛的记录；近 7 天 ${recentAge7Count} 条、近 30 天 ${recentAge30Count} 条未达门槛` : eligibleAge7 === 0 ? `当前没有符合 7 天门槛的记录；近 7 天 ${recentAge7Count} 条未达门槛` : eligibleAge30 === 0 ? `当前没有符合 30 天门槛的记录；近 30 天 ${recentAge30Count} 条未达门槛` : `当前符合年龄门槛：7 天 ${eligibleAge7} 条、30 天 ${eligibleAge30} 条`}{inUseCount ? `；${inUseCount} 条使用中的记录会跳过` : ""}{unknownActivityCount ? `；${unknownActivityCount} 条缺少最后活动时间，无法按年龄判断` : ""}。</p>
@@ -900,7 +932,7 @@ function SourceSection({
                         </span>
                         <span className="flex flex-wrap items-center justify-end gap-2">
                           {onOpen ? <Button
-                            aria-label={`在 Grok Build 中继续 ${record.title}`}
+                            aria-label={`在 ${label} 中继续 ${record.title}`}
                             aria-describedby={record.grok?.resumeError ? `grok-resume-${encodeURIComponent(record.id)}` : undefined}
                             disabled={removing || scanning || source?.status === "Failed" || Boolean(record.grok?.resumeError)}
                             onClick={async () => { setOpenError(null); setOpenError(await onOpen(record)); }}

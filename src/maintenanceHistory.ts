@@ -127,7 +127,7 @@ export interface SessionRemovalItemSnapshot {
 export interface SessionTrashDetail {
   kind: "sessionTrash";
   scope: {
-    source: "codex" | "claude" | "grok";
+    source: "codex" | "claude" | "grok" | "qoder" | "qoder-cn";
     mode: SessionRemovalMode;
     days: number | null;
     confirmedCount: number | null;
@@ -194,7 +194,7 @@ export interface SummarySubject {
   managerId?: ManagerId;
   target?: string;
   rootPath?: string;
-  source?: "codex" | "claude" | "grok" | "opencode" | "vscode";
+  source?: "codex" | "claude" | "grok" | "opencode" | "qoder" | "qoder-cn" | "vscode";
   mode?: SessionRemovalMode;
   targetCount: number;
 }
@@ -269,6 +269,16 @@ const sessionModeLabels: Record<SessionRemovalMode, string> = {
   olderThan: "按年龄",
 };
 
+const sessionSourceLabels: Record<NonNullable<SummarySubject["source"]>, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  grok: "Grok Build",
+  opencode: "OpenCode",
+  qoder: "Qoder",
+  "qoder-cn": "Qoder CN",
+  vscode: "VS Code",
+};
+
 export function maintenanceRecordTitle(record: Pick<MaintenanceRecordSummary, "domain" | "operation" | "subject">) {
   if (record.domain === "manager" && record.subject.managerId) {
     return `${managerLabels[record.subject.managerId]} · ${maintenanceOperationLabels[record.operation]}${
@@ -282,9 +292,9 @@ export function maintenanceRecordTitle(record: Pick<MaintenanceRecordSummary, "d
     return "VS Code 工作区存储移除";
   }
   if (record.domain === "sessionRecord") {
-    const source = record.subject.source === "grok" ? "Grok Build" : record.subject.source === "opencode" ? "OpenCode" : record.subject.source === "claude" ? "Claude Code" : "Codex";
+    const source = record.subject.source ? `${sessionSourceLabels[record.subject.source]} ` : "";
     const mode = record.subject.mode ? ` · ${sessionModeLabels[record.subject.mode]}` : "";
-    return `${source} 会话记录${record.operation === "deletePermanently" ? "永久删除" : "移除"}${mode}`;
+    return `${source}会话记录${record.operation === "deletePermanently" ? "永久删除" : "移除"}${mode}`;
   }
   return maintenanceDomainLabels[record.domain];
 }

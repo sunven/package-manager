@@ -19,6 +19,10 @@ pub(crate) struct SessionRecordScan {
     pub claude: SessionSourceScan,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grok: Option<SessionSourceScan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qoder: Option<SessionSourceScan>,
+    #[serde(rename = "qoder-cn", skip_serializing_if = "Option::is_none")]
+    pub qoder_cn: Option<SessionSourceScan>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -62,6 +66,12 @@ pub(crate) fn scan_default() -> Result<SessionRecordScan, String> {
         codex: scan_source(codex_sessions_dir(), RecordFormat::Codex),
         claude: scan_source(claude_projects_dir(), RecordFormat::Claude),
         grok: Some(crate::grok_sessions::scan_default()),
+        qoder: Some(crate::qoder_sessions::scan_default(
+            crate::qoder_sessions::QoderEdition::International,
+        )),
+        qoder_cn: Some(crate::qoder_sessions::scan_default(
+            crate::qoder_sessions::QoderEdition::Cn,
+        )),
     })
 }
 
@@ -73,6 +83,12 @@ pub(crate) fn scan_source_default(source: SessionSourceKind) -> Result<SessionSo
         SessionSourceKind::Codex => scan_source(codex_sessions_dir(), RecordFormat::Codex),
         SessionSourceKind::Claude => scan_source(claude_projects_dir(), RecordFormat::Claude),
         SessionSourceKind::Grok => crate::grok_sessions::scan_default(),
+        SessionSourceKind::Qoder => crate::qoder_sessions::scan_default(
+            crate::qoder_sessions::QoderEdition::International,
+        ),
+        SessionSourceKind::QoderCn => {
+            crate::qoder_sessions::scan_default(crate::qoder_sessions::QoderEdition::Cn)
+        }
     })
 }
 
@@ -162,6 +178,8 @@ pub(crate) fn list_session_sources(
         codex: source_or_failure(codex_dir, is_open, RecordFormat::Codex),
         claude: source_or_failure(claude_dir, is_open, RecordFormat::Claude),
         grok: None,
+        qoder: None,
+        qoder_cn: None,
     }
 }
 
@@ -171,6 +189,9 @@ pub(crate) enum SessionSourceKind {
     Codex,
     Claude,
     Grok,
+    Qoder,
+    #[serde(rename = "qoder-cn")]
+    QoderCn,
 }
 
 #[derive(Debug, Default, Serialize, PartialEq, Eq)]
@@ -266,6 +287,9 @@ pub(crate) fn remove_default(
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
         SessionSourceKind::Grok => return Err("Grok Build 移除需要已确认的来源范围".into()),
+        SessionSourceKind::Qoder | SessionSourceKind::QoderCn => {
+            return Err("Qoder 移除需要已确认的来源范围".into())
+        }
     };
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
@@ -295,6 +319,9 @@ pub(crate) fn remove_older_default_with_reporter(
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
         SessionSourceKind::Grok => return Err("Grok Build 移除需要已确认的来源范围".into()),
+        SessionSourceKind::Qoder | SessionSourceKind::QoderCn => {
+            return Err("Qoder 移除需要已确认的来源范围".into())
+        }
     };
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
@@ -307,6 +334,9 @@ pub(crate) fn remove_older_default_with_reporter(
         SessionSourceKind::Codex => RecordFormat::Codex,
         SessionSourceKind::Claude => RecordFormat::Claude,
         SessionSourceKind::Grok => return Err("Grok Build 使用独立的目录记录策略".into()),
+        SessionSourceKind::Qoder | SessionSourceKind::QoderCn => {
+            return Err("Qoder 使用独立的记录策略".into())
+        }
     };
     Ok(remove_older_than_with_reporter(
         &directory,
@@ -479,6 +509,9 @@ pub(crate) fn remove_selected_default_with_reporter(
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
         SessionSourceKind::Grok => return Err("Grok Build 移除需要已确认的来源范围".into()),
+        SessionSourceKind::Qoder | SessionSourceKind::QoderCn => {
+            return Err("Qoder 移除需要已确认的来源范围".into())
+        }
     };
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
@@ -627,8 +660,23 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn move_path_to_trash(path: &Path) -> Result<(), String> {
-    let quoted = apple_script_string(&path.to_string_lossy());
-    let script = format!("tell application \"Finder\" to delete POSIX file {quoted}");
+    move_paths_to_trash(std::slice::from_ref(&path.to_path_buf()))
+}
+
+pub(crate) fn move_paths_to_trash(paths: &[PathBuf]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let items = paths
+        .iter()
+        .map(|path| format!("POSIX file {}", apple_script_string(&path.to_string_lossy())))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let script = if paths.len() == 1 {
+        format!("tell application \"Finder\" to delete {items}")
+    } else {
+        format!("tell application \"Finder\" to delete {{{items}}}")
+    };
     let output = Command::new("osascript")
         .arg("-e")
         .arg(script)
@@ -1009,7 +1057,7 @@ fn truncate_chars(text: &str, limit: usize) -> String {
     truncated
 }
 
-fn open_files_under(root: &Path) -> Result<HashSet<PathBuf>, String> {
+pub(crate) fn open_files_under(root: &Path) -> Result<HashSet<PathBuf>, String> {
     let output = Command::new("lsof")
         .args(["-Fn", "-n", "-P", "+D"])
         .arg(root)

@@ -35,11 +35,17 @@ export type SessionRecordScan = {
   codex: SessionSourceScan;
   claude: SessionSourceScan;
   grok?: SessionSourceScan;
+  qoder?: SessionSourceScan;
+  "qoder-cn"?: SessionSourceScan;
 };
 
-export type SessionSourceId = "codex" | "claude" | "grok";
+export type SessionSourceId = "codex" | "claude" | "grok" | "qoder" | "qoder-cn";
 
 export function formatSessionRecordId(source: SessionSourceId | undefined, id: string): string {
+  if (source === "qoder" || source === "qoder-cn") {
+    const separator = id.lastIndexOf("/");
+    return separator < 0 ? id : id.slice(separator + 1);
+  }
   if (source !== "grok") return id;
   const separator = id.indexOf("/");
   if (separator < 0) return id;
@@ -264,6 +270,10 @@ export function sessionSections(
     codex: sectionView(scan.codex, mode("codex"), filters.codex),
     claude: sectionView(scan.claude, mode("claude"), filters.claude),
     grok: scan.grok ? sectionView(scan.grok, mode("grok"), filters.grok) : undefined,
+    qoder: scan.qoder ? sectionView(scan.qoder, mode("qoder"), filters.qoder) : undefined,
+    "qoder-cn": scan["qoder-cn"]
+      ? sectionView(scan["qoder-cn"], mode("qoder-cn"), filters["qoder-cn"])
+      : undefined,
   };
 }
 
