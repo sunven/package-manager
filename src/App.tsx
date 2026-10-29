@@ -398,10 +398,6 @@ export function App() {
       <div className="telemetry-view-stage" data-view={activeView}>
         {activeView === "plugins" ? (
           <div className="view-grid">
-            <PageHeader
-              title="Codex"
-              description="管理当前 Codex 目录的插件市场、Hooks 与 Skills；写入前会说明影响范围。"
-            />
             <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
               <TabsList aria-label="Codex 管理视图">
                 <TabsTrigger value="marketplaces" disabled={codex.locked}>插件市场</TabsTrigger>

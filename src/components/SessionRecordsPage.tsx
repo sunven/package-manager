@@ -54,7 +54,7 @@ import { useSessionSelection } from "../hooks/useSessionSelection";
 import type { ObservationCoverageItem } from "../observationCoverage";
 import { relativeObservationTime } from "../observationCoverage";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, PageHeader, Panel, RefreshNotice, StatCard } from "./ui";
+import { EmptyState, Panel, RefreshNotice, StatCard } from "./ui";
 
 const sources = [
   { key: "codex" as const, label: "Codex", empty: "没有 Codex 会话记录", fallback: "~/.codex/sessions" },
@@ -164,10 +164,6 @@ export function SessionRecordsPage({
 
   return (
     <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || scanningSources.grok || scanningSources.qoder || scanningSources["qoder-cn"] || openCodeScanning}>
-      <PageHeader
-        title="会话记录"
-        description="按来源查看 Codex、Claude、Grok Build、Qoder、Qoder CN 与 OpenCode 的本机会话；移除前会复核身份与运行状态。"
-      />
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>会话记录读取失败</AlertTitle>
