@@ -209,7 +209,7 @@ describe("session selection boundaries", () => {
     const month = screen.getByRole("button", { name: /1970年1月/ });
     fireEvent.click(month);
     expect(screen.queryByRole("checkbox", { name: "选择 Parent session" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "按最后活动时间" }));
+    fireEvent.click(screen.getByRole("button", { name: /1970年1月/ }));
     expect(screen.getByRole("checkbox", { name: "选择 Parent session" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "按大小" })).toBeNull();
     fireEvent.change(screen.getByRole("searchbox", { name: "搜索 OpenCode 会话" }), { target: { value: "no matches" } });
@@ -589,5 +589,62 @@ describe("session selection boundaries", () => {
     await waitFor(() => expect(screen.getByText(/移除未能执行/)).toBeTruthy());
     expect(screen.getByText(/无法读取使用状态/)).toBeTruthy();
     expect(screen.queryByText(/失败 1 条/)).toBeNull();
+  });
+});
+
+describe("session project grouping", () => {
+  const sortByProject = () => fireEvent.click(screen.getByRole("button", { name: "按项目" }));
+
+  it("groups sessions by project, collapsed by default and expandable", async () => {
+    await setup();
+    sortByProject();
+    expect(screen.queryByRole("checkbox", { name: "选择 Alpha project" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "选择 Beta project" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^alpha/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^beta/ })).toBeTruthy();
+    expect(screen.getByText("没有工作目录")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "按大小" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /^alpha/ }));
+    expect(screen.getByRole("checkbox", { name: "选择 Alpha project" })).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: "选择 Beta project" })).toBeNull();
+  });
+
+  it("auto-expands matching projects during search and re-collapses them when cleared", async () => {
+    await setup();
+    sortByProject();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "beta" } });
+    expect(screen.queryByRole("button", { name: /^alpha/ })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "选择 Beta project" })).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
+    expect(screen.queryByRole("checkbox", { name: "选择 Beta project" })).toBeNull();
+  });
+
+  it("keeps a manually collapsed project collapsed while searching", async () => {
+    await setup();
+    sortByProject();
+    fireEvent.click(screen.getByRole("button", { name: /^beta/ }));
+    expect(screen.getByRole("checkbox", { name: "选择 Beta project" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^beta/ }));
+    expect(screen.queryByRole("checkbox", { name: "选择 Beta project" })).toBeNull();
+
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Beta" } });
+    expect(screen.queryByRole("checkbox", { name: "选择 Beta project" })).toBeNull();
+  });
+
+  it("groups OpenCode sessions by project and auto-expands search matches", async () => {
+    await setup({ initialSource: "opencode", openCodeScan });
+    fireEvent.click(screen.getByRole("button", { name: "按项目" }));
+    expect(screen.getByRole("button", { name: /^subproject/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^project\b/ })).toBeTruthy();
+    expect(screen.queryByRole("checkbox", { name: "选择 Parent session" })).toBeNull();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索 OpenCode 会话" }), { target: { value: "Parent" } });
+    expect(screen.getByRole("checkbox", { name: "选择 Parent session" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^subproject/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "按时间" }));
+    expect(screen.getByRole("button", { name: /1970年1月/ })).toBeTruthy();
   });
 });

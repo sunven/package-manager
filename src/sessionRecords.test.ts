@@ -46,6 +46,20 @@ describe("session record grouping", () => {
     ]);
   });
 
+  it("groups OpenCode sessions by project with the latest projects first", () => {
+    const base: OpenCodeSessionRecord = { id: "base", title: "Base", lastActivityMs: 1, parentId: null, parentTitle: null, archived: false, workingDirectory: "/work" };
+    const groups = groupOpenCodeSessions([
+      { ...base, id: "alpha-old", title: "Alpha old", workingDirectory: "/work/alpha", lastActivityMs: 10 },
+      { ...base, id: "beta", title: "Beta", workingDirectory: "/work/beta", lastActivityMs: 20 },
+      { ...base, id: "alpha-new", title: "Alpha new", workingDirectory: "/work/alpha", lastActivityMs: 30 },
+    ], "project");
+
+    expect(groups.map((group) => [group.label, group.path, group.lastActivityMs, group.records.map(({ id }) => id)])).toEqual([
+      ["alpha", "/work/alpha", 30, ["alpha-new", "alpha-old"]],
+      ["beta", "/work/beta", 20, ["beta"]],
+    ]);
+  });
+
   it("filters OpenCode sessions by title, working directory, and archive state", () => {
     const records: OpenCodeSessionRecord[] = [
       { id: "older", title: "Project setup", lastActivityMs: 10, workingDirectory: "/work/alpha", archived: false, parentId: null, parentTitle: null },
@@ -92,6 +106,28 @@ describe("session record grouping", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ key: "size", label: "按大小", count: 4, bytes: 95 });
     expect(groups[0].records.map((item) => item.id)).toEqual(["alpha", "zeta", "small", "busy"]);
+  });
+
+  it("groups by exact working directory and keeps projects with the same name separate", () => {
+    const groups = groupSessionRecords([
+      record({ id: "beta-old", title: "beta old", workingDirectory: "/work/beta", lastActivityMs: localMs(2026, 9, 1), bytes: 10 }),
+      record({ id: "alpha-new", title: "alpha new", workingDirectory: "/work/alpha", lastActivityMs: localMs(2026, 9, 20), bytes: 20 }),
+      record({ id: "beta-new", title: "beta new", workingDirectory: "/work/beta", lastActivityMs: localMs(2026, 9, 10), bytes: 30 }),
+      record({ id: "missing", title: "missing", workingDirectory: null, lastActivityMs: localMs(2026, 9, 25), bytes: 40 }),
+      record({ id: "alpha-old", title: "alpha old", workingDirectory: "/work/alpha/", lastActivityMs: localMs(2026, 8, 1), bytes: 50 }),
+      record({ id: "twin", title: "twin", workingDirectory: "/Users/me/Desktop/run/ds", lastActivityMs: localMs(2026, 7, 1), bytes: 1 }),
+      record({ id: "twin-other", title: "twin other", workingDirectory: "/Users/me/Desktop/wong/ds", lastActivityMs: localMs(2026, 7, 2), bytes: 1 }),
+    ], "project");
+
+    expect(groups.map((group) => [group.label, group.path, group.count, group.bytes, group.records.map((item) => item.id)])).toEqual([
+      ["alpha", "/work/alpha", 1, 20, ["alpha-new"]],
+      ["beta", "/work/beta", 2, 40, ["beta-new", "beta-old"]],
+      ["alpha", "/work/alpha/", 1, 50, ["alpha-old"]],
+      ["ds", "/Users/me/Desktop/wong/ds", 1, 1, ["twin-other"]],
+      ["ds", "/Users/me/Desktop/run/ds", 1, 1, ["twin"]],
+      ["没有工作目录", null, 1, 40, ["missing"]],
+    ]);
+    expect(groups[0].lastActivityMs).toBe(localMs(2026, 9, 20));
   });
 
   it("sorts each source on its own", () => {

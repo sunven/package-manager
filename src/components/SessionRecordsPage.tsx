@@ -1,6 +1,6 @@
 import { Input } from "../../components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
-import { ArrowClockwise as RefreshCw, ArrowSquareOut, Trash } from "@phosphor-icons/react";
+import { ArrowClockwise as RefreshCw, ArrowSquareOut, CaretDown, CaretRight, Trash } from "@phosphor-icons/react";
 import { useMemo, useRef, useState } from "react";
 import {
   AlertDialog,
@@ -36,6 +36,7 @@ import {
   type OpenCodeSessionFilter,
   type OpenCodeSessionRecord,
   type OpenCodeSessionScan,
+  type OpenCodeSessionSort,
   type SessionUsageFilter,
   selectedRemovalConfirmText,
   selectedRemovalRequest,
@@ -51,6 +52,7 @@ import type { useSessionRecords } from "../hooks/useSessionRecords";
 import type { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { useSessionSelection } from "../hooks/useSessionSelection";
 import type { ObservationCoverageItem } from "../observationCoverage";
+import { relativeObservationTime } from "../observationCoverage";
 import { ObservationState } from "./ObservationState";
 import { EmptyState, PageHeader, Panel, RefreshNotice, StatCard } from "./ui";
 
@@ -444,7 +446,7 @@ export function SessionRecordsPage({
                 onSetRecordSelected={(id, selected) => selection.toggle(id, selected)}
                 onRefresh={() => onRefresh(source.key)}
                 onSortChange={(next) => setSorts((current) => ({ ...current, [source.key]: next }))}
-                onToggle={(groupKey) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: !current[`${source.key}:${groupKey}`] }))}
+                onToggle={(groupKey, nextCollapsed) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: nextCollapsed }))}
                 removing={removing || Boolean(records.openingSession)}
                 scanning={scanningSources[source.key]}
                 selectedIds={selection.selectedIds}
@@ -476,6 +478,7 @@ export function SessionRecordsPage({
             onRefresh={openCode.refresh}
             scan={openCodeScan}
             scanning={openCodeScanning}
+            nowMs={currentTime}
           />
         </TabsContent>
       </Tabs>
@@ -501,6 +504,7 @@ function OpenCodeSection({
   selectedIds,
   deletingId,
   homeDirectory,
+  nowMs,
 }: {
   scan: OpenCodeSessionScan | null;
   scanning: boolean;
@@ -519,13 +523,15 @@ function OpenCodeSection({
   selectedIds: readonly string[];
   deletingId: string | null;
   homeDirectory: string | null;
+  nowMs: number;
 }) {
   const [filter, setFilter] = useState<OpenCodeSessionFilter>({ query: "", archived: "all" });
+  const [sort, setSort] = useState<OpenCodeSessionSort>("time");
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const records = useMemo(() => filterOpenCodeSessions(scan?.records ?? [], filter), [scan, filter]);
-  const groups = useMemo(() => groupOpenCodeSessions(records), [records]);
+  const groups = useMemo(() => groupOpenCodeSessions(records, sort), [records, sort]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedRecords = useMemo(() => records.filter((record) => selectedSet.has(record.id)), [records, selectedSet]);
   const eligibleAge7 = scan?.status === "ready" && scan.activeSessionIds
@@ -552,7 +558,10 @@ function OpenCodeSection({
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2 border-b px-3 py-2">
-        <Button aria-pressed="true" onClick={() => setCollapsed({})} size="sm" type="button" variant="secondary">按最后活动时间</Button>
+        <span aria-label="排序" className="flex gap-1" role="group">
+          <Button aria-pressed={sort === "time"} onClick={() => setSort("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>按时间</Button>
+          <Button aria-pressed={sort === "project"} onClick={() => setSort("project")} size="sm" type="button" variant={sort === "project" ? "secondary" : "outline"}>按项目</Button>
+        </span>
         <Button disabled={scanning || preparing || deletingId !== null} onClick={onRefresh} size="sm" type="button" variant="outline">
           <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
           {scanning ? "读取中" : "刷新"}
@@ -601,16 +610,34 @@ function OpenCodeSection({
       ) : null}
       {records.length ? (
         <div aria-label="OpenCode 会话记录" role="region">
-          {groups.map((group) => (
-            <section className="border-t" key={group.key}>
-              <h3>
-                <button aria-controls={`opencode-month-${group.key}`} aria-expanded={!collapsed[group.key]} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setCollapsed((current) => ({ ...current, [group.key]: !current[group.key] }))} type="button">
-                  <span>{group.label}</span><span className="text-xs text-muted-foreground">{group.records.length} 条 · {collapsed[group.key] ? "展开" : "折叠"}</span>
-                </button>
-              </h3>
-              <ul className="divide-y" hidden={collapsed[group.key]} id={`opencode-month-${group.key}`}>
+          {groups.map((group) => {
+            const projectMode = sort === "project";
+            const isCollapsed = collapsed[group.key] ?? (projectMode && !filter.query.trim());
+            const groupPath = projectMode && group.path ? formatHomePath(group.path, homeDirectory) : null;
+            const groupId = `opencode-group-${encodeURIComponent(group.key)}`;
+            return (
+              <section className="border-t" key={group.key}>
+                <h3>
+                  <button aria-controls={groupId} aria-expanded={!isCollapsed} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setCollapsed((current) => ({ ...current, [group.key]: !isCollapsed }))} type="button">
+                    <span className="flex min-w-0 items-center gap-2">
+                      {isCollapsed ? <CaretRight aria-hidden="true" /> : <CaretDown aria-hidden="true" />}
+                      {projectMode ? (
+                        <span className="grid min-w-0 gap-0.5">
+                          <span className="truncate text-sm font-medium">{group.label}</span>
+                          {groupPath ? <span className="truncate text-xs font-normal text-muted-foreground">{groupPath}</span> : null}
+                        </span>
+                      ) : <span>{group.label}</span>}
+                    </span>
+                    <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                      {group.records.length} 条{projectMode
+                        ? ` · ${group.lastActivityMs == null ? "没有最后活动时间" : relativeObservationTime(group.lastActivityMs, nowMs)}`
+                        : ` · ${isCollapsed ? "展开" : "折叠"}`}
+                    </span>
+                  </button>
+                </h3>
+                <ul className="divide-y" hidden={isCollapsed} id={groupId}>
                 {group.records.map((record) => (
-                  <li className="flex min-w-0 flex-wrap items-start justify-between gap-3 px-4 py-3" key={record.id}>
+                  <li className={`flex min-w-0 flex-wrap items-start justify-between gap-3 py-3 ${projectMode ? "pl-10 pr-4" : "px-4"}`} key={record.id}>
                     <Checkbox
                       aria-label={`选择 ${record.title}`}
                       aria-describedby={openingId !== null || deletingId !== null || scanning || preparing || scan?.status !== "ready" ? "opencode-selection-blocked" : undefined}
@@ -664,7 +691,8 @@ function OpenCodeSection({
                 ))}
               </ul>
             </section>
-          ))}
+            );
+          })}
         </div>
       ) : null}
       {scan?.status !== "ready" || scanning || preparing || deletingId !== null || openingId !== null ? <p className="sr-only" id="opencode-selection-blocked">{scanning ? "正在读取 OpenCode 会话，暂不能选择。" : preparing ? "正在准备删除计划，暂不能选择。" : deletingId !== null ? "正在删除 OpenCode 会话，暂不能选择。" : openingId !== null ? "正在打开会话，暂不能选择。" : scan?.message ?? "OpenCode 服务不可用，暂不能选择。"}</p> : null}
@@ -715,7 +743,7 @@ function SourceSection({
   collapsed: Record<string, boolean>;
   sourceKey: string;
   coverageItem: ObservationCoverageItem;
-  onToggle: (groupKey: string) => void;
+  onToggle: (groupKey: string, collapsed: boolean) => void;
   nowMs: number;
   onSortChange: (sort: SessionSort) => void;
   onClearSelection: () => void;
@@ -786,7 +814,10 @@ function SourceSection({
         <span className="flex max-w-full flex-wrap gap-2">
           <span aria-label="排序" className="flex gap-1" role="group">
             <Button aria-pressed={sort === "time"} onClick={() => onSortChange("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>
-              按最后活动时间
+              按时间
+            </Button>
+            <Button aria-pressed={sort === "project"} onClick={() => onSortChange("project")} size="sm" type="button" variant={sort === "project" ? "secondary" : "outline"}>
+              按项目
             </Button>
             <Button aria-pressed={sort === "size"} onClick={() => onSortChange("size")} size="sm" type="button" variant={sort === "size" ? "secondary" : "outline"}>
               按大小
@@ -879,14 +910,19 @@ function SourceSection({
           </div>
           {view?.groups.map((group) => {
             const collapseKey = `${sourceKey}:${group.key}`;
-            const isCollapsed = collapsed[collapseKey] ?? false;
+            const projectMode = sort === "project";
+            const isCollapsed = collapsed[collapseKey] ?? (projectMode && !filter.query.trim());
+            const groupPath = projectMode && group.path ? formatHomePath(group.path, homeDirectory) : null;
+            const groupAccessibleLabel = projectMode
+              ? `选择${group.label}${groupPath ? `（${groupPath}）` : ""}的可移除会话记录`
+              : `选择${group.label}的可移除会话记录`;
             const groupRemovable = removableSessionRecords(group.records);
             const groupAllSelected = groupRemovable.length > 0 && groupRemovable.every((record) => selectedSet.has(record.id));
             return (
               <section key={collapseKey}>
                 <div className="flex items-center gap-3 border-b px-4 py-2">
                   <Checkbox
-                    aria-label={`选择${group.label}的可移除会话记录`}
+                    aria-label={groupAccessibleLabel}
                     aria-describedby={groupRemovable.length === 0 ? ageEligibilityId : undefined}
                     checked={groupAllSelected}
                     disabled={mutationBlocked || groupRemovable.length === 0}
@@ -895,19 +931,28 @@ function SourceSection({
                   <button
                     aria-expanded={!isCollapsed}
                     className="flex min-h-6 min-w-0 flex-1 items-center justify-between gap-3 text-left"
-                    onClick={() => onToggle(group.key)}
+                    onClick={() => onToggle(group.key, !isCollapsed)}
                     type="button"
                   >
-                    <span className="text-sm font-medium">{group.label}</span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="flex min-w-0 items-center gap-2">
+                      {isCollapsed ? <CaretRight aria-hidden="true" /> : <CaretDown aria-hidden="true" />}
+                      {projectMode ? (
+                        <span className="grid min-w-0 gap-0.5">
+                          <span className="truncate text-sm font-medium">{group.label}</span>
+                          {groupPath ? <span className="truncate text-xs font-normal text-muted-foreground">{groupPath}</span> : null}
+                        </span>
+                      ) : <span className="text-sm font-medium">{group.label}</span>}
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
                       {group.count} 条 · {group.records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}{formatBytes(group.bytes)}
+                      {projectMode ? ` · ${group.lastActivityMs == null ? "没有最后活动时间" : relativeObservationTime(group.lastActivityMs, nowMs)}` : ""}
                     </span>
                   </button>
                 </div>
                 {isCollapsed ? null : (
                   <ul className="divide-y">
                     {group.records.map((record) => (
-                      <li className="grid items-center gap-3 px-4 py-3 sm:grid-cols-[auto_minmax(0,1.4fr)_minmax(0,1fr)_auto]" key={record.id}>
+                      <li className={`grid items-center gap-3 py-3 sm:grid-cols-[auto_minmax(0,1.4fr)_minmax(0,1fr)_auto] ${projectMode ? "pl-10 pr-4" : "px-4"}`} key={record.id}>
                         <Checkbox
                           aria-label={`选择 ${record.title}`}
                           aria-describedby={record.inUse ? `${sourceKey}-in-use-${encodeURIComponent(record.id)}` : undefined}

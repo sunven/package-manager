@@ -119,9 +119,28 @@ export function filterOpenCodeSessions(records: OpenCodeSessionRecord[], filter:
     .sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title));
 }
 
-export function groupOpenCodeSessions(records: OpenCodeSessionRecord[]) {
-  const groups = new Map<string, { key: string; label: string; records: OpenCodeSessionRecord[] }>();
-  for (const record of [...records].sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title))) {
+export function groupOpenCodeSessions(records: OpenCodeSessionRecord[], sort: OpenCodeSessionSort = "time"): OpenCodeSessionGroup[] {
+  const sorted = [...records].sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title));
+  if (sort === "project") {
+    const groups = new Map<string, OpenCodeSessionGroup>();
+    for (const record of sorted) {
+      const key = `project:${record.workingDirectory}`;
+      const group = groups.get(key) ?? {
+        key,
+        label: projectLabel(record.workingDirectory),
+        path: record.workingDirectory,
+        lastActivityMs: record.lastActivityMs,
+        records: [],
+      };
+      group.records.push(record);
+      if (record.lastActivityMs > (group.lastActivityMs ?? 0)) group.lastActivityMs = record.lastActivityMs;
+      groups.set(key, group);
+    }
+    return [...groups.values()].sort((left, right) =>
+      (right.lastActivityMs ?? 0) - (left.lastActivityMs ?? 0) || left.label.localeCompare(right.label) || left.key.localeCompare(right.key));
+  }
+  const groups = new Map<string, OpenCodeSessionGroup>();
+  for (const record of sorted) {
     const key = monthKey(record.lastActivityMs);
     const group = groups.get(key) ?? { key, label: monthLabel(record.lastActivityMs), records: [] };
     group.records.push(record);
@@ -254,11 +273,24 @@ export type SessionRecordGroup = {
   count: number;
   bytes: number;
   records: SessionRecord[];
+  path?: string | null;
+  lastActivityMs?: number | null;
 };
 
 const NO_LAST_ACTIVITY_KEY = "none";
+const NO_PROJECT_KEY = "project:none";
 
-export type SessionSort = "time" | "size";
+export type SessionSort = "time" | "project" | "size";
+
+export type OpenCodeSessionSort = "time" | "project";
+
+export type OpenCodeSessionGroup = {
+  key: string;
+  label: string;
+  records: OpenCodeSessionRecord[];
+  path?: string;
+  lastActivityMs?: number;
+};
 
 export function sessionSections(
   scan: SessionRecordScan,
@@ -292,6 +324,11 @@ function sectionView(source: SessionSourceScan, sort: SessionSort, filter?: Sess
 
 export function groupSessionRecords(records: SessionRecord[], sort: SessionSort = "time"): SessionRecordGroup[] {
   if (sort === "size") return [sizeGroup(records)];
+  if (sort === "project") return projectGroups(records);
+  return monthGroups(records);
+}
+
+function monthGroups(records: SessionRecord[]): SessionRecordGroup[] {
   const groups = new Map<string, SessionRecordGroup>();
   for (const record of records) {
     const key = record.lastActivityMs === null ? NO_LAST_ACTIVITY_KEY : monthKey(record.lastActivityMs);
@@ -308,20 +345,62 @@ export function groupSessionRecords(records: SessionRecord[], sort: SessionSort 
     groups.set(key, group);
   }
 
-  for (const group of groups.values()) {
-    group.records.sort((left, right) => {
-      const leftTime = left.lastActivityMs ?? Number.NEGATIVE_INFINITY;
-      const rightTime = right.lastActivityMs ?? Number.NEGATIVE_INFINITY;
-      if (leftTime !== rightTime) return rightTime - leftTime;
-      return left.title.localeCompare(right.title);
-    });
-  }
+  for (const group of groups.values()) sortGroupRecords(group.records);
 
   return [...groups.values()].sort((left, right) => {
     if (left.key === NO_LAST_ACTIVITY_KEY) return 1;
     if (right.key === NO_LAST_ACTIVITY_KEY) return -1;
     return right.key.localeCompare(left.key);
   });
+}
+
+function projectGroups(records: SessionRecord[]): SessionRecordGroup[] {
+  const groups = new Map<string, SessionRecordGroup>();
+  for (const record of records) {
+    const path = record.workingDirectory;
+    const key = path === null ? NO_PROJECT_KEY : `project:${path}`;
+    const group = groups.get(key) ?? {
+      key,
+      label: path === null ? "没有工作目录" : projectLabel(path),
+      path,
+      lastActivityMs: null,
+      count: 0,
+      bytes: 0,
+      records: [],
+    };
+    group.records.push(record);
+    group.count += 1;
+    group.bytes += record.bytes;
+    if (record.lastActivityMs !== null && record.lastActivityMs > (group.lastActivityMs ?? Number.NEGATIVE_INFINITY)) {
+      group.lastActivityMs = record.lastActivityMs;
+    }
+    groups.set(key, group);
+  }
+
+  for (const group of groups.values()) sortGroupRecords(group.records);
+
+  return [...groups.values()].sort((left, right) => {
+    if (left.key === NO_PROJECT_KEY) return 1;
+    if (right.key === NO_PROJECT_KEY) return -1;
+    const leftTime = left.lastActivityMs ?? Number.NEGATIVE_INFINITY;
+    const rightTime = right.lastActivityMs ?? Number.NEGATIVE_INFINITY;
+    if (leftTime !== rightTime) return rightTime - leftTime;
+    return left.label.localeCompare(right.label) || left.key.localeCompare(right.key);
+  });
+}
+
+function sortGroupRecords(records: SessionRecord[]) {
+  records.sort((left, right) => {
+    const leftTime = left.lastActivityMs ?? Number.NEGATIVE_INFINITY;
+    const rightTime = right.lastActivityMs ?? Number.NEGATIVE_INFINITY;
+    if (leftTime !== rightTime) return rightTime - leftTime;
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function projectLabel(path: string) {
+  const trimmed = path.replace(/\/+$/, "");
+  return trimmed.slice(trimmed.lastIndexOf("/") + 1) || path;
 }
 
 function sizeGroup(records: SessionRecord[]): SessionRecordGroup {
