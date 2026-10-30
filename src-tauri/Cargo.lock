@@ -2612,7 +2612,7 @@ dependencies = [
 
 [[package]]
 name = "package-manager-control-center"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "regex",
