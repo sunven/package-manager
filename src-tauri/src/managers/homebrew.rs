@@ -216,6 +216,7 @@ fn kind_rank(kind: PackageKind) -> u8 {
         PackageKind::UvTool => 9,
         PackageKind::UvPython => 10,
         PackageKind::FlutterVersion => 11,
+        PackageKind::AndroidSdkComponent => 12,
     }
 }
 
@@ -348,7 +349,8 @@ fn attach_homebrew_paths(
             | PackageKind::BunPackage
             | PackageKind::UvTool
             | PackageKind::UvPython
-            | PackageKind::FlutterVersion => {}
+            | PackageKind::FlutterVersion
+            | PackageKind::AndroidSdkComponent => {}
         }
     }
 }
@@ -428,7 +430,8 @@ fn attach_homebrew_actions(packages: &mut [PackageRow]) {
             | PackageKind::BunPackage
             | PackageKind::UvTool
             | PackageKind::UvPython
-            | PackageKind::FlutterVersion => {}
+            | PackageKind::FlutterVersion
+            | PackageKind::AndroidSdkComponent => {}
         }
     }
 }

@@ -7,6 +7,10 @@ export interface SearchResult extends SearchTarget { key: string; name: string; 
 
 export const pathObservationId = (kind: string, path: string) => JSON.stringify([kind, path]);
 
+const managerRank = new Map(managerOrder.map((managerId, index) => [managerId, index]));
+const nameCollator = new Intl.Collator("zh-CN", { numeric: true });
+const versionCollator = new Intl.Collator(undefined, { numeric: true });
+
 export function searchManagers(managers: ManagerId[], snapshots: Partial<Record<ManagerId, ManagerSnapshot>>, query: string): SearchResult[] {
   const needle = query.trim().toLocaleLowerCase();
   if (!needle) return [];
@@ -29,9 +33,17 @@ export function searchManagers(managers: ManagerId[], snapshots: Partial<Record<
         name: path.label, version: "", path: path.path, objectKind: path.kind });
     }
   }
-  const rank = (row: SearchResult) => row.name.toLocaleLowerCase() === needle ? 0 : row.name.toLocaleLowerCase().startsWith(needle) ? 1 : 2;
   return results
-    .sort((a, b) => rank(a) - rank(b) || managerOrder.indexOf(a.managerId) - managerOrder.indexOf(b.managerId) || a.name.localeCompare(b.name, "zh-CN", { numeric: true }) || a.version.localeCompare(b.version, undefined, { numeric: true }));
+    .map((row) => {
+      const name = row.name.toLocaleLowerCase();
+      const rank = name === needle ? 0 : name.startsWith(needle) ? 1 : 2;
+      return { row, rank };
+    })
+    .sort((a, b) => a.rank - b.rank
+      || (managerRank.get(a.row.managerId) ?? 0) - (managerRank.get(b.row.managerId) ?? 0)
+      || nameCollator.compare(a.row.name, b.row.name)
+      || versionCollator.compare(a.row.version, b.row.version))
+    .map(({ row }) => row);
 }
 
 export function locateSearchTarget(target: SearchTarget, snapshot: ManagerSnapshot | undefined): number {

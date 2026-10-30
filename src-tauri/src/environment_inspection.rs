@@ -64,6 +64,7 @@ pub(crate) fn inspect(managers: &[ManagerId]) -> Result<Inspection, String> {
             Bun => &["bun"],
             Uv => &["uv", "python", "python3"],
             Fvm => &["fvm", "flutter", "dart"],
+            AndroidSdk => &["android", "sdkmanager", "java"],
         };
         for name in names {
             programs.entry(name).or_default().push(*manager);

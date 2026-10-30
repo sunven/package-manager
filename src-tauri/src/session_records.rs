@@ -17,6 +17,12 @@ const DAY_MS: i64 = 86_400_000;
 pub(crate) struct SessionRecordScan {
     pub codex: SessionSourceScan,
     pub claude: SessionSourceScan,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grok: Option<SessionSourceScan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qoder: Option<SessionSourceScan>,
+    #[serde(rename = "qoder-cn", skip_serializing_if = "Option::is_none")]
+    pub qoder_cn: Option<SessionSourceScan>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -26,6 +32,8 @@ pub(crate) struct SessionSourceScan {
     pub status: SessionScanStatus,
     pub records: Vec<SessionRecord>,
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removal_blocked_reason: Option<String>,
     pub age_eligible: AgeEligibleCounts,
 }
 
@@ -46,6 +54,8 @@ pub(crate) struct SessionRecord {
     pub working_directory: Option<String>,
     pub bytes: u64,
     pub in_use: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grok: Option<crate::grok_sessions::RecordDetails>,
 }
 
 pub(crate) fn scan_default() -> Result<SessionRecordScan, String> {
@@ -55,6 +65,13 @@ pub(crate) fn scan_default() -> Result<SessionRecordScan, String> {
     Ok(SessionRecordScan {
         codex: scan_source(codex_sessions_dir(), RecordFormat::Codex),
         claude: scan_source(claude_projects_dir(), RecordFormat::Claude),
+        grok: Some(crate::grok_sessions::scan_default()),
+        qoder: Some(crate::qoder_sessions::scan_default(
+            crate::qoder_sessions::QoderEdition::International,
+        )),
+        qoder_cn: Some(crate::qoder_sessions::scan_default(
+            crate::qoder_sessions::QoderEdition::Cn,
+        )),
     })
 }
 
@@ -65,6 +82,13 @@ pub(crate) fn scan_source_default(source: SessionSourceKind) -> Result<SessionSo
     Ok(match source {
         SessionSourceKind::Codex => scan_source(codex_sessions_dir(), RecordFormat::Codex),
         SessionSourceKind::Claude => scan_source(claude_projects_dir(), RecordFormat::Claude),
+        SessionSourceKind::Grok => crate::grok_sessions::scan_default(),
+        SessionSourceKind::Qoder => crate::qoder_sessions::scan_default(
+            crate::qoder_sessions::QoderEdition::International,
+        ),
+        SessionSourceKind::QoderCn => {
+            crate::qoder_sessions::scan_default(crate::qoder_sessions::QoderEdition::Cn)
+        }
     })
 }
 
@@ -101,6 +125,7 @@ fn failed_source(directory: String, message: String) -> SessionSourceScan {
         status: SessionScanStatus::Failed,
         records: Vec::new(),
         message: Some(message),
+        removal_blocked_reason: None,
         age_eligible: AgeEligibleCounts::default(),
     }
 }
@@ -152,6 +177,9 @@ pub(crate) fn list_session_sources(
     SessionRecordScan {
         codex: source_or_failure(codex_dir, is_open, RecordFormat::Codex),
         claude: source_or_failure(claude_dir, is_open, RecordFormat::Claude),
+        grok: None,
+        qoder: None,
+        qoder_cn: None,
     }
 }
 
@@ -160,6 +188,10 @@ pub(crate) fn list_session_sources(
 pub(crate) enum SessionSourceKind {
     Codex,
     Claude,
+    Grok,
+    Qoder,
+    #[serde(rename = "qoder-cn")]
+    QoderCn,
 }
 
 #[derive(Debug, Default, Serialize, PartialEq, Eq)]
@@ -187,6 +219,7 @@ pub(crate) enum SessionRemovalStatus {
     Moved,
     Skipped,
     Failed,
+    NotAttempted,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -196,6 +229,7 @@ pub(crate) enum SessionRemovalReason {
     ActivityChanged,
     ActivityUnknown,
     TrashFailed,
+    RuntimeBlocked,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -213,14 +247,14 @@ pub(crate) enum SessionRemovalProgress {
 }
 
 impl SessionRemovalResult {
-    fn aborted(message: String) -> Self {
+    pub(crate) fn aborted(message: String) -> Self {
         Self {
             operation_error: Some(message),
             ..Self::default()
         }
     }
 
-    fn record(
+    pub(crate) fn record(
         &mut self,
         id: &str,
         status: SessionRemovalStatus,
@@ -231,6 +265,7 @@ impl SessionRemovalResult {
             SessionRemovalStatus::Moved => self.moved += 1,
             SessionRemovalStatus::Skipped => self.skipped += 1,
             SessionRemovalStatus::Failed => self.failed += 1,
+            SessionRemovalStatus::NotAttempted => {}
         }
         if self.message.is_none() && status == SessionRemovalStatus::Failed {
             self.message = message.clone();
@@ -251,6 +286,10 @@ pub(crate) fn remove_default(
     let directory = match source {
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
+        SessionSourceKind::Grok => return Err("Grok Build 移除需要已确认的来源范围".into()),
+        SessionSourceKind::Qoder | SessionSourceKind::QoderCn => {
+            return Err("Qoder 移除需要已确认的来源范围".into())
+        }
     };
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
@@ -279,6 +318,10 @@ pub(crate) fn remove_older_default_with_reporter(
     let directory = match source {
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
+        SessionSourceKind::Grok => return Err("Grok Build 移除需要已确认的来源范围".into()),
+        SessionSourceKind::Qoder | SessionSourceKind::QoderCn => {
+            return Err("Qoder 移除需要已确认的来源范围".into())
+        }
     };
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
@@ -290,6 +333,10 @@ pub(crate) fn remove_older_default_with_reporter(
     let format = match source {
         SessionSourceKind::Codex => RecordFormat::Codex,
         SessionSourceKind::Claude => RecordFormat::Claude,
+        SessionSourceKind::Grok => return Err("Grok Build 使用独立的目录记录策略".into()),
+        SessionSourceKind::Qoder | SessionSourceKind::QoderCn => {
+            return Err("Qoder 使用独立的记录策略".into())
+        }
     };
     Ok(remove_older_than_with_reporter(
         &directory,
@@ -461,6 +508,10 @@ pub(crate) fn remove_selected_default_with_reporter(
     let directory = match source {
         SessionSourceKind::Codex => codex_sessions_dir()?,
         SessionSourceKind::Claude => claude_projects_dir()?,
+        SessionSourceKind::Grok => return Err("Grok Build 移除需要已确认的来源范围".into()),
+        SessionSourceKind::Qoder | SessionSourceKind::QoderCn => {
+            return Err("Qoder 移除需要已确认的来源范围".into())
+        }
     };
     let open_paths = match open_files_under(&directory) {
         Ok(paths) => paths,
@@ -609,8 +660,23 @@ fn normalize_lexical(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn move_path_to_trash(path: &Path) -> Result<(), String> {
-    let quoted = apple_script_string(&path.to_string_lossy());
-    let script = format!("tell application \"Finder\" to delete POSIX file {quoted}");
+    move_paths_to_trash(std::slice::from_ref(&path.to_path_buf()))
+}
+
+pub(crate) fn move_paths_to_trash(paths: &[PathBuf]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let items = paths
+        .iter()
+        .map(|path| format!("POSIX file {}", apple_script_string(&path.to_string_lossy())))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let script = if paths.len() == 1 {
+        format!("tell application \"Finder\" to delete {items}")
+    } else {
+        format!("tell application \"Finder\" to delete {{{items}}}")
+    };
     let output = Command::new("osascript")
         .arg("-e")
         .arg(script)
@@ -654,6 +720,7 @@ fn list_records(
         status: SessionScanStatus::Ready,
         records: Vec::new(),
         message: None,
+        removal_blocked_reason: None,
         age_eligible: AgeEligibleCounts::default(),
     };
     let metadata = match fs::symlink_metadata(directory) {
@@ -701,13 +768,14 @@ fn list_records(
             working_directory: parsed.working_directory,
             bytes: metadata.len(),
             in_use: is_open(&path),
+            grok: None,
         });
     }
     scan.age_eligible = age_eligible_counts(&scan.records, now_ms());
     Ok(scan)
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
@@ -989,7 +1057,7 @@ fn truncate_chars(text: &str, limit: usize) -> String {
     truncated
 }
 
-fn open_files_under(root: &Path) -> Result<HashSet<PathBuf>, String> {
+pub(crate) fn open_files_under(root: &Path) -> Result<HashSet<PathBuf>, String> {
     let output = Command::new("lsof")
         .args(["-Fn", "-n", "-P", "+D"])
         .arg(root)
@@ -1010,7 +1078,7 @@ fn parse_lsof_paths(output: &str) -> HashSet<PathBuf> {
         .collect()
 }
 
-fn parse_rfc3339_millis(value: &str) -> Option<i64> {
+pub(crate) fn parse_rfc3339_millis(value: &str) -> Option<i64> {
     let bytes = value.as_bytes();
     if bytes.len() < 20 {
         return None;
@@ -1813,6 +1881,7 @@ mod tests {
             working_directory: None,
             bytes: 0,
             in_use,
+            grok: None,
         };
         let records = vec![
             record("old", Some(DAY_MS), false),

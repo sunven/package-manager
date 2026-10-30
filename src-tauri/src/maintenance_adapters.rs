@@ -59,6 +59,8 @@ fn session_detail(
     days: Option<u64>,
     confirmed_count: Option<usize>,
     confirmed_records: Option<Vec<SessionRecordSnapshotInput>>,
+    directory: Option<String>,
+    cutoff_ms: Option<i64>,
 ) -> MaintenanceDetail {
     MaintenanceDetail::SessionTrash(SessionTrashDetail {
         scope: SessionTrashScope {
@@ -66,6 +68,8 @@ fn session_detail(
             mode,
             days,
             confirmed_count,
+            directory,
+            cutoff_ms,
             confirmed_records: confirmed_records
                 .map(|records| records.into_iter().map(session_record_snapshot).collect()),
         },
@@ -79,6 +83,8 @@ pub(crate) fn remove_sessions_older_than(
     source: SessionSourceKind,
     days: u64,
     confirmed_count: Option<usize>,
+    directory: Option<String>,
+    cutoff_ms: Option<i64>,
     execute: impl FnOnce(&mut dyn FnMut(&SessionRemovalItem)) -> Result<SessionRemovalResult, String>,
 ) -> Result<Receipt<SessionRemovalResult>, String> {
     run(
@@ -92,6 +98,8 @@ pub(crate) fn remove_sessions_older_than(
                 Some(days),
                 confirmed_count,
                 None,
+                directory,
+                cutoff_ms,
             ),
             before_snapshot_id: None,
         },
@@ -105,6 +113,7 @@ pub(crate) fn remove_session_record(
     history: &MaintenanceHistoryState,
     source: SessionSourceKind,
     confirmed_record: Option<SessionRecordSnapshotInput>,
+    directory: Option<String>,
     execute: impl FnOnce() -> Result<SessionRemovalResult, String>,
 ) -> Result<Receipt<SessionRemovalResult>, String> {
     run(
@@ -118,6 +127,8 @@ pub(crate) fn remove_session_record(
                 None,
                 Some(1),
                 confirmed_record.map(|record| vec![record]),
+                directory,
+                None,
             ),
             before_snapshot_id: None,
         },
@@ -131,6 +142,7 @@ pub(crate) fn remove_sessions_selected(
     history: &MaintenanceHistoryState,
     source: SessionSourceKind,
     confirmed_records: Vec<SessionRecordSnapshotInput>,
+    directory: Option<String>,
     execute: impl FnOnce(&mut dyn FnMut(&SessionRemovalItem)) -> Result<SessionRemovalResult, String>,
 ) -> Result<Receipt<SessionRemovalResult>, String> {
     let confirmed_count = Some(confirmed_records.len());
@@ -145,6 +157,8 @@ pub(crate) fn remove_sessions_selected(
                 None,
                 confirmed_count,
                 Some(confirmed_records),
+                directory,
+                None,
             ),
             before_snapshot_id: None,
         },
@@ -221,8 +235,15 @@ fn finish_session_trash(
             .or_else(|| result.operation_error.clone())
             .unwrap_or_else(|| {
                 format!(
-                    "已移入 {} 项，跳过 {} 项，失败 {} 项。",
-                    result.moved, result.skipped, result.failed
+                    "已移入 {} 项，跳过 {} 项，失败 {} 项，未执行 {} 项。",
+                    result.moved,
+                    result.skipped,
+                    result.failed,
+                    result
+                        .items
+                        .iter()
+                        .filter(|item| formats_item_status(&item.status, "NotAttempted"))
+                        .count()
                 )
             }),
     );
@@ -246,7 +267,11 @@ fn session_execution(result: &SessionRemovalResult) -> ExecutionSummary {
         result.moved as usize,
         result.failed as usize,
         result.skipped as usize,
-        0,
+        result
+            .items
+            .iter()
+            .filter(|item| formats_item_status(&item.status, "NotAttempted"))
+            .count(),
     )
 }
 
@@ -808,6 +833,31 @@ pub(crate) fn uninstall_summary(
                     .or_else(|| run.message.clone())
                     .unwrap_or_else(|| run.stderr.clone()),
             ),
+            None,
+        )
+    }
+}
+
+pub(crate) fn sdk_component_uninstall_summary(
+    run: &MaintenanceRunPreview,
+) -> (ExecutionSummary, String, Option<Vec<ManagerStep>>) {
+    let command = run.command.preview.clone();
+    if matches!(run.status, crate::types::AsyncStatus::Ready) {
+        (
+            ExecutionSummary::Succeeded,
+            text(format!("SDK 组件卸载已完成：{command}")),
+            None,
+        )
+    } else {
+        let reason = run
+            .failure
+            .as_ref()
+            .map(|failure| failure.message.clone())
+            .or_else(|| run.message.clone())
+            .unwrap_or_else(|| run.stderr.clone());
+        (
+            ExecutionSummary::Failed,
+            text(format!("{reason}（命令：{command}）")),
             None,
         )
     }

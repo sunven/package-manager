@@ -24,7 +24,7 @@ function SessionRecordsPage({
   scan: SessionRecordScan;
   homeDirectory: string | null;
   initialSource?: "codex" | "claude" | "opencode";
-  coverageItems?: Record<"codex" | "claude" | "opencode", ObservationCoverageItem>;
+  coverageItems?: Record<"codex" | "claude" | "grok" | "qoder" | "qoder-cn" | "opencode", ObservationCoverageItem>;
 }) {
   const records = useSessionRecords(false);
   const openCode = useOpenCodeSessions(false);
@@ -38,15 +38,21 @@ function observationCoverageItems(
     records?: Partial<Record<"session:codex" | "session:claude" | "session:opencode", ObservationRecord>>;
     openCode?: OpenCodeSessionScan | null;
   } = {},
-): Record<"codex" | "claude" | "opencode", ObservationCoverageItem> {
+): Record<"codex" | "claude" | "grok" | "qoder" | "qoder-cn" | "opencode", ObservationCoverageItem> {
   const index = coverageIndexFromFacts({
     "session:codex": sessionObservationFacts("codex", scan.codex, options.scanning?.codex ?? false, null),
     "session:claude": sessionObservationFacts("claude", scan.claude, options.scanning?.claude ?? false, null),
+    "session:grok": sessionObservationFacts("grok", scan.grok ?? null, false, null),
+    "session:qoder": sessionObservationFacts("qoder", scan.qoder ?? null, false, null),
+    "session:qoder-cn": sessionObservationFacts("qoder-cn", scan["qoder-cn"] ?? null, false, null),
     "session:opencode": openCodeObservationFacts(options.openCode ?? null, false, null),
   }, options.records);
   return {
     codex: requireCoverageItem(index, "session:codex"),
     claude: requireCoverageItem(index, "session:claude"),
+    grok: requireCoverageItem(index, "session:grok"),
+    qoder: requireCoverageItem(index, "session:qoder"),
+    "qoder-cn": requireCoverageItem(index, "session:qoder-cn"),
     opencode: requireCoverageItem(index, "session:opencode"),
   };
 }

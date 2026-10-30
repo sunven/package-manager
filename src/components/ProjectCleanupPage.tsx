@@ -1,6 +1,6 @@
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "../../components/ui/dropdown-menu";
 import { ArrowClockwise as RefreshCw, ArrowDown, ArrowSquareOut as ExternalLink, ArrowUp, CaretUpDown, ClockCounterClockwise, Copy, FolderOpen, Square, Trash as Trash2, X } from "@phosphor-icons/react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
 import {
@@ -55,7 +55,7 @@ import {
 } from "../../components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, IconButton, Panel, PanelHead } from "./ui";
+import { EmptyState, IconButton, PageHeader, Panel, PanelHead } from "./ui";
 import { ProjectScanHistoryDialog } from "./ProjectScanHistoryDialog";
 
 export function ProjectCleanupPage({
@@ -112,14 +112,19 @@ export function ProjectCleanupPage({
     () => candidates.filter((candidate) => candidate.kind === "MavenTarget").length,
     [candidates],
   );
-  const orderedCandidates = useMemo(
-    () => filterAndSortProjectData(candidates, "", sort, "all", sortDir),
-    [candidates, sort, sortDir],
-  );
   const visibleCandidates = useMemo(
     () => filterAndSortProjectData(candidates, query, sort, kind, sortDir),
     [candidates, kind, query, sort, sortDir],
   );
+  const runningCandidateIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (view.batch?.phase === "running") {
+      for (const item of view.batch.candidates) {
+        if (item.state.kind === "running") ids.add(item.candidateId);
+      }
+    }
+    return ids;
+  }, [view.batch]);
   const selectableVisibleIds = visibleCandidates
     .filter((candidate) => candidate.cleanability.kind === "cleanable")
     .map((candidate) => candidate.candidateId);
@@ -143,22 +148,22 @@ export function ProjectCleanupPage({
     }
   };
 
-  const report = (outcome: WorkflowOutcome<unknown>, title: string) => {
+  const report = useCallback((outcome: WorkflowOutcome<unknown>, title: string) => {
     if (outcome.kind === "failed") {
       setMessage({ tone: "bad", title, message: outcome.failure.message });
     } else if (outcome.kind === "invalid") {
       setMessage({ tone: "bad", title, message: outcome.message });
     }
-  };
+  }, []);
 
-  const copyPath = async (path: string) => {
+  const copyPath = useCallback(async (path: string) => {
     try {
       await writeText(path);
       toast.success("路径已复制");
     } catch (error) {
       setMessage({ tone: "bad", title: "复制路径失败", message: errorText(error) });
     }
-  };
+  }, []);
 
   const saveDepth = async () => {
     if (!depthChanged || !depthValid) return;
@@ -168,6 +173,10 @@ export function ProjectCleanupPage({
 
   return (
     <main className="view-grid">
+      <PageHeader
+        title="项目清理"
+        description="从扫描根目录递归发现 Rust / Maven / Node 项目的派生构建产物；清理在确认后执行。"
+      />
       {displayedMessage ? (
         <Alert variant="destructive">
           <AlertTitle>{displayedMessage.title}</AlertTitle>
@@ -330,19 +339,19 @@ export function ProjectCleanupPage({
             >
               <ToggleGroupItem value="RustTarget">
                 Rust target
-                <span className="font-mono text-xs tabular-nums text-muted-foreground">{rustTotal}</span>
+                <span className="text-xs tabular-nums text-muted-foreground">{rustTotal}</span>
               </ToggleGroupItem>
               <ToggleGroupItem value="MavenTarget">
                 Maven target
-                <span className="font-mono text-xs tabular-nums text-muted-foreground">{mavenTotal}</span>
+                <span className="text-xs tabular-nums text-muted-foreground">{mavenTotal}</span>
               </ToggleGroupItem>
               <ToggleGroupItem value="NodeModules">
                 Node node_modules
-                <span className="font-mono text-xs tabular-nums text-muted-foreground">{nodeTotal}</span>
+                <span className="text-xs tabular-nums text-muted-foreground">{nodeTotal}</span>
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 border-b bg-muted/30 p-2">
+          <div className="flex flex-wrap items-center gap-1.5 border-b p-2">
             <Input
               aria-label="搜索项目或目录路径"
               className="min-w-56 flex-1"
@@ -375,7 +384,7 @@ export function ProjectCleanupPage({
             disabled={!view.totals.selectedCount || Boolean(view.batch)}
             onClick={() => report(
               workflow.prepareCleanupBatch(
-                orderedCandidates
+                filterAndSortProjectData(candidates, "", sort, "all", sortDir)
                   .filter((candidate) => candidate.selected)
                   .map((candidate) => candidate.candidateId),
               ),
@@ -468,6 +477,7 @@ export function ProjectCleanupPage({
             <TableBody>
               {visibleCandidates.map((candidate) => (
                 <ProjectDataRow
+                  active={runningCandidateIds.has(candidate.candidateId)}
                   candidate={candidate}
                   batch={view.batch}
                   copyPath={copyPath}
@@ -668,6 +678,7 @@ function SortDirIcon({ active, dir }: { active: boolean; dir: ProjectDataSortDir
 }
 
 function ProjectDataRow({
+  active,
   batch,
   candidate,
   copyPath,
@@ -675,6 +686,7 @@ function ProjectDataRow({
   report,
   workflow,
 }: {
+  active: boolean;
   batch: CleanupBatchView | null;
   candidate: ProjectCleanupCandidateView;
   copyPath: (path: string) => Promise<void>;
@@ -686,10 +698,6 @@ function ProjectDataRow({
   const displayName = rowProjectName(candidate);
   const blockedReason = candidateCleanabilityMessage(candidate);
   const blockedReasonId = `project-candidate-${encodeURIComponent(candidate.candidateId)}-eligibility`;
-  const active = batch?.phase === "running"
-    && batch.candidates.some(
-      (item) => item.candidateId === candidate.candidateId && item.state.kind === "running",
-    );
 
   return (
     <TableRow data-state={candidate.selected ? "selected" : undefined}>
@@ -1076,15 +1084,17 @@ function measurementSize(candidate: ProjectCleanupCandidateView) {
   return measurement.status === "Partial" ? `≥ ${measurement.human ?? formatBytes(measurement.bytes)}` : measurement.human ?? formatBytes(measurement.bytes);
 }
 
+const modifiedFormatter = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatModified(milliseconds: number | null) {
   if (milliseconds === null) return "-";
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(milliseconds));
+  return modifiedFormatter.format(new Date(milliseconds));
 }
 
 function failureMessage(failure: WorkflowFailure): UiMessage {

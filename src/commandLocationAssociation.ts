@@ -102,6 +102,7 @@ const SOURCE_KINDS: Record<ManagerId, readonly PathKind[]> = {
   Bun: ["BunInstall"],
   Uv: ["UvTools", "UvPythonInstallations"],
   Fvm: ["FvmVersions"],
+  AndroidSdk: ["AndroidSdkRoot"],
 };
 
 const EXCLUDED_PACKAGE_KINDS = new Set<PackageKind>([

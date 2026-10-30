@@ -67,6 +67,7 @@ pub(crate) enum PackageKind {
     UvTool,
     UvPython,
     FlutterVersion,
+    AndroidSdkComponent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -124,6 +125,7 @@ pub(crate) enum PathKind {
     LocalRepository,
     SitePackages,
     UserSite,
+    AndroidSdkRoot,
 }
 
 #[derive(Debug, Serialize)]
@@ -164,6 +166,7 @@ pub(crate) struct ManagerSnapshot {
     pub(crate) maven: Option<MavenRepositoryHealth>,
     pub(crate) pip: Option<PipEnvironmentHealth>,
     pub(crate) docker: Option<DockerResourceHealth>,
+    pub(crate) android_sdk: Option<AndroidSdkMaintenance>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -282,6 +285,17 @@ pub(crate) enum PnpmMaintenanceOperation {
     },
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum AndroidSdkMaintenanceOperation {
+    UninstallSdkComponent {
+        #[serde(rename = "packageId")]
+        package_id: String,
+        #[serde(rename = "sdkRoot")]
+        sdk_root: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MaintenanceRunPreview {
@@ -291,6 +305,26 @@ pub(crate) struct MaintenanceRunPreview {
     pub(crate) stderr: String,
     pub(crate) message: Option<String>,
     pub(crate) failure: Option<CommandFailure>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AndroidSdkMaintenance {
+    pub(crate) cli: Option<AndroidSdkCli>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AndroidSdkCli {
+    pub(crate) program: String,
+    pub(crate) flavor: AndroidSdkCliFlavor,
+    pub(crate) sdk_root: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) enum AndroidSdkCliFlavor {
+    Android,
+    Sdkmanager,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -338,6 +372,7 @@ pub(crate) enum ManagerId {
     Bun,
     Uv,
     Fvm,
+    AndroidSdk,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]

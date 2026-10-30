@@ -1,5 +1,6 @@
 import { snapshotDraft, failedSnapshotDraft, type SnapshotDraft, type ArchivedSnapshot } from "./managerHistory";
 import { managerOrder } from "./constants";
+import { androidSdkRemovalCommand } from "./androidSdk";
 import { cleanupCopyFor, cleanupPreviewDetails, cleanupReady, cleanupReclaimable, type CleanupSpaceInfo } from "./cleanupCopy";
 import { createManagerScanQueue } from "./managerScanQueue";
 import type { ManagerScanState } from "./managerScanning";
@@ -17,7 +18,7 @@ export interface ManagerMaintenanceEffects {
     onProgress: (progress: ManagerScanProgress) => void,
   ): Promise<ManagerScanSnapshot>;
   clean(manager: ManagerId, beforeSnapshotId?: string): Promise<CacheCleanupRun>;
-  uninstall(manager: "Npm" | "Pnpm", packageName: string, beforeSnapshotId?: string): Promise<MaintenanceRunPreview>;
+  uninstall(manager: "Npm" | "Pnpm" | "AndroidSdk", packageName: string, beforeSnapshotId?: string, sdkRoot?: string): Promise<MaintenanceRunPreview>;
   saveSnapshot?: (draft: SnapshotDraft) => Promise<ArchivedSnapshot>;
   recordVerification?: (id: string, status: string, message: string | null, afterSnapshotId: string | null) => Promise<void>;
 }
@@ -263,6 +264,12 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
       }
       return null;
     }
+    if (request.kind === "uninstallSdkComponent") {
+      if (!manager.androidSdk?.cli) return "未找到可用的 SDK CLI，无法卸载组件。";
+      if (request.packageName.startsWith("cmdline-tools;")) {
+        return "cmdline-tools 提供维护 CLI，不能在应用内卸载。";
+      }
+    }
     return manager.packages.some((pkg) => pkg.name === request.packageName)
       ? null
       : `清单中已不存在 ${request.packageName}；请刷新后重新选择。`;
@@ -272,8 +279,20 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
     return requestMaintenance({ kind: "cleanupCache", managerId: manager });
   }
 
-  function requestPackageUninstall(manager: "Npm" | "Pnpm", packageName: string) {
-    const packageIndex = view.managerSnapshots[manager]?.packages.findIndex((pkg) => pkg.name === packageName) ?? -1;
+  function requestPackageUninstall(manager: "Npm" | "Pnpm" | "AndroidSdk", packageName: string) {
+    const snapshot = view.managerSnapshots[manager];
+    const packageIndex = snapshot?.packages.findIndex((pkg) => pkg.name === packageName) ?? -1;
+    if (manager === "AndroidSdk") {
+      const cli = snapshot?.androidSdk?.cli;
+      return requestMaintenance({
+        kind: "uninstallSdkComponent",
+        managerId: manager,
+        packageName,
+        packageIndex,
+        sdkRoot: cli?.sdkRoot ?? "",
+        commandPreview: cli ? androidSdkRemovalCommand(cli, packageName) : null,
+      });
+    }
     return requestMaintenance({ kind: "uninstallGlobalPackage", managerId: manager, packageName, packageIndex });
   }
 
@@ -291,6 +310,13 @@ export function createManagerMaintenanceWorkflow(effects: ManagerMaintenanceEffe
         if (run.outcome === "Succeeded") return { status: "succeeded", title: cleanupCopyFor(request.managerId)!.succeeded, message: cacheCleanupStepSummary(run) };
         if (run.outcome === "PartiallyCompleted") return { status: "partial", title: `${label} 清理部分完成`, message: cacheCleanupPartialMessage(run) };
         return { status: run.outcome === "NoPlan" ? "notExecuted" : "failed", title: run.outcome === "NoPlan" ? "没有可执行的清理方案" : `${label} 清理未完成`, message: cacheCleanupFailureMessage(run) };
+      }
+      if (request.kind === "uninstallSdkComponent") {
+        const run = await awaitMaintenanceReply(effects.uninstall(request.managerId, request.packageName, completeArchives[request.managerId], request.sdkRoot), 6 * 60_000);
+        receiveHistory(run);
+        return run.status === "Ready"
+          ? { status: "succeeded", title: "Android SDK 组件已卸载", message: run.command.preview }
+          : { status: "failed", title: "Android SDK 组件卸载未完成", message: trimTail(run.stderr || run.stdout || run.message || "SDK 组件卸载未完成") };
       }
       const run = await awaitMaintenanceReply((completeArchives[request.managerId] ? effects.uninstall(request.managerId, request.packageName, completeArchives[request.managerId]) : effects.uninstall(request.managerId, request.packageName)), 60_000);
       receiveHistory(run);

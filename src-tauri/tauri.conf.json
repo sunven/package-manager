@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "包管理器控制中心",
+  "productName": "DevScope",
   "version": "0.1.1",
   "identifier": "com.sunven.package-manager-control-center",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "包管理器控制中心",
+        "title": "DevScope",
         "hiddenTitle": true,
         "width": 1180,
         "height": 760,

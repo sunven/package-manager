@@ -151,6 +151,7 @@ pub(super) fn empty_snapshot(id: ManagerId, label: &str) -> ManagerSnapshot {
         maven: None,
         pip: None,
         docker: None,
+        android_sdk: None,
     }
 }
 

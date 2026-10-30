@@ -21,6 +21,7 @@ beforeEach(() => {
   localStorage.clear();
   localStorage.setItem("package-manager.enabledManagers", JSON.stringify(["Npm", "Pip", "Homebrew"]));
   localStorage.setItem("package-manager.migratedFvm", "1");
+  localStorage.setItem("package-manager.migratedAndroidSdk", "1");
   vi.stubGlobal("requestAnimationFrame", () => 1);
   vi.stubGlobal("cancelAnimationFrame", () => {});
 });

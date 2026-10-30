@@ -23,6 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 .gstack/
+.taste-skill/
 
 # Updater signing keys
 .tauri/

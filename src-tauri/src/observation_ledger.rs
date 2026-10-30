@@ -24,12 +24,16 @@ const ITEM_IDS: &[&str] = &[
     "manager:bun",
     "manager:uv",
     "manager:fvm",
+    "manager:androidsdk",
     "environment",
     "project-scan",
     "vscode-storage",
     "session:codex",
     "session:claude",
     "session:opencode",
+    "session:grok",
+    "session:qoder",
+    "session:qoder-cn",
     "codex:marketplaces",
     "codex:plugins",
     "codex:hooks",
@@ -207,6 +211,34 @@ pub(crate) fn scopes(enabled_managers: &[ManagerId]) -> BTreeMap<String, Option<
                 label: "Claude 会话目录".into(),
             }),
         );
+    }
+    if let Ok(directory) = crate::grok_sessions::sessions_dir() {
+        scopes.insert(
+            "session:grok".into(),
+            Some(ObservationScope {
+                key: format!("session:grok:{}", directory.display()),
+                label: "Grok Build 会话目录".into(),
+            }),
+        );
+    }
+    for (id, edition) in [
+        ("session:qoder", crate::qoder_sessions::QoderEdition::International),
+        ("session:qoder-cn", crate::qoder_sessions::QoderEdition::Cn),
+    ] {
+        if let Ok(directory) = edition.projects_dir() {
+            scopes.insert(
+                id.into(),
+                Some(ObservationScope {
+                    key: format!("{id}:{}", directory.display()),
+                    label: match edition {
+                        crate::qoder_sessions::QoderEdition::International => {
+                            "Qoder 会话目录".into()
+                        }
+                        crate::qoder_sessions::QoderEdition::Cn => "Qoder CN 会话目录".into(),
+                    },
+                }),
+            );
+        }
     }
     if let Ok(home) = codex_plugins::resolve_home() {
         let config = home.join("config.toml");

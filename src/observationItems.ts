@@ -20,12 +20,16 @@ export type ObservationItemId =
   | "manager:bun"
   | "manager:uv"
   | "manager:fvm"
+  | "manager:androidsdk"
   | "environment"
   | "project-scan"
   | "vscode-storage"
   | "session:codex"
   | "session:claude"
   | "session:opencode"
+  | "session:grok"
+  | "session:qoder"
+  | "session:qoder-cn"
   | "codex:marketplaces"
   | "codex:plugins"
   | "codex:hooks"
@@ -63,12 +67,16 @@ export const OBSERVATION_ITEMS: ObservationItem[] = [
   { id: "manager:bun", group: "managers", label: "Bun" },
   { id: "manager:uv", group: "managers", label: "uv" },
   { id: "manager:fvm", group: "managers", label: "FVM" },
+  { id: "manager:androidsdk", group: "managers", label: "Android SDK" },
   { id: "environment", group: "environment", label: "环境诊断" },
   { id: "project-scan", group: "project", label: "项目派生数据扫描" },
   { id: "vscode-storage", group: "vscode", label: "VS Code 工作区存储" },
   { id: "session:codex", group: "sessions", label: "Codex 会话记录" },
   { id: "session:claude", group: "sessions", label: "Claude 会话记录" },
   { id: "session:opencode", group: "sessions", label: "OpenCode 会话记录" },
+  { id: "session:grok", group: "sessions", label: "Grok Build 会话记录" },
+  { id: "session:qoder", group: "sessions", label: "Qoder 会话记录" },
+  { id: "session:qoder-cn", group: "sessions", label: "Qoder CN 会话记录" },
   { id: "codex:marketplaces", group: "codex", label: "Codex 市场" },
   { id: "codex:plugins", group: "codex", label: "Codex 插件" },
   { id: "codex:hooks", group: "codex", label: "Codex Hooks" },
@@ -92,6 +100,6 @@ export function managerObservationId(manager: string): ObservationItemId {
   return `manager:${manager.toLowerCase()}` as ObservationItemId;
 }
 
-export function sessionObservationId(source: "codex" | "claude" | "opencode"): ObservationItemId {
+export function sessionObservationId(source: "codex" | "claude" | "opencode" | "grok" | "qoder" | "qoder-cn"): ObservationItemId {
   return `session:${source}` as ObservationItemId;
 }

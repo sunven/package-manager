@@ -1,6 +1,6 @@
 import { Input } from "../../components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
-import { ArrowClockwise as RefreshCw, ArrowSquareOut, Trash } from "@phosphor-icons/react";
+import { ArrowClockwise as RefreshCw, ArrowSquareOut, CaretDown, CaretRight, Trash } from "@phosphor-icons/react";
 import { useMemo, useRef, useState } from "react";
 import {
   AlertDialog,
@@ -23,6 +23,7 @@ import {
   ageRemovalRequest,
   bulkRemovalConfirmText,
   formatSessionActivity,
+  formatSessionRecordId,
   removableSessionRecords,
   removalProgressBreakdown,
   removalProgressText,
@@ -35,6 +36,7 @@ import {
   type OpenCodeSessionFilter,
   type OpenCodeSessionRecord,
   type OpenCodeSessionScan,
+  type OpenCodeSessionSort,
   type SessionUsageFilter,
   selectedRemovalConfirmText,
   selectedRemovalRequest,
@@ -50,13 +52,21 @@ import type { useSessionRecords } from "../hooks/useSessionRecords";
 import type { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { useSessionSelection } from "../hooks/useSessionSelection";
 import type { ObservationCoverageItem } from "../observationCoverage";
+import { relativeObservationTime } from "../observationCoverage";
 import { ObservationState } from "./ObservationState";
 import { EmptyState, Panel, RefreshNotice, StatCard } from "./ui";
 
 const sources = [
   { key: "codex" as const, label: "Codex", empty: "没有 Codex 会话记录", fallback: "~/.codex/sessions" },
   { key: "claude" as const, label: "Claude", empty: "没有 Claude 会话记录", fallback: "~/.claude/projects" },
+  { key: "grok" as const, label: "Grok Build", empty: "没有 Grok Build 会话记录", fallback: "~/.grok/sessions" },
+  { key: "qoder" as const, label: "Qoder（国际版）", empty: "没有 Qoder 会话记录", fallback: "~/.qoder/projects" },
+  { key: "qoder-cn" as const, label: "Qoder CN（国内版）", empty: "没有 Qoder CN 会话记录", fallback: "~/.qoder-cn/projects" },
 ];
+
+function openableSource(key: SessionSourceId) {
+  return key === "grok" || key === "qoder" || key === "qoder-cn";
+}
 
 const selectableSession = (record: SessionRecord) => !record.inUse;
 const selectableOpenCode = () => true;
@@ -86,6 +96,8 @@ export function SessionRecordsPage({
     prepareError: openCodePrepareError,
     error: openCodeError,
   } = openCode;
+  // Age cut-offs follow the latest scan instead of drifting on every render.
+  const currentTime = useMemo(() => nowMs ?? Date.now(), [nowMs, scan]);
   const pending = records.operation?.phase !== "refreshing" ? records.operation?.target ?? null : null;
   const removing = records.operation !== null && records.operation.phase !== "confirming";
   const removalProgress = records.operation?.phase === "executing" ? records.operation.progress : null;
@@ -98,15 +110,15 @@ export function SessionRecordsPage({
     : 0;
   const removalProgressDetail = removalProgress ? removalProgressBreakdown(removalProgress) : null;
   const result = records.outcome?.result;
-  const resultSource = records.outcome?.source === "codex" ? "Codex" : "Claude";
+  const resultSource = sources.find((source) => source.key === records.outcome?.source)?.label ?? "会话记录";
   const removalSource = records.outcome?.source;
   const pendingOpenCodeDelete = openCode.operation?.phase !== "refreshing" ? openCode.operation?.target ?? null : null;
   const deletingOpenCodeId = openCode.operation && openCode.operation.phase !== "confirming"
     ? openCode.operation.target.roots[0]?.id ?? null
     : null;
   const openCodeDeleteResult = openCode.outcome;
-  const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time" });
-  const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" } });
+  const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time", grok: "time", qoder: "time", "qoder-cn": "time" });
+  const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" }, grok: { query: "", usage: "all" }, qoder: { query: "", usage: "all" }, "qoder-cn": { query: "", usage: "all" } });
   const sections = useMemo(() => (scan ? sessionSections(scan, sorts, filters) : null), [scan, sorts, filters]);
   const [activeSource, setActiveSource] = useState<SessionSourceId | "opencode">(initialSource);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -122,6 +134,28 @@ export function SessionRecordsPage({
     isSelectable: selectableSession,
     completedIds: records.outcome?.source === "claude" ? completedSessionIds : null,
   });
+  const grokSelection = useSessionSelection({
+    records: scan?.grok?.records ?? null,
+    isSelectable: selectableSession,
+    completedIds: records.outcome?.source === "grok" ? completedSessionIds : null,
+  });
+  const qoderSelection = useSessionSelection({
+    records: scan?.qoder?.records ?? null,
+    isSelectable: selectableSession,
+    completedIds: records.outcome?.source === "qoder" ? completedSessionIds : null,
+  });
+  const qoderCnSelection = useSessionSelection({
+    records: scan?.["qoder-cn"]?.records ?? null,
+    isSelectable: selectableSession,
+    completedIds: records.outcome?.source === "qoder-cn" ? completedSessionIds : null,
+  });
+  const selections = {
+    codex: codexSelection,
+    claude: claudeSelection,
+    grok: grokSelection,
+    qoder: qoderSelection,
+    "qoder-cn": qoderCnSelection,
+  };
   const openCodeSelection = useSessionSelection({
     records: openCode.scan?.records ?? null,
     isSelectable: selectableOpenCode,
@@ -129,7 +163,7 @@ export function SessionRecordsPage({
   });
 
   return (
-    <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || openCodeScanning}>
+    <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || scanningSources.grok || scanningSources.qoder || scanningSources["qoder-cn"] || openCodeScanning}>
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>会话记录读取失败</AlertTitle>
@@ -218,6 +252,12 @@ export function SessionRecordsPage({
             </div>
           ) : null}
           <p className="shrink-0 text-sm text-foreground/80">清空废纸篓前可恢复记录；移入废纸篓不代表磁盘空间立即释放。</p>
+          {pending?.source === "grok" ? (
+            <p className="shrink-0 text-sm text-foreground/80">整条本机会话目录会移入废纸篓。搜索索引与远端副本保留，Grok 搜索中仍可能出现旧片段。独立关联记录不会自动连带移除，指向原记录的引用可能失效。执行前及每条移除前会复核 Grok Build 已退出。</p>
+          ) : null}
+          {pending?.source === "qoder" || pending?.source === "qoder-cn" ? (
+            <p className="shrink-0 text-sm text-foreground/80">一条记录的转写与配套目录会一起移入废纸篓；CLI 运行中未被进程打开的记录仍可移除。诊断日志不在操作范围内。</p>
+          ) : null}
           <AlertDialogFooter className="shrink-0">
             <AlertDialogCancel asChild>
               <Button disabled={removing} type="button" variant="outline">
@@ -339,34 +379,34 @@ export function SessionRecordsPage({
             {result.historyId && onShowHistory ? <Button className="w-fit" onClick={() => onShowHistory(result.historyId!)} size="sm" type="button" variant="outline">已保存到维护历史</Button> : null}
             {records.outcome ? <RefreshNotice value={records.outcome.refresh} onRetry={() => void records.refresh(removalSource)} /> : null}
             {result.items.length ? <details><summary className="cursor-pointer">查看逐条结果（{result.items.length}）</summary><ul className="mt-2 flex max-h-64 flex-col gap-2 overflow-auto">
-              {result.items.map((item) => <li key={item.id} className="break-all"><strong>{item.id}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
+              {result.items.map((item) => <li key={item.id} className="break-all"><strong>{formatSessionRecordId(removalSource, item.id)}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : item.status === "NotAttempted" ? "未执行" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
             </ul></details> : null}
           </AlertDescription>
         </Alert>
       ) : null}
 
       <Tabs className="min-w-0" onValueChange={(value) => setActiveSource(value as SessionSourceId | "opencode")} value={activeSource}>
-        <TabsList className="w-full">
+        <TabsList className="h-auto w-full flex-wrap">
           {sources.map((source) => {
-            const count = sections?.[source.key].count;
+            const count = sections?.[source.key]?.count;
             return (
               <TabsTrigger key={source.key} value={source.key}>
                 {source.label}
                 {count === undefined ? null : (
-                  <span className="font-mono text-xs tabular-nums text-muted-foreground">{count}</span>
+                  <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
                 )}
               </TabsTrigger>
             );
           })}
           <TabsTrigger value="opencode">
             OpenCode
-            {openCodeScan ? <span className="font-mono text-xs tabular-nums text-muted-foreground">{openCodeScan.records.length}</span> : null}
+            {openCodeScan ? <span className="text-xs tabular-nums text-muted-foreground">{openCodeScan.records.length}</span> : null}
           </TabsTrigger>
         </TabsList>
         {sources.map((source) => {
           const data = scan?.[source.key];
           const view = sections?.[source.key];
-          const selection = source.key === "codex" ? codexSelection : claudeSelection;
+          const selection = selections[source.key];
           return (
             <TabsContent className="min-w-0" key={source.key} value={source.key}>
               <SourceSection
@@ -383,7 +423,9 @@ export function SessionRecordsPage({
                 fallbackPath={source.fallback}
                 homeDirectory={homeDirectory}
                 label={source.label}
-                nowMs={nowMs ?? Date.now()}
+                onOpen={openableSource(source.key) ? (record) => records.openSession(source.key, record) : undefined}
+                openingId={records.openingSession?.source === source.key ? records.openingSession.id : null}
+                nowMs={currentTime}
                 onClearSelection={() => selection.clear()}
                 onRequestAgeRemoval={(days, count) => {
                   records.request({ kind: "age", source: source.key, label: source.label, days, count });
@@ -400,8 +442,8 @@ export function SessionRecordsPage({
                 onSetRecordSelected={(id, selected) => selection.toggle(id, selected)}
                 onRefresh={() => onRefresh(source.key)}
                 onSortChange={(next) => setSorts((current) => ({ ...current, [source.key]: next }))}
-                onToggle={(groupKey) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: !current[`${source.key}:${groupKey}`] }))}
-                removing={removing}
+                onToggle={(groupKey, nextCollapsed) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: nextCollapsed }))}
+                removing={removing || Boolean(records.openingSession)}
                 scanning={scanningSources[source.key]}
                 selectedIds={selection.selectedIds}
                 sort={sorts[source.key]}
@@ -432,6 +474,7 @@ export function SessionRecordsPage({
             onRefresh={openCode.refresh}
             scan={openCodeScan}
             scanning={openCodeScanning}
+            nowMs={currentTime}
           />
         </TabsContent>
       </Tabs>
@@ -457,6 +500,7 @@ function OpenCodeSection({
   selectedIds,
   deletingId,
   homeDirectory,
+  nowMs,
 }: {
   scan: OpenCodeSessionScan | null;
   scanning: boolean;
@@ -475,15 +519,17 @@ function OpenCodeSection({
   selectedIds: readonly string[];
   deletingId: string | null;
   homeDirectory: string | null;
+  nowMs: number;
 }) {
   const [filter, setFilter] = useState<OpenCodeSessionFilter>({ query: "", archived: "all" });
+  const [sort, setSort] = useState<OpenCodeSessionSort>("time");
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const records = useMemo(() => filterOpenCodeSessions(scan?.records ?? [], filter), [scan, filter]);
-  const groups = useMemo(() => groupOpenCodeSessions(records), [records]);
-  const selectedSet = new Set(selectedIds);
-  const selectedRecords = records.filter((record) => selectedSet.has(record.id));
+  const groups = useMemo(() => groupOpenCodeSessions(records, sort), [records, sort]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedRecords = useMemo(() => records.filter((record) => selectedSet.has(record.id)), [records, selectedSet]);
   const eligibleAge7 = scan?.status === "ready" && scan.activeSessionIds
     ? scan.ageEligible.days7
     : null;
@@ -508,7 +554,10 @@ function OpenCodeSection({
         </div>
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2 border-b px-3 py-2">
-        <Button aria-pressed="true" onClick={() => setCollapsed({})} size="sm" type="button" variant="secondary">按最后活动时间</Button>
+        <span aria-label="排序" className="flex gap-1" role="group">
+          <Button aria-pressed={sort === "time"} onClick={() => setSort("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>按时间</Button>
+          <Button aria-pressed={sort === "project"} onClick={() => setSort("project")} size="sm" type="button" variant={sort === "project" ? "secondary" : "outline"}>按项目</Button>
+        </span>
         <Button disabled={scanning || preparing || deletingId !== null} onClick={onRefresh} size="sm" type="button" variant="outline">
           <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
           {scanning ? "读取中" : "刷新"}
@@ -557,16 +606,34 @@ function OpenCodeSection({
       ) : null}
       {records.length ? (
         <div aria-label="OpenCode 会话记录" role="region">
-          {groups.map((group) => (
-            <section className="border-t" key={group.key}>
-              <h3>
-                <button aria-controls={`opencode-month-${group.key}`} aria-expanded={!collapsed[group.key]} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setCollapsed((current) => ({ ...current, [group.key]: !current[group.key] }))} type="button">
-                  <span>{group.label}</span><span className="text-xs text-muted-foreground">{group.records.length} 条 · {collapsed[group.key] ? "展开" : "折叠"}</span>
-                </button>
-              </h3>
-              <ul className="divide-y" hidden={collapsed[group.key]} id={`opencode-month-${group.key}`}>
+          {groups.map((group) => {
+            const projectMode = sort === "project";
+            const isCollapsed = collapsed[group.key] ?? (projectMode && !filter.query.trim());
+            const groupPath = projectMode && group.path ? formatHomePath(group.path, homeDirectory) : null;
+            const groupId = `opencode-group-${encodeURIComponent(group.key)}`;
+            return (
+              <section className="border-t" key={group.key}>
+                <h3>
+                  <button aria-controls={groupId} aria-expanded={!isCollapsed} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setCollapsed((current) => ({ ...current, [group.key]: !isCollapsed }))} type="button">
+                    <span className="flex min-w-0 items-center gap-2">
+                      {isCollapsed ? <CaretRight aria-hidden="true" /> : <CaretDown aria-hidden="true" />}
+                      {projectMode ? (
+                        <span className="grid min-w-0 gap-0.5">
+                          <span className="truncate text-sm font-medium">{group.label}</span>
+                          {groupPath ? <span className="truncate text-xs font-normal text-muted-foreground">{groupPath}</span> : null}
+                        </span>
+                      ) : <span>{group.label}</span>}
+                    </span>
+                    <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                      {group.records.length} 条{projectMode
+                        ? ` · ${group.lastActivityMs == null ? "没有最后活动时间" : relativeObservationTime(group.lastActivityMs, nowMs)}`
+                        : ` · ${isCollapsed ? "展开" : "折叠"}`}
+                    </span>
+                  </button>
+                </h3>
+                <ul className="divide-y" hidden={isCollapsed} id={groupId}>
                 {group.records.map((record) => (
-                  <li className="flex min-w-0 flex-wrap items-start justify-between gap-3 px-4 py-3" key={record.id}>
+                  <li className={`flex min-w-0 flex-wrap items-start justify-between gap-3 py-3 ${projectMode ? "pl-10 pr-4" : "px-4"}`} key={record.id}>
                     <Checkbox
                       aria-label={`选择 ${record.title}`}
                       aria-describedby={openingId !== null || deletingId !== null || scanning || preparing || scan?.status !== "ready" ? "opencode-selection-blocked" : undefined}
@@ -620,7 +687,8 @@ function OpenCodeSection({
                 ))}
               </ul>
             </section>
-          ))}
+            );
+          })}
         </div>
       ) : null}
       {scan?.status !== "ready" || scanning || preparing || deletingId !== null || openingId !== null ? <p className="sr-only" id="opencode-selection-blocked">{scanning ? "正在读取 OpenCode 会话，暂不能选择。" : preparing ? "正在准备删除计划，暂不能选择。" : deletingId !== null ? "正在删除 OpenCode 会话，暂不能选择。" : openingId !== null ? "正在打开会话，暂不能选择。" : scan?.message ?? "OpenCode 服务不可用，暂不能选择。"}</p> : null}
@@ -634,6 +702,8 @@ function SourceSection({
   source,
   view,
   label,
+  onOpen,
+  openingId,
   emptyMessage,
   fallbackPath,
   homeDirectory,
@@ -661,13 +731,15 @@ function SourceSection({
   source: SessionSourceScan | null;
   view: SessionSectionView | null;
   label: string;
+  onOpen?: (record: SessionRecord) => Promise<string | null>;
+  openingId?: string | null;
   emptyMessage: string;
   fallbackPath: string;
   homeDirectory: string | null;
   collapsed: Record<string, boolean>;
   sourceKey: string;
   coverageItem: ObservationCoverageItem;
-  onToggle: (groupKey: string) => void;
+  onToggle: (groupKey: string, collapsed: boolean) => void;
   nowMs: number;
   onSortChange: (sort: SessionSort) => void;
   onClearSelection: () => void;
@@ -683,18 +755,37 @@ function SourceSection({
   selectedIds: readonly string[];
   sort: SessionSort;
 }) {
-  const records = view?.groups.flatMap((group) => group.records) ?? [];
-  const allSourceRecords = source?.records ?? [];
-  const removable = removableSessionRecords(records);
-  const selected = selectedRemovalRequest(records, selectedIds);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const grok = sourceKey === "grok";
+  const qoder = sourceKey === "qoder" || sourceKey === "qoder-cn";
+  const blockedReason = grok ? source?.status === "Failed" ? "请先成功读取 Grok Build 会话记录。" : source?.removalBlockedReason : null;
+  const mutationBlocked = removing || (grok && (scanning || Boolean(blockedReason)));
+  const records = useMemo(() => view?.groups.flatMap((group) => group.records) ?? [], [view]);
+  const removable = useMemo(() => removableSessionRecords(records), [records]);
+  const selected = useMemo(() => selectedRemovalRequest(records, selectedIds), [records, selectedIds]);
   const selectedCount = selected?.count ?? 0;
-  const selectedSet = new Set(selected?.ids ?? []);
+  const selectedSet = useMemo(() => new Set(selected?.ids ?? []), [selected]);
   const eligibleAge7 = source?.ageEligible.days7 ?? 0;
   const eligibleAge30 = source?.ageEligible.days30 ?? 0;
-  const inUseCount = allSourceRecords.filter((record) => record.inUse).length;
-  const unknownActivityCount = allSourceRecords.filter((record) => record.lastActivityMs === null).length;
-  const recentAge7Count = allSourceRecords.filter((record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs >= nowMs - 7 * 24 * 60 * 60 * 1000).length;
-  const recentAge30Count = allSourceRecords.filter((record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs >= nowMs - 30 * 24 * 60 * 60 * 1000).length;
+  const { inUseCount, unknownActivityCount, recentAge7Count, recentAge30Count } = useMemo(() => {
+    let inUse = 0;
+    let unknownActivity = 0;
+    let recent7 = 0;
+    let recent30 = 0;
+    const sevenDaysAgo = nowMs - 7 * 24 * 60 * 60 * 1000;
+    const thirtyDaysAgo = nowMs - 30 * 24 * 60 * 60 * 1000;
+    for (const record of source?.records ?? []) {
+      if (record.inUse) inUse += 1;
+      if (record.lastActivityMs === null) {
+        unknownActivity += 1;
+        continue;
+      }
+      if (record.inUse) continue;
+      if (record.lastActivityMs >= sevenDaysAgo) recent7 += 1;
+      if (record.lastActivityMs >= thirtyDaysAgo) recent30 += 1;
+    }
+    return { inUseCount: inUse, unknownActivityCount: unknownActivity, recentAge7Count: recent7, recentAge30Count: recent30 };
+  }, [source?.records, nowMs]);
   const ageEligibilityId = `${sourceKey}-age-removal-eligibility`;
   return (
     <Panel className="overflow-hidden">
@@ -719,7 +810,10 @@ function SourceSection({
         <span className="flex max-w-full flex-wrap gap-2">
           <span aria-label="排序" className="flex gap-1" role="group">
             <Button aria-pressed={sort === "time"} onClick={() => onSortChange("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>
-              按最后活动时间
+              按时间
+            </Button>
+            <Button aria-pressed={sort === "project"} onClick={() => onSortChange("project")} size="sm" type="button" variant={sort === "project" ? "secondary" : "outline"}>
+              按项目
             </Button>
             <Button aria-pressed={sort === "size"} onClick={() => onSortChange("size")} size="sm" type="button" variant={sort === "size" ? "secondary" : "outline"}>
               按大小
@@ -734,7 +828,7 @@ function SourceSection({
             return (
               <Button
                 aria-describedby={`${sourceKey}-age-removal-help ${ageEligibilityId}`}
-                disabled={scanning || removing || request === null}
+                disabled={scanning || mutationBlocked || request === null}
                 key={days}
                 onClick={() => {
                   if (request) onRequestAgeRemoval(request.days, request.count);
@@ -749,12 +843,24 @@ function SourceSection({
           })}
         </span>
       </div>
+      {grok ? (
+        <div className="space-y-1 border-b px-3 py-2 text-xs text-muted-foreground">
+          <p id={`${sourceKey}-removal-blocked`} role="status">{blockedReason ?? (source ? "移除前会逐条复核 Grok Build 已退出及记录未被其他进程打开。" : "读取后检查 Grok Build 的运行状态。")}</p>
+          <p>移除只把本机会话目录移入废纸篓；外部搜索索引、远端副本及未选中的独立关联记录保留。</p>
+        </div>
+      ) : null}
+      {qoder ? (
+        <div className="space-y-1 border-b px-3 py-2 text-xs text-muted-foreground">
+          <p>移除会把一条记录的转写与配套目录一起移入废纸篓；使用中的记录会跳过，CLI 运行中未被进程打开的记录仍可移除。</p>
+        </div>
+      ) : null}
+      {openError ? <Alert variant="destructive"><AlertTitle>无法继续 {label} 会话</AlertTitle><AlertDescription>{openError}</AlertDescription></Alert> : null}
       <CardContent className="flex flex-col gap-2 p-3">
         <p className="text-xs text-muted-foreground" id={`${sourceKey}-age-removal-help`}>按天数移除以最后活动时间为准，作用于整个 {label} 来源，不受搜索和状态筛选限制。使用中的记录会跳过。</p>
         <p className="text-xs text-muted-foreground" id={ageEligibilityId} role="status">{!source ? "读取会话记录后显示当前符合年龄条件的数量。" : eligibleAge7 === 0 && eligibleAge30 === 0 ? `当前没有符合 7 天或 30 天门槛的记录；近 7 天 ${recentAge7Count} 条、近 30 天 ${recentAge30Count} 条未达门槛` : eligibleAge7 === 0 ? `当前没有符合 7 天门槛的记录；近 7 天 ${recentAge7Count} 条未达门槛` : eligibleAge30 === 0 ? `当前没有符合 30 天门槛的记录；近 30 天 ${recentAge30Count} 条未达门槛` : `当前符合年龄门槛：7 天 ${eligibleAge7} 条、30 天 ${eligibleAge30} 条`}{inUseCount ? `；${inUseCount} 条使用中的记录会跳过` : ""}{unknownActivityCount ? `；${unknownActivityCount} 条缺少最后活动时间，无法按年龄判断` : ""}。</p>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="stat-grid grid-cols-2">
           <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
-          <StatCard label="当前结果的记录占用" value={view ? formatBytes(view.bytes) : "—"} />
+          <StatCard label="当前结果的记录占用" value={view ? `${records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}${formatBytes(view.bytes)}` : "—"} />
         </div>
       </CardContent>
       {source?.status === "Failed" && source.message ? (
@@ -775,7 +881,7 @@ function SourceSection({
         <div className="flex flex-col">
           <div className="flex flex-wrap gap-2 border-b px-4 py-2">
             <Button
-              disabled={removing || removable.length === 0 || selectedCount === removable.length}
+              disabled={mutationBlocked || removable.length === 0 || selectedCount === removable.length}
               onClick={onSelectAll}
               size="sm"
               type="button"
@@ -787,7 +893,7 @@ function SourceSection({
               取消选择
             </Button>
             <Button
-              disabled={removing || selected === null}
+              disabled={mutationBlocked || selected === null}
               onClick={(event) => {
                 if (selected) onRequestSelectedRemoval(records.filter((record) => selectedSet.has(record.id)), event.currentTarget);
               }}
@@ -800,40 +906,54 @@ function SourceSection({
           </div>
           {view?.groups.map((group) => {
             const collapseKey = `${sourceKey}:${group.key}`;
-            const isCollapsed = collapsed[collapseKey] ?? false;
+            const projectMode = sort === "project";
+            const isCollapsed = collapsed[collapseKey] ?? (projectMode && !filter.query.trim());
+            const groupPath = projectMode && group.path ? formatHomePath(group.path, homeDirectory) : null;
+            const groupAccessibleLabel = projectMode
+              ? `选择${group.label}${groupPath ? `（${groupPath}）` : ""}的可移除会话记录`
+              : `选择${group.label}的可移除会话记录`;
             const groupRemovable = removableSessionRecords(group.records);
             const groupAllSelected = groupRemovable.length > 0 && groupRemovable.every((record) => selectedSet.has(record.id));
             return (
               <section key={collapseKey}>
-                <div className="flex items-center gap-3 border-b bg-muted/40 px-4 py-2">
+                <div className="flex items-center gap-3 border-b px-4 py-2">
                   <Checkbox
-                    aria-label={`选择${group.label}的可移除会话记录`}
+                    aria-label={groupAccessibleLabel}
                     aria-describedby={groupRemovable.length === 0 ? ageEligibilityId : undefined}
                     checked={groupAllSelected}
-                    disabled={removing || groupRemovable.length === 0}
+                    disabled={mutationBlocked || groupRemovable.length === 0}
                     onCheckedChange={(checked) => onSetGroupSelected(group.records, checked === true)}
                   />
                   <button
                     aria-expanded={!isCollapsed}
                     className="flex min-h-6 min-w-0 flex-1 items-center justify-between gap-3 text-left"
-                    onClick={() => onToggle(group.key)}
+                    onClick={() => onToggle(group.key, !isCollapsed)}
                     type="button"
                   >
-                    <span className="text-sm font-medium">{group.label}</span>
-                    <span className="text-xs text-muted-foreground">
-                      {group.count} 条 · {formatBytes(group.bytes)}
+                    <span className="flex min-w-0 items-center gap-2">
+                      {isCollapsed ? <CaretRight aria-hidden="true" /> : <CaretDown aria-hidden="true" />}
+                      {projectMode ? (
+                        <span className="grid min-w-0 gap-0.5">
+                          <span className="truncate text-sm font-medium">{group.label}</span>
+                          {groupPath ? <span className="truncate text-xs font-normal text-muted-foreground">{groupPath}</span> : null}
+                        </span>
+                      ) : <span className="text-sm font-medium">{group.label}</span>}
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {group.count} 条 · {group.records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}{formatBytes(group.bytes)}
+                      {projectMode ? ` · ${group.lastActivityMs == null ? "没有最后活动时间" : relativeObservationTime(group.lastActivityMs, nowMs)}` : ""}
                     </span>
                   </button>
                 </div>
                 {isCollapsed ? null : (
                   <ul className="divide-y">
                     {group.records.map((record) => (
-                      <li className="grid items-center gap-3 px-4 py-3 sm:grid-cols-[auto_minmax(0,1.4fr)_minmax(0,1fr)_auto]" key={record.id}>
+                      <li className={`grid items-center gap-3 py-3 sm:grid-cols-[auto_minmax(0,1.4fr)_minmax(0,1fr)_auto] ${projectMode ? "pl-10 pr-4" : "px-4"}`} key={record.id}>
                         <Checkbox
                           aria-label={`选择 ${record.title}`}
                           aria-describedby={record.inUse ? `${sourceKey}-in-use-${encodeURIComponent(record.id)}` : undefined}
                           checked={!record.inUse && selectedSet.has(record.id)}
-                          disabled={removing || record.inUse}
+                          disabled={mutationBlocked || record.inUse}
                           onCheckedChange={(checked) => onSetRecordSelected(record.id, checked === true)}
                         />
                         <span className="min-w-0">
@@ -843,16 +963,27 @@ function SourceSection({
                               ? formatHomePath(record.workingDirectory, homeDirectory)
                               : "没有工作目录"}
                           </span>
+                          {record.grok?.parentSessionId ? <span className="mt-1 block break-all text-xs text-muted-foreground">来源记录：{record.grok.parentSessionId}</span> : null}
+                          {record.grok?.relatedSessionIds.length ? <span className="mt-1 block text-xs text-muted-foreground">关联 {record.grok.relatedSessionIds.length} 条记录，移除不自动连带</span> : null}
+                          {record.grok?.resumeError ? <span className="mt-1 block text-xs text-muted-foreground" id={`grok-resume-${encodeURIComponent(record.id)}`}>{record.grok.resumeError}</span> : null}
                         </span>
-                        <span className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                        <span className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
                           <span>{record.lastActivityMs === null ? "没有最后活动时间" : formatSessionActivity(record.lastActivityMs)}</span>
-                          <span className="font-medium tabular-nums text-foreground">{formatBytes(record.bytes)}</span>
+                          <span className="font-medium tabular-nums text-foreground">{record.grok?.bytesComplete === false ? record.bytes ? `已测 ${formatBytes(record.bytes)}` : "大小未知" : formatBytes(record.bytes)}</span>
                         </span>
-                        <span className="flex items-center justify-end">
+                        <span className="flex flex-wrap items-center justify-end gap-2">
+                          {onOpen ? <Button
+                            aria-label={`在 ${label} 中继续 ${record.title}`}
+                            aria-describedby={record.grok?.resumeError ? `grok-resume-${encodeURIComponent(record.id)}` : undefined}
+                            disabled={removing || scanning || source?.status === "Failed" || Boolean(record.grok?.resumeError)}
+                            onClick={async () => { setOpenError(null); setOpenError(await onOpen(record)); }}
+                            size="sm" type="button" variant="outline"
+                          ><ArrowSquareOut aria-hidden="true" />{openingId === record.id ? "打开中" : "继续会话"}</Button> : null}
                           {record.inUse ? <span className="text-xs text-muted-foreground" id={`${sourceKey}-in-use-${encodeURIComponent(record.id)}`}>使用中，暂不移除</span> : (
                             <Button
                               aria-label={`将 ${record.title || record.id} 移入废纸篓`}
-                              disabled={removing}
+                              disabled={mutationBlocked}
+                              aria-describedby={blockedReason ? `${sourceKey}-removal-blocked` : undefined}
                               onClick={() => onRequestRemoval(record)}
                               size="icon-sm"
                               title="移入废纸篓"

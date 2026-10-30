@@ -53,11 +53,11 @@ impl GuardedTarget {
 /// This table is the entire allowlist. `run_cache_cleanup` accepts only a
 /// `ManagerId`, so nothing outside this table is reachable from the frontend.
 ///
-/// `Nvm`, `Maven`, `Cargo`, and `Fvm` are absent on purpose: the first three
-/// ship no command that cleans their own cache, and cleaning them would mean
-/// deleting directories ourselves. `Fvm` is absent because removing an SDK
-/// version is an uninstall, not cache cleanup. See ADR-0001 before adding
-/// any of them.
+/// `Nvm`, `Maven`, `Cargo`, `Fvm`, and `AndroidSdk` are absent on purpose: the
+/// first three ship no command that cleans their own cache, cleaning them would
+/// mean deleting directories ourselves, FVM component removal is an uninstall,
+/// and Android SDK components are user-installed assets handled as uninstall.
+/// See ADR-0001 before adding any of them.
 pub(crate) fn cleanup_plan(manager: ManagerId) -> &'static [CleanupStep] {
     match manager {
         // `npm cache clean --force` does not touch `_npx`, hence the second step.
@@ -111,7 +111,7 @@ pub(crate) fn cleanup_plan(manager: ManagerId) -> &'static [CleanupStep] {
         ManagerId::Pip => &[CleanupStep::PipCommand {
             args: &["cache", "purge"],
         }],
-        ManagerId::Nvm | ManagerId::Maven | ManagerId::Cargo | ManagerId::Fvm => &[],
+        ManagerId::Nvm | ManagerId::Maven | ManagerId::Cargo | ManagerId::Fvm | ManagerId::AndroidSdk => &[],
     }
 }
 

@@ -387,6 +387,48 @@ describe("manager maintenance workflow", () => {
     expect(effects.clean).not.toHaveBeenCalled();
   });
 
+  it("uninstalls a frozen Android SDK component with the bound CLI command", async () => {
+    const { effects, workflow } = setup(["AndroidSdk"]);
+    const androidSdk = {
+      cli: { program: "/sdk/cmdline-tools/latest/bin/android", flavor: "Android" as const, sdkRoot: "/sdk" },
+    };
+    const component = {
+      name: "platforms;android-36",
+      version: "2",
+      source: "Android SDK Platform 36",
+      kind: "AndroidSdkComponent" as const,
+      path: "/sdk/platforms/android-36",
+      actions: [],
+      signals: [],
+    };
+    effects.scan.mockResolvedValue({
+      ...scanResult("AndroidSdk"),
+      manager: managerFixture("AndroidSdk", { androidSdk, packages: [component] }),
+    });
+    await workflow.refresh("AndroidSdk");
+
+    expect(workflow.maintenanceBlockReason({
+      kind: "uninstallSdkComponent",
+      managerId: "AndroidSdk",
+      packageName: "cmdline-tools;22.0",
+      packageIndex: 0,
+      sdkRoot: "/sdk",
+    })).toContain("cmdline-tools");
+
+    workflow.requestPackageUninstall("AndroidSdk", "platforms;android-36");
+    const request = workflow.read().maintenance?.request;
+    expect(request?.kind).toBe("uninstallSdkComponent");
+    expect(request?.kind === "uninstallSdkComponent" ? request.sdkRoot : null).toBe("/sdk");
+    expect(request?.kind === "uninstallSdkComponent" ? request.commandPreview : null).toBe(
+      "/sdk/cmdline-tools/latest/bin/android --sdk=/sdk sdk remove platforms/android-36",
+    );
+
+    await workflow.confirmMaintenance(workflow.read().maintenance!.id);
+    expect(effects.uninstall).toHaveBeenCalledExactlyOnceWith("AndroidSdk", "platforms;android-36", undefined, "/sdk");
+    expect(workflow.read().maintenance?.execution?.title).toBe("Android SDK 组件已卸载");
+    expect(effects.clean).not.toHaveBeenCalled();
+  });
+
   it("verifies IPC rejection without claiming that maintenance failed to execute", async () => {
     const { effects, workflow } = setup();
     await workflow.refresh("Npm");

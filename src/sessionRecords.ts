@@ -7,6 +7,14 @@ export type SessionRecord = {
   workingDirectory: string | null;
   bytes: number;
   inUse: boolean;
+  grok?: {
+    sessionId: string;
+    bytesComplete: boolean;
+    resumeError: string | null;
+    parentSessionId: string | null;
+    relatedSessionIds: string[];
+    relationsComplete?: boolean;
+  };
 };
 
 export type AgeEligibleCounts = {
@@ -19,15 +27,35 @@ export type SessionSourceScan = {
   status: SessionScanStatus;
   records: SessionRecord[];
   message: string | null;
+  removalBlockedReason?: string | null;
   ageEligible: AgeEligibleCounts;
 };
 
 export type SessionRecordScan = {
   codex: SessionSourceScan;
   claude: SessionSourceScan;
+  grok?: SessionSourceScan;
+  qoder?: SessionSourceScan;
+  "qoder-cn"?: SessionSourceScan;
 };
 
-export type SessionSourceId = "codex" | "claude";
+export type SessionSourceId = "codex" | "claude" | "grok" | "qoder" | "qoder-cn";
+
+export function formatSessionRecordId(source: SessionSourceId | undefined, id: string): string {
+  if (source === "qoder" || source === "qoder-cn") {
+    const separator = id.lastIndexOf("/");
+    return separator < 0 ? id : id.slice(separator + 1);
+  }
+  if (source !== "grok") return id;
+  const separator = id.indexOf("/");
+  if (separator < 0) return id;
+  try {
+    const directory = decodeURIComponent(id.slice(0, separator));
+    return directory.startsWith("/") ? directory + id.slice(separator) : id;
+  } catch {
+    return id;
+  }
+}
 
 export type SessionRefresh = {
   status: "notRequested" | "refreshing" | "ready" | "failed";
@@ -91,9 +119,28 @@ export function filterOpenCodeSessions(records: OpenCodeSessionRecord[], filter:
     .sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title));
 }
 
-export function groupOpenCodeSessions(records: OpenCodeSessionRecord[]) {
-  const groups = new Map<string, { key: string; label: string; records: OpenCodeSessionRecord[] }>();
-  for (const record of [...records].sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title))) {
+export function groupOpenCodeSessions(records: OpenCodeSessionRecord[], sort: OpenCodeSessionSort = "time"): OpenCodeSessionGroup[] {
+  const sorted = [...records].sort((left, right) => right.lastActivityMs - left.lastActivityMs || left.title.localeCompare(right.title));
+  if (sort === "project") {
+    const groups = new Map<string, OpenCodeSessionGroup>();
+    for (const record of sorted) {
+      const key = `project:${record.workingDirectory}`;
+      const group = groups.get(key) ?? {
+        key,
+        label: projectLabel(record.workingDirectory),
+        path: record.workingDirectory,
+        lastActivityMs: record.lastActivityMs,
+        records: [],
+      };
+      group.records.push(record);
+      if (record.lastActivityMs > (group.lastActivityMs ?? 0)) group.lastActivityMs = record.lastActivityMs;
+      groups.set(key, group);
+    }
+    return [...groups.values()].sort((left, right) =>
+      (right.lastActivityMs ?? 0) - (left.lastActivityMs ?? 0) || left.label.localeCompare(right.label) || left.key.localeCompare(right.key));
+  }
+  const groups = new Map<string, OpenCodeSessionGroup>();
+  for (const record of sorted) {
     const key = monthKey(record.lastActivityMs);
     const group = groups.get(key) ?? { key, label: monthLabel(record.lastActivityMs), records: [] };
     group.records.push(record);
@@ -113,10 +160,10 @@ export type SessionRemovalResult = {
   message: string | null;
 };
 
-export type SessionRemovalReason = "InUse" | "NoLongerRecord" | "ActivityChanged" | "ActivityUnknown" | "TrashFailed";
+export type SessionRemovalReason = "InUse" | "NoLongerRecord" | "ActivityChanged" | "ActivityUnknown" | "TrashFailed" | "RuntimeBlocked";
 export type SessionRemovalItem = {
   id: string;
-  status: "Moved" | "Skipped" | "Failed";
+  status: "Moved" | "Skipped" | "Failed" | "NotAttempted";
   reason: SessionRemovalReason | null;
   message: string | null;
 };
@@ -144,15 +191,17 @@ export const removalReasonLabels: Record<SessionRemovalReason, string> = {
   ActivityChanged: "最后活动时间已更新，不再早于门槛",
   ActivityUnknown: "无法确认最后活动时间，留在原处",
   TrashFailed: "移入废纸篓失败",
+  RuntimeBlocked: "运行状态未满足要求，未执行",
 };
 
 export function singleRemovalConfirmText(title: string) {
   return `将「${title}」移入废纸篓？`;
 }
 
-export function removalResultText(result: Pick<SessionRemovalResult, "moved" | "failed" | "skipped" | "operationError">) {
+export function removalResultText(result: Pick<SessionRemovalResult, "moved" | "failed" | "skipped" | "operationError"> & Partial<Pick<SessionRemovalResult, "items">>) {
   if (result.operationError) return "移除未能执行";
-  return `移入废纸篓 ${result.moved} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条`;
+  const notAttempted = result.items?.filter((item) => item.status === "NotAttempted").length ?? 0;
+  return `移入废纸篓 ${result.moved} 条，跳过 ${result.skipped} 条，失败 ${result.failed} 条${notAttempted ? `，未执行 ${notAttempted} 条` : ""}`;
 }
 
 export function ageRemovalRequest(counts: AgeEligibleCounts | null | undefined, days: 7 | 30) {
@@ -224,11 +273,24 @@ export type SessionRecordGroup = {
   count: number;
   bytes: number;
   records: SessionRecord[];
+  path?: string | null;
+  lastActivityMs?: number | null;
 };
 
 const NO_LAST_ACTIVITY_KEY = "none";
+const NO_PROJECT_KEY = "project:none";
 
-export type SessionSort = "time" | "size";
+export type SessionSort = "time" | "project" | "size";
+
+export type OpenCodeSessionSort = "time" | "project";
+
+export type OpenCodeSessionGroup = {
+  key: string;
+  label: string;
+  records: OpenCodeSessionRecord[];
+  path?: string;
+  lastActivityMs?: number;
+};
 
 export function sessionSections(
   scan: SessionRecordScan,
@@ -239,6 +301,11 @@ export function sessionSections(
   return {
     codex: sectionView(scan.codex, mode("codex"), filters.codex),
     claude: sectionView(scan.claude, mode("claude"), filters.claude),
+    grok: scan.grok ? sectionView(scan.grok, mode("grok"), filters.grok) : undefined,
+    qoder: scan.qoder ? sectionView(scan.qoder, mode("qoder"), filters.qoder) : undefined,
+    "qoder-cn": scan["qoder-cn"]
+      ? sectionView(scan["qoder-cn"], mode("qoder-cn"), filters["qoder-cn"])
+      : undefined,
   };
 }
 
@@ -257,6 +324,11 @@ function sectionView(source: SessionSourceScan, sort: SessionSort, filter?: Sess
 
 export function groupSessionRecords(records: SessionRecord[], sort: SessionSort = "time"): SessionRecordGroup[] {
   if (sort === "size") return [sizeGroup(records)];
+  if (sort === "project") return projectGroups(records);
+  return monthGroups(records);
+}
+
+function monthGroups(records: SessionRecord[]): SessionRecordGroup[] {
   const groups = new Map<string, SessionRecordGroup>();
   for (const record of records) {
     const key = record.lastActivityMs === null ? NO_LAST_ACTIVITY_KEY : monthKey(record.lastActivityMs);
@@ -273,20 +345,62 @@ export function groupSessionRecords(records: SessionRecord[], sort: SessionSort 
     groups.set(key, group);
   }
 
-  for (const group of groups.values()) {
-    group.records.sort((left, right) => {
-      const leftTime = left.lastActivityMs ?? Number.NEGATIVE_INFINITY;
-      const rightTime = right.lastActivityMs ?? Number.NEGATIVE_INFINITY;
-      if (leftTime !== rightTime) return rightTime - leftTime;
-      return left.title.localeCompare(right.title);
-    });
-  }
+  for (const group of groups.values()) sortGroupRecords(group.records);
 
   return [...groups.values()].sort((left, right) => {
     if (left.key === NO_LAST_ACTIVITY_KEY) return 1;
     if (right.key === NO_LAST_ACTIVITY_KEY) return -1;
     return right.key.localeCompare(left.key);
   });
+}
+
+function projectGroups(records: SessionRecord[]): SessionRecordGroup[] {
+  const groups = new Map<string, SessionRecordGroup>();
+  for (const record of records) {
+    const path = record.workingDirectory;
+    const key = path === null ? NO_PROJECT_KEY : `project:${path}`;
+    const group = groups.get(key) ?? {
+      key,
+      label: path === null ? "没有工作目录" : projectLabel(path),
+      path,
+      lastActivityMs: null,
+      count: 0,
+      bytes: 0,
+      records: [],
+    };
+    group.records.push(record);
+    group.count += 1;
+    group.bytes += record.bytes;
+    if (record.lastActivityMs !== null && record.lastActivityMs > (group.lastActivityMs ?? Number.NEGATIVE_INFINITY)) {
+      group.lastActivityMs = record.lastActivityMs;
+    }
+    groups.set(key, group);
+  }
+
+  for (const group of groups.values()) sortGroupRecords(group.records);
+
+  return [...groups.values()].sort((left, right) => {
+    if (left.key === NO_PROJECT_KEY) return 1;
+    if (right.key === NO_PROJECT_KEY) return -1;
+    const leftTime = left.lastActivityMs ?? Number.NEGATIVE_INFINITY;
+    const rightTime = right.lastActivityMs ?? Number.NEGATIVE_INFINITY;
+    if (leftTime !== rightTime) return rightTime - leftTime;
+    return left.label.localeCompare(right.label) || left.key.localeCompare(right.key);
+  });
+}
+
+function sortGroupRecords(records: SessionRecord[]) {
+  records.sort((left, right) => {
+    const leftTime = left.lastActivityMs ?? Number.NEGATIVE_INFINITY;
+    const rightTime = right.lastActivityMs ?? Number.NEGATIVE_INFINITY;
+    if (leftTime !== rightTime) return rightTime - leftTime;
+    return left.title.localeCompare(right.title);
+  });
+}
+
+function projectLabel(path: string) {
+  const trimmed = path.replace(/\/+$/, "");
+  return trimmed.slice(trimmed.lastIndexOf("/") + 1) || path;
 }
 
 function sizeGroup(records: SessionRecord[]): SessionRecordGroup {

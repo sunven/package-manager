@@ -17,9 +17,13 @@ export function useClaudeWorkflow(active: boolean, tab: string) {
   const code = useClaudeCode(active, tab, skillsBusy);
   const skills = useClaudeSkills(active && tab === "skills", String(code.revision), code.busy && !skillsBusy, code.invalidate);
 
-  useEffect(() => {
-    setSkillsBusy(skills.scanning || skills.phase !== null);
-  }, [skills.scanning, skills.phase]);
+  // skillsBusy feeds back into useClaudeCode (declared above), so adjust it
+  // during render: React re-renders before committing instead of running an
+  // extra effect pass after commit.
+  const skillsActive = skills.scanning || skills.phase !== null;
+  if (skillsActive !== skillsBusy) {
+    setSkillsBusy(skillsActive);
+  }
 
   const cancelHookPreview = useCallback((previewId?: string) => {
     if (!preparedHookPreviewRef.current || (previewId && previewId !== preparedHookPreviewRef.current)) return;

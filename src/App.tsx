@@ -6,7 +6,7 @@ import { useObservationTools } from "./hooks/useObservationTools";
 import { locateSearchTarget, type SearchTarget } from "./globalSearch";
 import { toast } from "sonner";
 import { Alert, AlertTitle, AlertDescription } from "../components/ui/alert";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
@@ -54,7 +54,7 @@ import { PathPanel } from "./components/PathPanel";
 import { SettingsPage } from "./components/SettingsPage";
 import { Shell } from "./components/Shell";
 import { ManagerDiagnostics } from "./components/ManagerDiagnostics";
-import { Panel } from "./components/ui";
+import { Panel, PageHeader } from "./components/ui";
 import { Toaster } from "../components/ui/sonner";
 import { AppUpdateToast, appUpdateToastId } from "./components/AppUpdateToast";
 import { useAppUpdate } from "./hooks/useAppUpdate";
@@ -135,6 +135,15 @@ export function App() {
       sessionRecords.scanningSources.claude,
       sessionRecords.error,
     );
+    facts["session:grok"] = sessionObservationFacts(
+      "grok", sessionRecords.scan?.grok ?? null, sessionRecords.scanningSources.grok, sessionRecords.error,
+    );
+    facts["session:qoder"] = sessionObservationFacts(
+      "qoder", sessionRecords.scan?.qoder ?? null, sessionRecords.scanningSources.qoder, sessionRecords.error,
+    );
+    facts["session:qoder-cn"] = sessionObservationFacts(
+      "qoder-cn", sessionRecords.scan?.["qoder-cn"] ?? null, sessionRecords.scanningSources["qoder-cn"], sessionRecords.error,
+    );
     facts["session:opencode"] = openCodeObservationFacts(
       openCodeSessions.scan,
       openCodeSessions.scanning,
@@ -153,7 +162,7 @@ export function App() {
     observations.environment, observations.environmentBusy, observations.environmentError,
     projectCleanup.view,
     vscodeStorage.scan, vscodeStorage.scanning, vscodeStorage.error,
-    sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.error,
+    sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.scanningSources.grok, sessionRecords.scanningSources.qoder, sessionRecords.scanningSources["qoder-cn"], sessionRecords.error,
     openCodeSessions.scan, openCodeSessions.scanning, openCodeSessions.error,
     codex.extensions.marketplaces, codex.extensions.plugins, codex.extensions.hooks, codex.skills,
     claude.state.extensionsView, claude.state.hooksView, claude.skills,
@@ -178,6 +187,7 @@ export function App() {
     || claude.locked
     || Boolean(vscodeStorage.operation)
     || Boolean(sessionRecords.operation)
+    || Boolean(sessionRecords.openingSession)
     || Boolean(openCodeSessions.operation)
     || Boolean(projectCleanup.view.batch);
 
@@ -205,15 +215,19 @@ export function App() {
     }
   }, [theme]);
 
+  const handleEscape = useEffectEvent(() => {
+    actions.closePackageActions();
+  });
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        actions.closePackageActions();
+        handleEscape();
       }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [actions]);
+  }, []);
 
   const updatePromptVersion = appUpdate.view.promptVersion;
   const dismissUpdatePrompt = appUpdate.dismissPrompt;
@@ -274,6 +288,9 @@ export function App() {
         return;
       case "session:codex":
       case "session:claude":
+      case "session:grok":
+      case "session:qoder":
+      case "session:qoder-cn":
       case "session:opencode":
         setActiveView("sessions");
         return;
@@ -324,6 +341,9 @@ export function App() {
       case "vscode-storage": await vscodeStorage.refresh(); return;
       case "session:codex": await sessionRecords.refresh("codex"); return;
       case "session:claude": await sessionRecords.refresh("claude"); return;
+      case "session:grok": await sessionRecords.refresh("grok"); return;
+      case "session:qoder": await sessionRecords.refresh("qoder"); return;
+      case "session:qoder-cn": await sessionRecords.refresh("qoder-cn"); return;
       case "session:opencode": await openCodeSessions.refresh(); return;
       case "codex:marketplaces": await codex.extensions.readMarketplaces(); return;
       case "codex:plugins": await codex.extensions.readPlugins(); return;
@@ -359,7 +379,6 @@ export function App() {
       search={<GlobalSearch managers={state.enabledManagers} snapshots={state.managerSnapshots} scanStates={state.scanStates} homeDirectory={state.homeDirectory} busy={state.maintenanceBusy || state.scanningAll} onRefresh={() => void actions.refreshEnabled()} onLocate={locate} />}
       activeView={activeView}
       managerCount={state.enabledManagers.length}
-      managerSnapshots={state.managerSnapshots}
       onShowProjectCleanup={() => {
         actions.closePackageActions();
         setActiveView("cleanup");
@@ -397,7 +416,7 @@ export function App() {
       scanning={scanningManagers.size > 0}
       theme={theme}
     >
-      {state.historyWarning ? <Alert className="mb-3"><AlertTitle>历史保存提示</AlertTitle><AlertDescription className="break-words">{state.historyWarning}</AlertDescription></Alert> : null}
+      {state.historyWarning ? <Alert className="app-notice mb-3"><AlertTitle>历史保存提示</AlertTitle><AlertDescription className="break-words">{state.historyWarning}</AlertDescription></Alert> : null}
       <MessageBanner homeDirectory={state.homeDirectory} message={state.uiMessage} />
       <MaintenanceConfirmationBanner
         operation={state.maintenance}
@@ -406,40 +425,42 @@ export function App() {
         onRetryVerification={() => void actions.retryVerification()}
         onShowHistory={showHistoryRecord}
       />
-      <div className="telemetry-view-stage" data-view={activeView} key={activeView}>
+      <div className="telemetry-view-stage" data-view={activeView}>
         {activeView === "plugins" ? (
-          <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
-            <TabsList aria-label="Codex 管理视图">
-              <TabsTrigger value="marketplaces" disabled={codex.locked}>插件市场</TabsTrigger>
-              <TabsTrigger value="hooks" disabled={codex.locked}>Hooks</TabsTrigger>
-              <TabsTrigger value="skills" disabled={codex.locked}>Skills</TabsTrigger>
-            </TabsList>
-            <TabsContent value="marketplaces">
-              <CodexMarketplacesPage
-                coverage={{
-                  marketplaces: requireCoverageItem(coverageById, "codex:marketplaces"),
-                  plugins: requireCoverageItem(coverageById, "codex:plugins"),
-                }}
-                focusedPluginId={focusedPluginId}
-                onShowHooks={() => setCodexTab("hooks")}
-                workflow={codex.extensions}
-              />
-            </TabsContent>
-            <TabsContent value="hooks">
-              <CodexHooksPage
-                coverageItem={requireCoverageItem(coverageById, "codex:hooks")}
-                onShowPlugins={() => setCodexTab("marketplaces")}
-                workflow={codex.extensions}
-              />
-            </TabsContent>
-            <TabsContent value="skills">
-              <CodexSkillsPage
-                coverageItem={requireCoverageItem(coverageById, "codex:skills")}
-                onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); setCodexTab("marketplaces"); }}
-                workflow={codex.skills}
-              />
-            </TabsContent>
-          </Tabs>
+          <div className="view-grid">
+            <Tabs value={codexTab} onValueChange={setCodexTab} role="main" aria-label="Codex 管理">
+              <TabsList aria-label="Codex 管理视图">
+                <TabsTrigger value="marketplaces" disabled={codex.locked}>插件市场</TabsTrigger>
+                <TabsTrigger value="hooks" disabled={codex.locked}>Hooks</TabsTrigger>
+                <TabsTrigger value="skills" disabled={codex.locked}>Skills</TabsTrigger>
+              </TabsList>
+              <TabsContent value="marketplaces">
+                <CodexMarketplacesPage
+                  coverage={{
+                    marketplaces: requireCoverageItem(coverageById, "codex:marketplaces"),
+                    plugins: requireCoverageItem(coverageById, "codex:plugins"),
+                  }}
+                  focusedPluginId={focusedPluginId}
+                  onShowHooks={() => setCodexTab("hooks")}
+                  workflow={codex.extensions}
+                />
+              </TabsContent>
+              <TabsContent value="hooks">
+                <CodexHooksPage
+                  coverageItem={requireCoverageItem(coverageById, "codex:hooks")}
+                  onShowPlugins={() => setCodexTab("marketplaces")}
+                  workflow={codex.extensions}
+                />
+              </TabsContent>
+              <TabsContent value="skills">
+                <CodexSkillsPage
+                  coverageItem={requireCoverageItem(coverageById, "codex:skills")}
+                  onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); setCodexTab("marketplaces"); }}
+                  workflow={codex.skills}
+                />
+              </TabsContent>
+            </Tabs>
+          </div>
         ) : activeView === "claude" ? (
           <ClaudeCodePage
             coverage={{
@@ -460,6 +481,9 @@ export function App() {
               codex: requireCoverageItem(coverageById, "session:codex"),
               claude: requireCoverageItem(coverageById, "session:claude"),
               opencode: requireCoverageItem(coverageById, "session:opencode"),
+              grok: requireCoverageItem(coverageById, "session:grok"),
+              qoder: requireCoverageItem(coverageById, "session:qoder"),
+              "qoder-cn": requireCoverageItem(coverageById, "session:qoder-cn"),
             }}
             onShowHistory={showHistoryRecord}
           />
@@ -533,7 +557,14 @@ export function App() {
               actions.selectManager(managerId);
               setActiveView("managers");
             }}
-            onOpenView={setActiveView}
+            onOpenView={(view) => {
+              if (view === "environment") {
+                setOverviewTab("environment");
+                setActiveView("health");
+                return;
+              }
+              setActiveView(view);
+            }}
             onOpenCoverage={() => setOverviewTab("coverage")}
           />
             </TabsContent>
@@ -550,14 +581,19 @@ export function App() {
             </TabsContent>
           </Tabs>
         ) : (
-          <ManagerTabs
-            coverageIndex={coverageById}
-            managerIds={state.enabledManagers}
-            managerSnapshots={state.managerSnapshots}
-            onSelect={actions.selectManager}
-            scanningManagers={state.scanningManagers}
-            selectedManager={selectedManager}
-          >
+          <div className="view-grid">
+            <PageHeader
+              title="包管理器"
+              description="查看已启用管理器的包清单、路径与缓存占用；维护操作在确认后执行。"
+            />
+            <ManagerTabs
+              coverageIndex={coverageById}
+              managerIds={state.enabledManagers}
+              managerSnapshots={state.managerSnapshots}
+              onSelect={actions.selectManager}
+              scanningManagers={state.scanningManagers}
+              selectedManager={selectedManager}
+            >
             <ManagerObservationHeader
               busy={state.maintenanceBusy}
               item={requireCoverageItem(coverageById, managerObservationId(selectedManager))}
@@ -573,13 +609,13 @@ export function App() {
                   homeDirectory={state.homeDirectory}
                   manager={currentManager}
                   menuOpenIndex={state.openPackageActionMenuIndex}
-                  onCopyPath={(path) => void actions.copyPath(path)}
-                  onCopyPackage={(index) => void actions.copyPackage(index)}
-                  onCopyPackageAction={(index, actionIndex) => void actions.copyPackageAction(index, actionIndex)}
+                  onCopyPath={actions.copyPath}
+                  onCopyPackage={actions.copyPackage}
+                  onCopyPackageAction={actions.copyPackageAction}
                   onHomebrewFilter={actions.setHomebrewFilter}
                   onMavenFilter={actions.setMavenFilter}
-                  onOpenPath={(path) => void actions.openPath(path)}
-                  onOpenPackage={(index) => void actions.openPackage(index)}
+                  onOpenPath={actions.openPath}
+                  onOpenPackage={actions.openPackage}
                   onPipFilter={actions.setPipFilter}
                   onRequestCacheCleanup={actions.requestCacheCleanup}
                   onRequestPackageUninstall={actions.requestPackageUninstall}
@@ -602,6 +638,7 @@ export function App() {
                   onRefresh={() => void actions.refresh()}
                   onCopy={(value) => void actions.copyCommand(value)}
                 />
+                <h2 className="rail-title">路径与缓存</h2>
                 <PathPanel
                   focusedPath={searchFocus?.managerId === selectedManager && searchFocus.kind === "path" ? searchFocus.observationId : undefined}
                   homeDirectory={state.homeDirectory}
@@ -616,10 +653,11 @@ export function App() {
                 />
               </aside>
             </main>
-          </ManagerTabs>
+            </ManagerTabs>
+          </div>
         )}
       </div>
-      <Toaster />
+      <Toaster theme={theme} />
     </Shell>
   );
 }

@@ -36,7 +36,9 @@ export function MaintenanceConfirmationBanner({
             {phase === "invalidated" ? operation.invalidation : execution
               ? request.kind === "uninstallGlobalPackage"
                 ? `本次卸载目标：${managerLabel(request.managerId)} 全局包 ${request.packageName}。`
-                : `本次操作：${copy.title.replace(/^确认/, "")}。`
+                : request.kind === "uninstallSdkComponent"
+                  ? `本次卸载目标：Android SDK 组件 ${request.packageName}。`
+                  : `本次操作：${copy.title.replace(/^确认/, "")}。`
               : copy.description}
           </DialogDescription>
         </DialogHeader>
@@ -121,6 +123,17 @@ function maintenanceConfirmationCopy(confirmation: MaintenanceRequest) {
       description: copy.description,
       confirm: copy.confirm,
       reclaimNote: copy.reclaimNote,
+    };
+  }
+
+  if (confirmation.kind === "uninstallSdkComponent") {
+    return {
+      title: "确认卸载 SDK 组件",
+      description: `将永久删除 Android SDK 组件 ${confirmation.packageName}，不进入废纸篓，无法由本工具恢复。${
+        confirmation.commandPreview ? `执行命令：${confirmation.commandPreview}。` : ""
+      }卸载后会刷新 SDK 组件列表。`,
+      confirm: "卸载 SDK 组件",
+      reclaimNote: undefined as string | undefined,
     };
   }
 

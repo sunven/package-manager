@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   removeCompletedRecords,
@@ -15,10 +15,10 @@ import { recordObservationFacts, sessionObservationFacts } from "../observationF
 import { sessionObservationId } from "../observationItems";
 import { useSessionOperation, type SessionOperationAdapter, type SessionRead } from "./useSessionOperation";
 
-type PendingRemoval =
+type PendingRemoval = (
   | { kind: "one"; source: SessionSourceId; record: SessionRecord }
   | { kind: "age"; source: SessionSourceId; label: string; days: 7 | 30; count: number }
-  | { kind: "selected"; source: SessionSourceId; label: string; records: SessionRecord[] };
+  | { kind: "selected"; source: SessionSourceId; label: string; records: SessionRecord[] }) & { expectedDirectory?: string; cutoffMs?: number };
 
 function confirmedRecord(record: SessionRecord) {
   return {
@@ -29,7 +29,11 @@ function confirmedRecord(record: SessionRecord) {
   };
 }
 
-const SESSION_SCOPES = ["codex", "claude"] as const;
+const SESSION_SCOPES = ["codex", "claude", "grok", "qoder", "qoder-cn"] as const;
+
+function isDirectoryScoped(source: SessionSourceId) {
+  return source === "grok" || source === "qoder" || source === "qoder-cn";
+}
 
 function emptySource(): SessionSourceScan {
   return {
@@ -99,7 +103,7 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
       const scans: Partial<Record<SessionSourceId, SessionSourceScan>> = {};
       const failures: Partial<Record<SessionSourceId, string>> = {};
       for (const source of scopes) {
-        const scan = retained(previous[source], next[source]);
+        const scan = retained(previous[source], next[source] ?? emptySource());
         scans[source] = scan;
         const failure = failureOf(scan);
         if (failure) failures[source] = failure;
@@ -118,11 +122,13 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
   },
   scopesFor: (target) => [target.source],
   execute: (target, report) => {
+    const scope = isDirectoryScoped(target.source) ? { expectedDirectory: target.expectedDirectory } : {};
     if (target.kind === "one") {
       return invoke<SessionRemovalResult>("remove_session_record", {
         source: target.source,
         id: target.record.id,
         confirmedRecord: confirmedRecord(target.record),
+        ...scope,
       });
     }
     const onProgress = new Channel<SessionRemovalProgress>(report);
@@ -131,6 +137,8 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
         source: target.source,
         days: target.days,
         confirmedCount: target.count,
+        ...scope,
+        ...(isDirectoryScoped(target.source) ? { cutoffMs: target.cutoffMs } : {}),
         onProgress,
       });
     }
@@ -138,6 +146,7 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
       source: target.source,
       ids: target.records.map((record) => record.id),
       confirmedRecords: target.records.map(confirmedRecord),
+      ...scope,
       onProgress,
     });
   },
@@ -157,16 +166,68 @@ export function useSessionRecords(active: boolean) {
       recordFollowUp: recordMaintenanceFollowUp,
     });
 
+  const [openingSession, setOpeningSession] = useState<{ source: SessionSourceId; id: string } | null>(null);
+  const opening = useRef(false);
+  const mutation = useRef(false);
   const scan = useMemo<SessionRecordScan | null>(
-    () => scans.codex || scans.claude
-      ? { codex: scans.codex ?? emptySource(), claude: scans.claude ?? emptySource() }
+    () => scans.codex || scans.claude || scans.grok || scans.qoder || scans["qoder-cn"]
+      ? {
+          codex: scans.codex ?? emptySource(),
+          claude: scans.claude ?? emptySource(),
+          grok: scans.grok,
+          qoder: scans.qoder,
+          "qoder-cn": scans["qoder-cn"],
+        }
       : null,
-    [scans.codex, scans.claude],
+    [scans.codex, scans.claude, scans.grok, scans.qoder, scans["qoder-cn"]],
   );
   const scanningSources = useMemo(
-    () => ({ codex: scanning.codex ?? false, claude: scanning.claude ?? false }),
-    [scanning.codex, scanning.claude],
+    () => ({
+      codex: scanning.codex ?? false,
+      claude: scanning.claude ?? false,
+      grok: scanning.grok ?? false,
+      qoder: scanning.qoder ?? false,
+      "qoder-cn": scanning["qoder-cn"] ?? false,
+    }),
+    [scanning.codex, scanning.claude, scanning.grok, scanning.qoder, scanning["qoder-cn"]],
   );
+  async function openSession(source: SessionSourceId, record: SessionRecord): Promise<string | null> {
+    if (opening.current || mutation.current || operation || scanning[source]) return "当前操作尚未结束，请稍后重试。";
+    const scanSource = scans[source];
+    if (!scanSource || scanSource.status === "Failed") return "请先刷新会话记录。";
+    if (source === "grok") {
+      if (!record.grok) return "请先刷新 Grok Build 会话记录。";
+      if (record.grok.resumeError) return record.grok.resumeError;
+    }
+    opening.current = true;
+    setOpeningSession({ source, id: record.id });
+    try {
+      if (source === "grok") {
+        await invoke("open_grok_session", { id: record.id, expectedDirectory: scanSource.directory });
+      } else if (source === "qoder" || source === "qoder-cn") {
+        await invoke("open_qoder_session", { source, id: record.id, expectedDirectory: scanSource.directory });
+      }
+      await refresh([source]);
+      return null;
+    } catch (caught) {
+      return errorToString(caught);
+    } finally {
+      opening.current = false;
+      setOpeningSession(null);
+    }
+  }
+  function request(target: PendingRemoval) {
+    if (opening.current || mutation.current) return;
+    if (isDirectoryScoped(target.source)) {
+      const source = scans[target.source];
+      if (!source || scanning[target.source] || source.status === "Failed" || source.removalBlockedReason) return;
+      target = { ...target, expectedDirectory: source.directory,
+        ...(target.kind === "age" ? { cutoffMs: Date.now() - target.days * 86_400_000 } : {}),
+      };
+    }
+    mutation.current = true;
+    begin(target);
+  }
   const publicOutcome = outcome ? {
     source: outcome.target.source,
     result: outcome.result ?? (outcome.error ? abortedResult(outcome.error) : null),
@@ -182,8 +243,10 @@ export function useSessionRecords(active: boolean) {
     refresh: (source?: SessionSourceId) => refresh(source ? [source] : SESSION_SCOPES),
     operation,
     outcome: publicOutcome,
-    request: (target: PendingRemoval) => begin(target),
-    confirm,
-    cancel,
+    request,
+    confirm: async (id: number) => { try { await confirm(id); } finally { mutation.current = false; } },
+    cancel: (id: number) => { cancel(id); mutation.current = false; },
+    openSession,
+    openingSession,
   };
 }

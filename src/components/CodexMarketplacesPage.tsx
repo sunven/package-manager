@@ -84,19 +84,22 @@ export function CodexMarketplacesPage({ workflow, coverage, onShowHooks, focused
             {reading ? "读取中" : "重新读取"}
           </Button>
         } />
-        <CardContent className="grid gap-2 p-4">
+        <CardContent className="grid gap-3 p-4">
           <p className="text-sm">展开市场，浏览插件目录、查看详情并管理用户默认启用设置。</p>
-          <p className="text-xs text-muted-foreground">仅维护当前用户配置中的来源；默认、受管理或归属不明的市场只供查看。</p>
-          <p className="text-xs text-muted-foreground">插件设置作用于使用下方目录的 Codex CLI 和桌面 App；项目设置可能覆盖用户默认值。</p>
-          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
-            <span className="shrink-0 text-muted-foreground">Codex 目录</span>
-            <code className="min-w-0 break-all">{scan?.directory || plugins.scan?.directory || "尚未读取"}</code>
-          </div>
+          <dl className="meta-list">
+            <div className="meta-row">
+              <dt>Codex 目录</dt>
+              <dd><code>{scan?.directory || plugins.scan?.directory || "尚未读取"}</code></dd>
+            </div>
+            <div className="meta-row">
+              <dt>插件清单</dt>
+              <dd><ObservationState item={coverage.plugins} variant="badge" /></dd>
+            </div>
+          </dl>
           <ObservationState item={coverage.marketplaces} showNote={false} variant="strip" />
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span>插件清单</span>
-            <ObservationState item={coverage.plugins} variant="badge" />
-          </div>
+          <p className="text-xs text-muted-foreground">
+            仅维护当前用户配置中的来源；默认、受管理或归属不明的市场只供查看。插件设置作用于使用此目录的 Codex CLI 和桌面 App；项目设置可能覆盖用户默认值。
+          </p>
           <p className="text-xs text-muted-foreground" role="status">
             {pending ? "正在执行并重新核对市场，请稍候…" : pluginSaving ? "正在执行并重新核对插件…" : reading ? "正在读取市场与插件目录，已有内容为上次结果。" : "重新读取查看本机市场与插件清单；同步市场会从 Git 来源同步内容。"}
           </p>

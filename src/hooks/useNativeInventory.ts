@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { errorToString } from "../utils/format";
 
 export type NativeInventoryScan = {
@@ -141,9 +141,16 @@ export function useNativeInventory<Scan extends NativeInventoryScan, Result = un
     if (visible && autoRead && attempted.current !== epoch.current) void read();
   }, [autoRead, read, state.revision, visible]);
 
+  // Keep the view identity stable between state updates so memoized consumers
+  // (e.g. App's coverage facts) do not recompute on every render.
+  const view = useMemo<NativeInventoryView<Scan, Result>>(
+    () => ({ ...state, scan: state.scan ? withoutSnapshot(state.scan) : null }),
+    [state],
+  );
+
   return {
     scan: state.scan,
-    view: { ...state, scan: state.scan ? withoutSnapshot(state.scan) : null } as NativeInventoryView<Scan, Result>,
+    view,
     native,
     revision,
     running,

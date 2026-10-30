@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { CodexMarketplace, CodexMarketplaceRequest, CodexMarketplaceResult, CodexMarketplaceScan } from "../codexMarketplaces";
 import type { CodexPlugin, CodexPluginChangeRequest, CodexPluginChangeResult, CodexPluginLifecycleRequest, CodexPluginScan } from "../codexPlugins";
 import type { CodexHook, CodexHookChangeRequest, CodexHookChangeResult, CodexHookDefinitions, CodexHookScan, HookDefinitionPreview, HookDefinitionRequest } from "../codexHooks";
@@ -243,12 +243,23 @@ export function useCodexExtensions(active: boolean, tab: string): CodexExtension
     return true;
   }
 
-  const scan = hooks.view.scan;
-  const { definitions, ...hookView } = scan ?? {};
+  // Stable identity between reads: App depends on this view for coverage memos.
+  const hookScanView = useMemo<CodexExtensions["hooks"]>(() => {
+    const { definitions, ...hookView } = hooks.view.scan ?? {};
+    return {
+      ...hooks.view,
+      scan: hooks.view.scan ? {
+        ...hookView,
+        definitions: definitions
+          ? { ...withoutSnapshot(definitions), current: hooks.view.current && Boolean(definitions.snapshotId), revision: hooks.view.revision }
+          : definitions,
+      } as HookScanView : null,
+    };
+  }, [hooks.view]);
   return {
     marketplaces: marketplaces.view,
     plugins: plugins.view,
-    hooks: { ...hooks.view, scan: scan ? { ...hookView, definitions: definitions ? { ...withoutSnapshot(definitions), current: hooks.view.current && Boolean(definitions.snapshotId), revision: hooks.view.revision } : definitions } as HookScanView : null },
+    hooks: hookScanView,
     operation, processing: Boolean(operation && operation.phase !== "confirming"), request, confirm, cancel, refresh,
     readMarketplaces: async () => { await marketplaces.read(); },
     readPlugins: async () => { await plugins.read(); },

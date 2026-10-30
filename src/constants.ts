@@ -10,7 +10,7 @@ import type {
   PipFilter,
 } from "./types";
 
-export const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Nvm", "Homebrew", "Maven", "Pip", "Cargo", "Docker", "Bun", "Uv", "Fvm"];
+export const managerOrder: ManagerId[] = ["Npm", "Pnpm", "Yarn", "Nvm", "Homebrew", "Maven", "Pip", "Cargo", "Docker", "Bun", "Uv", "Fvm", "AndroidSdk"];
 
 export const managerLabels: Record<ManagerId, string> = {
   Npm: "npm",
@@ -25,6 +25,7 @@ export const managerLabels: Record<ManagerId, string> = {
   Bun: "Bun",
   Uv: "uv",
   Fvm: "FVM",
+  AndroidSdk: "Android SDK",
 };
 
 export const statusLabels: Record<DisplayStatus, string> = {
@@ -70,6 +71,7 @@ export const pathKindLabels: Record<PathKind, string> = {
   LocalRepository: "本地仓库",
   SitePackages: "站点包目录",
   UserSite: "用户站点包目录",
+  AndroidSdkRoot: "SDK 根目录",
 };
 
 export const packageKindLabels: Record<PackageKind, string> = {
@@ -85,6 +87,7 @@ export const packageKindLabels: Record<PackageKind, string> = {
   UvTool: "uv 工具",
   UvPython: "uv Python",
   FlutterVersion: "Flutter 版本",
+  AndroidSdkComponent: "SDK 组件",
 };
 
 export const signalLabels: Record<PackageSignal, string> = {

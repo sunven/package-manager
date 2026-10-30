@@ -3,7 +3,7 @@ import { CaretDown, CaretRight } from "@phosphor-icons/react";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader } from "../../components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
 import type {
   ObservationCoverage,
   ObservationCoverageGroup,
@@ -11,7 +11,7 @@ import type {
 } from "../observationCoverage";
 import type { ObservationGroupId } from "../observationItems";
 import { ObservationState } from "./ObservationState";
-import { StatCard } from "./ui";
+import { PageHeader, StatCard } from "./ui";
 
 const defaultExpanded: Record<ObservationGroupId, boolean> = {
   managers: true,
@@ -52,14 +52,14 @@ export function ObservationCoveragePage({
 
   return (
     <main aria-label="观察覆盖度" className="view-grid">
-      <div className="grid gap-1">
-        <h2 className="text-xl font-medium">观察覆盖度</h2>
-        <p className="text-sm text-muted-foreground">这里陈述哪些来源已观察、何时观察、读取是否完整。未观察不代表没有内容。</p>
-      </div>
+      <PageHeader
+        title="观察覆盖度"
+        description="这里陈述哪些来源已观察、何时观察、读取是否完整。未观察不代表没有内容。"
+      />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="已观察" value={summary.partial ? `${summary.observed}（含部分 ${summary.partial}）` : String(summary.observed)} tone="measurement" />
-        <StatCard label="需注意" value={String(summary.attention)} tone="info" />
+      <div className="stat-grid grid-cols-2 lg:grid-cols-4">
+        <StatCard label="已观察" value={summary.partial ? `${summary.observed}（含部分 ${summary.partial}）` : String(summary.observed)} />
+        <StatCard label="需注意" value={String(summary.attention)} />
         <StatCard label="未观察" value={String(summary.notObserved)} />
         <StatCard label="已停用" value={String(summary.disabled)} />
       </div>
@@ -129,10 +129,10 @@ function CoverageGroup({
       <CardHeader className="gap-2 border-b py-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <Button aria-expanded={expanded} aria-label={`${expanded ? "收起" : "展开"}${group.label}`} onClick={onToggle} size="sm" type="button" variant="ghost">
+            <Button aria-expanded={expanded} aria-label={`${expanded ? "收起" : "展开"}${group.label}`} className="size-7 p-0" onClick={onToggle} size="sm" type="button" variant="ghost">
               {expanded ? <CaretDown aria-hidden="true" /> : <CaretRight aria-hidden="true" />}
-              <span className="text-base font-medium">{group.label}</span>
             </Button>
+            <CardTitle aria-level={3} role="heading">{group.label}</CardTitle>
             {group.id === "managers" ? <span className="text-xs text-muted-foreground">已观察 {group.observedCount} / 已启用 {group.enabledCount}</span> : null}
             {group.disabledCount ? <span className="text-xs text-muted-foreground">{group.disabledCount} 已停用</span> : null}
             {group.attentionCount ? <Badge variant="secondary">需注意 {group.attentionCount}</Badge> : null}

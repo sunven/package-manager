@@ -5,42 +5,49 @@ export function managerLabel(managerId: ManagerId) {
   return managerLabels[managerId];
 }
 
+const pathLabels: Record<string, string> = {
+  Cache: "缓存",
+  "Cache folder": "缓存文件夹",
+  "npx cache": "npx 缓存",
+  Store: "存储",
+  "Global modules": "全局模块",
+  "Global dir": "全局目录",
+  "NVM dir": "nvm 目录",
+  "Node versions": "Node 版本目录",
+  "Cargo bin": "Cargo 二进制目录",
+  "Cargo registry cache": "Cargo registry 缓存",
+  "Cargo registry source": "Cargo registry 源码",
+  "Cargo git cache": "Cargo git 缓存",
+  "Cargo git checkouts": "Cargo git checkouts",
+  "Docker config": "Docker 配置",
+  "Docker buildx": "Docker buildx 缓存",
+  "Docker Desktop data": "Docker Desktop 数据",
+  "Bun install": "Bun 安装目录",
+  "Bun cache": "Bun 缓存",
+  "uv tools": "uv 工具目录",
+  "uv Python installations": "uv Python 目录",
+  "uv cache": "uv 缓存",
+  Prefix: "安装前缀",
+  Cellar: "软件目录",
+  Caskroom: "应用目录",
+  "Local repository": "本地仓库",
+  "pip cache": "pip 缓存",
+  "site-packages": "site-packages",
+  "User site": "用户 site-packages",
+  "Android SDK root": "SDK 根目录",
+};
+
 export function pathLabel(label: string) {
-  const pathLabels: Record<string, string> = {
-    Cache: "缓存",
-    "Cache folder": "缓存文件夹",
-    "npx cache": "npx 缓存",
-    Store: "存储",
-    "Global modules": "全局模块",
-    "Global dir": "全局目录",
-    "NVM dir": "nvm 目录",
-    "Node versions": "Node 版本目录",
-    "Cargo bin": "Cargo 二进制目录",
-    "Cargo registry cache": "Cargo registry 缓存",
-    "Cargo registry source": "Cargo registry 源码",
-    "Cargo git cache": "Cargo git 缓存",
-    "Cargo git checkouts": "Cargo git checkouts",
-    "Docker config": "Docker 配置",
-    "Docker buildx": "Docker buildx 缓存",
-    "Docker Desktop data": "Docker Desktop 数据",
-    "Bun install": "Bun 安装目录",
-    "Bun cache": "Bun 缓存",
-    "uv tools": "uv 工具目录",
-    "uv Python installations": "uv Python 目录",
-    "uv cache": "uv 缓存",
-    Prefix: "安装前缀",
-    Cellar: "软件目录",
-    Caskroom: "应用目录",
-    "Local repository": "本地仓库",
-    "pip cache": "pip 缓存",
-    "site-packages": "site-packages",
-    "User site": "用户 site-packages",
-  };
   return pathLabels[label] ?? label;
 }
 
+const displayMessageCache = new Map<string, string>();
+const DISPLAY_MESSAGE_CACHE_LIMIT = 200;
+
 export function displayMessage(message: string) {
-  return message
+  const cached = displayMessageCache.get(message);
+  if (cached !== undefined) return cached;
+  const translated = message
     .replace("Yarn 2+ does not expose a global package list equivalent to npm, pnpm, or Yarn Classic.", "Yarn 2+ 没有提供等同于 npm、pnpm 或 Yarn Classic 的全局软件包列表。")
     .replace("Outdated scan pending", "可更新包扫描等待中")
     .replace("Cleanup dry-run pending", "清理预演等待中")
@@ -103,6 +110,9 @@ export function displayMessage(message: string) {
     .replace("python3 and python are not installed or are not on PATH", "python3 和 python 均未安装，或不在 PATH 中")
     .replace("Permission denied while running", "运行命令时权限被拒绝：")
     .replace("Could not run", "无法运行命令：");
+  if (displayMessageCache.size >= DISPLAY_MESSAGE_CACHE_LIMIT) displayMessageCache.clear();
+  displayMessageCache.set(message, translated);
+  return translated;
 }
 
 export function countedSizePath(kind: PathKind) {
@@ -155,6 +165,7 @@ export function actionLabel(action: CommandEnvelope) {
   if (command.includes("python install")) return "复制安装 Python 命令";
   if (command.includes("cache prune")) return "复制缓存精简命令";
   if (command.includes("cache clean")) return "复制清空缓存命令";
+  if (command.includes("sdk update") || (action.program.endsWith("sdkmanager") && secondArg === "--install")) return "复制更新命令";
   if (command.includes("nvm use")) return "复制切换版本命令";
   if (firstArg === "upgrade" && secondArg === "--cask") return "复制应用包升级命令";
   if (firstArg === "upgrade") return "复制升级命令";

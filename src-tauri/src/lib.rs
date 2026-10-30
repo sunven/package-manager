@@ -14,6 +14,7 @@ mod command;
 mod command_location_association;
 mod disk_usage;
 mod environment_inspection;
+mod grok_sessions;
 mod maintenance_adapters;
 mod maintenance_history;
 mod maintenance_operation;
@@ -26,6 +27,7 @@ mod opencode_sessions;
 mod project_cleanup;
 mod project_cleanup_batch;
 mod project_scan_history;
+mod qoder_sessions;
 mod scan_diagnostics;
 mod session_records;
 mod skill_installation_copy;
@@ -35,8 +37,8 @@ mod vscode_storage;
 
 use crate::command::{run_command, run_command_owned};
 use crate::managers::{
-    run_cache_cleanup_with_runner, run_npm_maintenance_with_runner,
-    run_pnpm_maintenance_with_runner, scan_manager_snapshot,
+    run_android_sdk_uninstall_with_runner, run_cache_cleanup_with_runner,
+    run_npm_maintenance_with_runner, run_pnpm_maintenance_with_runner, scan_manager_snapshot,
 };
 use crate::project_cleanup::{
     discover_project_data, measure_project_data, DirectoryMeasurement, ProjectCleanupSettings,
@@ -44,8 +46,8 @@ use crate::project_cleanup::{
     ProjectDataOpenTarget, ProjectDataScan, ToolAvailability,
 };
 use crate::types::{
-    CacheCleanupRun, MaintenanceRunPreview, ManagerId, ManagerScanProgress, ManagerScanSnapshot,
-    NpmMaintenanceOperation, PnpmMaintenanceOperation,
+    AndroidSdkMaintenanceOperation, CacheCleanupRun, MaintenanceRunPreview, ManagerId,
+    ManagerScanProgress, ManagerScanSnapshot, NpmMaintenanceOperation, PnpmMaintenanceOperation,
 };
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
@@ -338,11 +340,24 @@ async fn change_codex_plugin(
         .map_err(|error| error.to_string())?
 }
 
+fn confirmed_age_cutoff(cutoff_ms: Option<i64>, days: u64) -> bool {
+    matches!(days, 7 | 30)
+        && cutoff_ms.is_some_and(|cutoff| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_millis().min(i64::MAX as u128) as i64)
+                .unwrap_or(0);
+            cutoff <= now.saturating_sub((days as i64).saturating_mul(86_400_000))
+        })
+}
+
 #[tauri::command]
 async fn remove_session_records_older_than(
     source: session_records::SessionSourceKind,
     days: u64,
     confirmed_count: Option<usize>,
+    expected_directory: Option<String>,
+    cutoff_ms: Option<i64>,
     on_progress: tauri::ipc::Channel<session_records::SessionRemovalProgress>,
     history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
 ) -> Result<maintenance_operation::Receipt<session_records::SessionRemovalResult>, String> {
@@ -356,13 +371,40 @@ async fn remove_session_records_older_than(
             source,
             days,
             confirmed_count,
+            expected_directory.clone(),
+            cutoff_ms,
             |sink| {
-                session_records::remove_older_default_with_reporter(
-                    source,
-                    days,
-                    &mut report,
-                    sink,
-                )
+                if matches!(source, session_records::SessionSourceKind::Grok) {
+                    if !confirmed_age_cutoff(cutoff_ms, days) {
+                        return Err("Grok Build 按年龄移除需要已确认的 7／30 天门槛".into());
+                    }
+                    grok_sessions::remove_default(
+                        expected_directory.as_deref(),
+                        None,
+                        cutoff_ms,
+                        &mut report,
+                        sink,
+                    )
+                } else if let Some(edition) = qoder_sessions::QoderEdition::from_source(source) {
+                    if !confirmed_age_cutoff(cutoff_ms, days) {
+                        return Err("Qoder 按年龄移除需要已确认的 7／30 天门槛".into());
+                    }
+                    qoder_sessions::remove_default(
+                        edition,
+                        expected_directory.as_deref(),
+                        None,
+                        cutoff_ms,
+                        &mut report,
+                        sink,
+                    )
+                } else {
+                    session_records::remove_older_default_with_reporter(
+                        source,
+                        days,
+                        &mut report,
+                        sink,
+                    )
+                }
             },
         )
     })
@@ -375,6 +417,7 @@ async fn remove_session_record(
     source: session_records::SessionSourceKind,
     id: String,
     confirmed_record: Option<maintenance_adapters::SessionRecordSnapshotInput>,
+    expected_directory: Option<String>,
     history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
 ) -> Result<maintenance_operation::Receipt<session_records::SessionRemovalResult>, String> {
     let history = history.inner().clone();
@@ -383,7 +426,29 @@ async fn remove_session_record(
             &history,
             source,
             confirmed_record,
-            || session_records::remove_default(source, &id),
+            expected_directory.clone(),
+            || {
+                if matches!(source, session_records::SessionSourceKind::Grok) {
+                    grok_sessions::remove_default(
+                        expected_directory.as_deref(),
+                        Some(&[id.clone()]),
+                        None,
+                        &mut |_| {},
+                        &mut |_| {},
+                    )
+                } else if let Some(edition) = qoder_sessions::QoderEdition::from_source(source) {
+                    qoder_sessions::remove_default(
+                        edition,
+                        expected_directory.as_deref(),
+                        Some(std::slice::from_ref(&id)),
+                        None,
+                        &mut |_| {},
+                        &mut |_| {},
+                    )
+                } else {
+                    session_records::remove_default(source, &id)
+                }
+            },
         )
     })
     .await
@@ -395,6 +460,7 @@ async fn remove_session_records(
     source: session_records::SessionSourceKind,
     ids: Vec<String>,
     confirmed_records: Vec<maintenance_adapters::SessionRecordSnapshotInput>,
+    expected_directory: Option<String>,
     on_progress: tauri::ipc::Channel<session_records::SessionRemovalProgress>,
     history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
 ) -> Result<maintenance_operation::Receipt<session_records::SessionRemovalResult>, String> {
@@ -407,13 +473,33 @@ async fn remove_session_records(
             &history,
             source,
             confirmed_records,
+            expected_directory.clone(),
             |sink| {
-                session_records::remove_selected_default_with_reporter(
-                    source,
-                    &ids,
-                    &mut report,
-                    sink,
-                )
+                if matches!(source, session_records::SessionSourceKind::Grok) {
+                    grok_sessions::remove_default(
+                        expected_directory.as_deref(),
+                        Some(&ids),
+                        None,
+                        &mut report,
+                        sink,
+                    )
+                } else if let Some(edition) = qoder_sessions::QoderEdition::from_source(source) {
+                    qoder_sessions::remove_default(
+                        edition,
+                        expected_directory.as_deref(),
+                        Some(&ids),
+                        None,
+                        &mut report,
+                        sink,
+                    )
+                } else {
+                    session_records::remove_selected_default_with_reporter(
+                        source,
+                        &ids,
+                        &mut report,
+                        sink,
+                    )
+                }
             },
         )
     })
@@ -449,6 +535,30 @@ async fn scan_opencode_sessions() -> opencode_sessions::OpenCodeSessionScan {
             activity_message: None,
             age_eligible: Default::default(),
         })
+}
+
+#[tauri::command]
+async fn open_grok_session(id: String, expected_directory: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        grok_sessions::open_default(&id, &expected_directory)
+    })
+    .await
+    .map_err(|_| "无法启动 Grok Build 会话".to_string())?
+}
+
+#[tauri::command]
+async fn open_qoder_session(
+    source: session_records::SessionSourceKind,
+    id: String,
+    expected_directory: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let edition = qoder_sessions::QoderEdition::from_source(source)
+            .ok_or_else(|| "不是 Qoder 会话来源。".to_string())?;
+        qoder_sessions::open_default(edition, &id, &expected_directory)
+    })
+    .await
+    .map_err(|_| "无法启动 Qoder 会话".to_string())?
 }
 
 #[tauri::command]
@@ -851,6 +961,28 @@ async fn run_pnpm_maintenance(
     .map_err(|err| format!("pnpm maintenance failed: {err}"))?
 }
 
+#[tauri::command]
+async fn run_android_sdk_maintenance(
+    operation: AndroidSdkMaintenanceOperation,
+    before_snapshot_id: Option<String>,
+    state: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_operation::Receipt<MaintenanceRunPreview>, String> {
+    let state = state.inner().clone();
+    let AndroidSdkMaintenanceOperation::UninstallSdkComponent { ref package_id, .. } = operation;
+    let target = package_id.clone();
+    tauri::async_runtime::spawn_blocking(move || maintenance_adapters::run_manager_maintenance(
+        &state,
+        ManagerId::AndroidSdk,
+        maintenance_history::MaintenanceOperation::UninstallSdkComponent,
+        Some(target),
+        before_snapshot_id,
+        || run_android_sdk_uninstall_with_runner(operation, &run_command_owned),
+        maintenance_adapters::sdk_component_uninstall_summary,
+    ))
+    .await
+    .map_err(|err| format!("Android SDK maintenance failed: {err}"))?
+}
+
 /// Execution remains manager-only and allowlisted. The optional archive ID is
 /// observation metadata and grants no authority over commands or paths.
 #[tauri::command]
@@ -951,6 +1083,8 @@ pub fn run() {
             scan_session_source,
             scan_opencode_sessions,
             open_opencode_session,
+            open_grok_session,
+            open_qoder_session,
             prepare_opencode_deletion,
             commit_opencode_deletion,
             scan_vscode_storage,
@@ -983,6 +1117,7 @@ pub fn run() {
             scan_manager,
             run_npm_maintenance,
             run_pnpm_maintenance,
+            run_android_sdk_maintenance,
             run_cache_cleanup
         ])
         .run(tauri::generate_context!())

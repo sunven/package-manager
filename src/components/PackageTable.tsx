@@ -1,5 +1,5 @@
 import { packageObservationId } from "../managerHistory";
-import { useState } from "react";
+import { memo, useDeferredValue, useMemo, useState } from "react";
 import { Input } from "../../components/ui/input";
 import { ArrowSquareOut as ExternalLink, Copy, Trash as Trash2 } from "@phosphor-icons/react";
 import { environmentKindLabels, homebrewFilterLabels, mavenFilterLabels, packageKindLabels, pipFilterLabels, signalLabels } from "../constants";
@@ -17,6 +17,7 @@ import type { MaintenanceRequest } from "../state";
 import { displayMessage, formatHomePath, formatHomePathsInText, pathLabel, shorten } from "../utils/format";
 import { filteredHomebrewPackages, filteredMavenPackages, filteredPipPackages, indexedPackages, searchAndSortPackages, type PackageSort, type IndexedPackage } from "../utils/filters";
 import { cleanupCopyFor } from "../cleanupCopy";
+import { androidSdkUninstallBlockReason } from "../androidSdk";
 import { cx } from "../utils/classNames";
 import { EmptyState, IconButton, SignalBadge, SkeletonRows, StatCard, StatusBadge } from "./ui";
 import { PackageActions } from "./PackageActions";
@@ -24,6 +25,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
+import { TooltipProvider } from "../../components/ui/tooltip";
 
 interface PackageTableProps {
   homeDirectory: string | null;
@@ -49,17 +51,24 @@ interface PackageTableProps {
   selectedPipFilter: PipFilter;
 }
 
-export function PackageTable(props: PackageTableProps) {
+export const PackageTable = memo(function PackageTable(props: PackageTableProps) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<PackageSort>("name");
   const [descending, setDescending] = useState(false);
   const manager = props.manager;
-  const original = !manager ? [] : manager.id === "Homebrew" ? filteredHomebrewPackages(manager, props.selectedHomebrewFilter)
-    : manager.id === "Maven" ? filteredMavenPackages(manager, props.selectedMavenFilter)
-      : manager.id === "Pip" ? filteredPipPackages(manager, props.selectedPipFilter) : indexedPackages(manager);
-  const rows = searchAndSortPackages(original, query, sort, descending);
+  const original = useMemo(
+    () => !manager ? [] : manager.id === "Homebrew" ? filteredHomebrewPackages(manager, props.selectedHomebrewFilter)
+      : manager.id === "Maven" ? filteredMavenPackages(manager, props.selectedMavenFilter)
+        : manager.id === "Pip" ? filteredPipPackages(manager, props.selectedPipFilter) : indexedPackages(manager),
+    [manager, props.selectedHomebrewFilter, props.selectedMavenFilter, props.selectedPipFilter],
+  );
+  const deferredQuery = useDeferredValue(query);
+  const rows = useMemo(
+    () => searchAndSortPackages(original, deferredQuery, sort, descending),
+    [original, deferredQuery, sort, descending],
+  );
   const changed = () => { props.onSelectPackage(null); };
-  return <>
+  return <TooltipProvider>
     <div className="flex flex-wrap items-center gap-2 border-b p-3">
       <Input aria-label="搜索当前管理器的软件包" placeholder="搜索名称、版本或路径" type="search" value={query} onChange={(event) => { setQuery(event.target.value); changed(); }} className="min-w-40 flex-1" />
       <ToggleGroup type="single" value={sort} onValueChange={(value) => { if (value) { setSort(value as PackageSort); changed(); } }} aria-label="软件包排序字段">
@@ -69,8 +78,8 @@ export function PackageTable(props: PackageTableProps) {
       <span className="text-xs text-muted-foreground" role="status">{manager ? `${rows.length} / ${manager.packages.length} 项` : "尚未扫描"}</span>
     </div>
     <PackageTableContent {...props} rows={rows} />
-  </>;
-}
+  </TooltipProvider>;
+});
 
 function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[] }) {
   const { homeDirectory, manager, scanning } = props;
@@ -84,6 +93,16 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
       ? `未找到 ${manager.label}，请查看扫描诊断，确认已安装且应用可以访问`
       : `${manager.label} 扫描不完整，暂未读到条目，请查看扫描诊断后重新扫描`
     : null;
+
+  if (manager.status === "Unsupported") {
+    return (
+      <div className="px-4 py-4">
+        <p className="font-medium text-foreground">{manager.label} 不提供等价的全局软件包清单。</p>
+        {manager.unsupportedReason ? <p className="mt-2 text-sm text-muted-foreground">{formatHomePathsInText(displayMessage(manager.unsupportedReason), homeDirectory)}</p> : null}
+        <p className="mt-2 text-sm text-muted-foreground">仍可在路径面板查看路径、占用和可用的清理操作。</p>
+      </div>
+    );
+  }
 
   if (manager.id === "Homebrew") {
     const packages = props.rows;
@@ -142,13 +161,17 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
     );
   }
 
-  if (manager.status === "Unsupported") {
+  if (manager.id === "AndroidSdk") {
     return (
-      <div className="px-4 py-4">
-        <p className="font-medium text-foreground">Yarn 现代版本不提供全局软件包列表。</p>
-        {manager.unsupportedReason ? <p className="mt-2 text-sm text-muted-foreground">{formatHomePathsInText(displayMessage(manager.unsupportedReason), homeDirectory)}</p> : null}
-        <p className="mt-2 text-sm text-muted-foreground">仍可在路径面板查看缓存目录、占用和可用的清理操作。</p>
-      </div>
+      <SpecializedTable
+        emptyMessage={unreadMessage ?? "未找到可识别的 SDK 组件"}
+        heading={["组件", "版本", "说明", "路径", "操作"]}
+        middleColumn="description"
+        showKindBadge={false}
+        uninstallBlockedReason={(pkg) => androidSdkUninstallBlockReason(manager, pkg)}
+        packages={props.rows}
+        {...props}
+      />
     );
   }
 
@@ -256,10 +279,16 @@ function SpecializedTable({
   selectedPackageIndex,
   homeDirectory,
   manager,
+  middleColumn = "signals",
+  showKindBadge = true,
+  uninstallBlockedReason,
 }: PackageTableProps & {
   emptyMessage: string;
   heading: string[];
   packages: IndexedPackage[];
+  middleColumn?: "signals" | "description";
+  showKindBadge?: boolean;
+  uninstallBlockedReason?: (pkg: PackageRow) => string | null;
 }) {
   if (!packages.length) return <EmptyState message={emptyMessage} />;
 
@@ -275,12 +304,16 @@ function SpecializedTable({
         >
           <TableCell className="min-w-45 max-w-70 truncate">
             <PackageName pkg={pkg} selected={index === selectedPackageIndex} onSelect={() => onSelectPackage(index)}>
-              <Badge className="shrink-0" variant="secondary">{packageKindLabels[pkg.kind]}</Badge>
+              {showKindBadge ? <Badge className="shrink-0" variant="secondary">{packageKindLabels[pkg.kind]}</Badge> : null}
             </PackageName>
           </TableCell>
           <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
           <TableCell>
-            <span className="flex min-w-0 flex-wrap gap-1.5">{renderPackageSignals(pkg)}</span>
+            {middleColumn === "description" ? (
+              <span className="block max-w-70 truncate text-muted-foreground" title={pkg.source}>{formatHomePathsInText(pkg.source, homeDirectory)}</span>
+            ) : (
+              <span className="flex min-w-0 flex-wrap gap-1.5">{renderPackageSignals(pkg)}</span>
+            )}
           </TableCell>
           <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ? formatHomePath(pkg.path, homeDirectory) : "无"}</TableCell>
           <TableCell className="w-24 text-right">
@@ -295,6 +328,7 @@ function SpecializedTable({
               onToggle={onToggleActions}
               pendingUninstall={isPendingUninstall(pendingMaintenance, manager?.id, index, pkg.name)}
               pkg={pkg}
+              uninstallBlockedReason={uninstallBlockedReason?.(pkg) ?? null}
             />
           </TableCell>
         </TableRow>
@@ -304,7 +338,7 @@ function SpecializedTable({
 }
 
 function isPendingUninstall(pending: MaintenanceRequest | null, managerId: ManagerSnapshot["id"] | undefined, index: number, packageName: string) {
-  return pending?.kind === "uninstallGlobalPackage" && pending.managerId === managerId && pending.packageIndex === index && pending.packageName === packageName;
+  return (pending?.kind === "uninstallGlobalPackage" || pending?.kind === "uninstallSdkComponent") && pending.managerId === managerId && pending.packageIndex === index && pending.packageName === packageName;
 }
 
 function TableShell({
@@ -319,9 +353,9 @@ function TableShell({
   return (
     <Table className={compact ? "table-fixed" : "min-w-[760px]"}>
       <TableHeader>
-        <TableRow className="bg-muted/40 hover:bg-muted/40">
+        <TableRow className="hover:bg-transparent">
           {heading.map((item) => (
-            <TableHead className={cx("font-semibold", compact && item === "版本" && "w-32", item === "操作" && (compact ? "w-32 text-right" : "w-24 text-right"))} key={item}>
+            <TableHead className={cx(compact && item === "版本" && "w-32", item === "操作" && (compact ? "w-32 text-right" : "w-24 text-right"))} key={item}>
               {item}
             </TableHead>
           ))}
@@ -370,7 +404,7 @@ function MavenSummary({ health, homeDirectory }: { health: MavenRepositoryHealth
   const scanStatus = health.repositoryScanStatus.partial ? "部分可用" : "就绪";
 
   return (
-    <div className="flex flex-col gap-2 p-3">
+    <div className="flex flex-col gap-3 p-4">
       <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="构件" value={String(health.artifactCount)} />
         <StatCard label="版本" value={String(health.versionCount)} />
@@ -393,7 +427,7 @@ function PipSummary({ health, homeDirectory }: { health: PipEnvironmentHealth | 
   const outdatedValue = health.outdatedStatus === "Ready" ? String(health.outdatedCount) : health.outdatedStatus === "Pending" ? "等待中" : "失败";
 
   return (
-    <div className="flex flex-col gap-2 p-3">
+    <div className="flex flex-col gap-3 p-4">
       <div className="stat-grid grid-cols-2 md:grid-cols-5">
         <StatCard label="已安装" value={String(health.installedCount)} />
         <StatCard label="可更新" value={outdatedValue} />
@@ -425,7 +459,7 @@ function DockerSummary({
   const cleanupCopy = cleanupAvailable ? cleanupCopyFor("Docker") : null;
 
   return (
-    <div className="flex flex-col gap-2 p-3">
+    <div className="flex flex-col gap-3 p-4">
       <div className="stat-grid grid-cols-2 md:grid-cols-3">
         <StatCard label="镜像" value={String(health.imageCount)} />
         <StatCard label="容器" value={String(health.containerCount)} />
@@ -439,7 +473,7 @@ function DockerSummary({
           {diskRows.map((row) => (
             <div className="min-w-0" key={row.resourceType}>
               <StatCard label={`${row.resourceType} · Docker 报告可回收`} value={row.reclaimable || "—"} />
-              <p className="px-3 text-xs text-muted-foreground">Docker 报告占用 {row.size || "—"}</p>
+              <p className="border-t border-border bg-card px-4 py-2 text-xs text-muted-foreground">Docker 报告占用 {row.size || "—"}</p>
             </div>
           ))}
         </div>
@@ -476,7 +510,7 @@ function FilterBar<T extends string>({
 }) {
   return (
     <ToggleGroup
-      className="flex flex-wrap justify-start border-y px-4 py-3"
+      className="flex flex-wrap justify-start border-t px-4 py-3"
       onValueChange={(value) => {
         if (value) onSelect(value as T);
       }}

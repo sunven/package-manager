@@ -3,7 +3,6 @@ import type { DevelopmentHealthSummary, HealthRecommendation, HealthTone } from 
 import type { ManagerId } from "../types";
 import { formatBytes, managerLabel } from "../utils/format";
 import { Button } from "../../components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { EmptyState } from "./ui";
 
 export function DevelopmentHealthPage({
@@ -15,23 +14,23 @@ export function DevelopmentHealthPage({
   onOpenManager: (managerId: ManagerId) => void;
 }) {
   return (
-    <Card aria-label="优先建议" className="gap-4 py-4" role="region">
-      <CardHeader className="px-4">
-        <CardTitle aria-level={3} role="heading">优先建议</CardTitle>
-        <CardAction className="text-xs text-muted-foreground">{health.recommendations.length} 项</CardAction>
-      </CardHeader>
-      <CardContent className="px-4">
-        {health.recommendations.length ? (
-          <div className="studio-recs">
-            {health.recommendations.map((recommendation) => (
-              <RecommendationRow key={recommendation.id} onOpenManager={onOpenManager} recommendation={recommendation} />
-            ))}
-          </div>
-        ) : (
+    <section aria-labelledby="overview-recommendations-title" className="overview-board-section">
+      <div className="overview-section-head">
+        <h2 id="overview-recommendations-title">优先建议</h2>
+        <span>{health.recommendations.length} 项</span>
+      </div>
+      {health.recommendations.length ? (
+        <div className="studio-recs">
+          {health.recommendations.map((recommendation) => (
+            <RecommendationRow key={recommendation.id} onOpenManager={onOpenManager} recommendation={recommendation} />
+          ))}
+        </div>
+      ) : (
+        <div className="overview-section-body">
           <EmptyState message={health.scannedManagerCount ? "已扫描的管理器暂无优先建议" : "扫描管理器后查看维护建议"} />
-        )}
-      </CardContent>
-    </Card>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -43,7 +42,7 @@ function RecommendationRow({
   recommendation: HealthRecommendation;
 }) {
   return (
-    <div className="studio-rec" data-tone={recommendation.tone}>
+    <div className="studio-rec">
       <div>
         <div className="studio-rec-meta">
           <ToneBadge tone={recommendation.tone} />
@@ -61,7 +60,7 @@ function RecommendationRow({
         onClick={() => onOpenManager(recommendation.managerId)}
         size="sm"
         type="button"
-        variant="outline"
+        variant="ghost"
       >
         <ArrowRight data-icon="inline-start" />
         查看

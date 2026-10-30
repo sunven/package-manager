@@ -1,4 +1,4 @@
-export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Nvm" | "Homebrew" | "Maven" | "Pip" | "Cargo" | "Docker" | "Bun" | "Uv" | "Fvm";
+export type ManagerId = "Npm" | "Pnpm" | "Yarn" | "Nvm" | "Homebrew" | "Maven" | "Pip" | "Cargo" | "Docker" | "Bun" | "Uv" | "Fvm" | "AndroidSdk";
 export type ManagerStatus = "Ready" | "Missing" | "Unsupported" | "Partial" | "Failed";
 export type DiskUsageStatus = "Pending" | "Ready" | "Missing" | "PermissionDenied" | "Error";
 export type PathKind =
@@ -29,7 +29,8 @@ export type PathKind =
   | "Caskroom"
   | "LocalRepository"
   | "SitePackages"
-  | "UserSite";
+  | "UserSite"
+  | "AndroidSdkRoot";
 export type PackageKind =
   | "Generic"
   | "Formula"
@@ -42,7 +43,8 @@ export type PackageKind =
   | "BunPackage"
   | "UvTool"
   | "UvPython"
-  | "FlutterVersion";
+  | "FlutterVersion"
+  | "AndroidSdkComponent";
 export type PackageSignal =
   | "Current"
   | "Outdated"
@@ -121,6 +123,17 @@ export interface ManagerSnapshot {
   maven: MavenRepositoryHealth | null;
   pip: PipEnvironmentHealth | null;
   docker: DockerResourceHealth | null;
+  androidSdk?: AndroidSdkMaintenance | null;
+}
+
+export interface AndroidSdkCli {
+  program: string;
+  flavor: "Android" | "Sdkmanager";
+  sdkRoot: string;
+}
+
+export interface AndroidSdkMaintenance {
+  cli: AndroidSdkCli | null;
 }
 
 export interface HomebrewMaintenance {

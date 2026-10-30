@@ -11,6 +11,7 @@ export type MaintenanceDomain = "manager" | "projectCleanup" | "vscodeStorage" |
 export type MaintenanceOperation =
   | "cleanupCache"
   | "uninstallGlobalPackage"
+  | "uninstallSdkComponent"
   | "cleanBatch"
   | "removeWorkspaceStorage"
   | "removeToTrash"
@@ -127,11 +128,13 @@ export interface SessionRemovalItemSnapshot {
 export interface SessionTrashDetail {
   kind: "sessionTrash";
   scope: {
-    source: "codex" | "claude";
+    source: "codex" | "claude" | "grok" | "qoder" | "qoder-cn";
     mode: SessionRemovalMode;
     days: number | null;
     confirmedCount: number | null;
     confirmedRecords: SessionRecordSnapshot[] | null;
+    directory?: string | null;
+    cutoffMs?: number | null;
   };
   executionTotal: number | null;
   results: SessionRemovalItemSnapshot[];
@@ -192,7 +195,7 @@ export interface SummarySubject {
   managerId?: ManagerId;
   target?: string;
   rootPath?: string;
-  source?: "codex" | "claude" | "opencode" | "vscode";
+  source?: "codex" | "claude" | "grok" | "opencode" | "qoder" | "qoder-cn" | "vscode";
   mode?: SessionRemovalMode;
   targetCount: number;
 }
@@ -234,6 +237,7 @@ export const maintenanceDomainLabels: Record<MaintenanceDomain, string> = {
 export const maintenanceOperationLabels: Record<MaintenanceOperation, string> = {
   cleanupCache: "缓存清理",
   uninstallGlobalPackage: "全局包卸载",
+  uninstallSdkComponent: "SDK 组件卸载",
   cleanBatch: "项目清理批次",
   removeWorkspaceStorage: "工作区存储移除",
   removeToTrash: "会话记录移入废纸篓",
@@ -267,6 +271,16 @@ const sessionModeLabels: Record<SessionRemovalMode, string> = {
   olderThan: "按年龄",
 };
 
+const sessionSourceLabels: Record<NonNullable<SummarySubject["source"]>, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  grok: "Grok Build",
+  opencode: "OpenCode",
+  qoder: "Qoder",
+  "qoder-cn": "Qoder CN",
+  vscode: "VS Code",
+};
+
 export function maintenanceRecordTitle(record: Pick<MaintenanceRecordSummary, "domain" | "operation" | "subject">) {
   if (record.domain === "manager" && record.subject.managerId) {
     return `${managerLabels[record.subject.managerId]} · ${maintenanceOperationLabels[record.operation]}${
@@ -280,9 +294,9 @@ export function maintenanceRecordTitle(record: Pick<MaintenanceRecordSummary, "d
     return "VS Code 工作区存储移除";
   }
   if (record.domain === "sessionRecord") {
-    const source = record.subject.source === "opencode" ? "OpenCode" : record.subject.source === "claude" ? "Claude Code" : "Codex";
+    const source = record.subject.source ? `${sessionSourceLabels[record.subject.source]} ` : "";
     const mode = record.subject.mode ? ` · ${sessionModeLabels[record.subject.mode]}` : "";
-    return `${source} 会话记录${record.operation === "deletePermanently" ? "永久删除" : "移除"}${mode}`;
+    return `${source}会话记录${record.operation === "deletePermanently" ? "永久删除" : "移除"}${mode}`;
   }
   return maintenanceDomainLabels[record.domain];
 }
@@ -294,6 +308,7 @@ export function maintenanceRecordState(record: Pick<MaintenanceRecordSummary, "e
 }
 
 export function maintenanceRecoveryBoundary(record: Pick<MaintenanceRecordSummary, "operation" | "domain">) {
+  if (record.operation === "uninstallSdkComponent") return "SDK 组件由 Android SDK 自带 CLI 永久删除，不进入废纸篓，无法由本工具恢复。";
   if (record.operation === "deletePermanently") return "OpenCode 服务永久删除会话及其子会话，无法由本工具恢复。";
   if (record.operation === "removeToTrash" || record.operation === "removeWorkspaceStorage") {
     return "记录已移入系统废纸篓，清空废纸篓前可恢复；磁盘空间不会立即释放。";

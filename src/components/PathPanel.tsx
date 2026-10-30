@@ -48,9 +48,7 @@ export function PathPanel({
 }) {
   if (!manager) {
     return (
-      <section className="studio-card studio-side-card">
-        <EmptyState message={scanning ? "正在扫描路径..." : "尚未扫描"} />
-      </section>
+      <EmptyState message={scanning ? "正在扫描路径..." : "尚未扫描，扫描后显示缓存与存储路径"} />
     );
   }
 
@@ -67,6 +65,7 @@ export function PathPanel({
           : null;
 
   return (
+    <TooltipProvider>
     <div className="@container flex flex-col gap-2">
       {manager.paths.filter((path) => pathObservationId(path.kind, path.path) === focusedPath).map((path) => <div key={path.path} data-path-observation={focusedPath} tabIndex={-1} className="rounded-xl border bg-card p-4">
         <h3 className="text-sm font-semibold">已定位：{path.label}</h3><code className="mt-2 block break-all text-xs">{formatHomePath(path.path, homeDirectory)}</code>
@@ -123,6 +122,7 @@ export function PathPanel({
         <EmptyState message="未解析到缓存或存储路径" />
       )}
     </div>
+    </TooltipProvider>
   );
 }
 
@@ -188,10 +188,10 @@ function InlinePathCard({
   const itemCount = paths.length;
   const gridClassName =
     itemCount >= 3
-      ? "grid grid-cols-1 gap-px bg-border @xl:grid-cols-2 @4xl:grid-cols-3"
+      ? "grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border @xl:grid-cols-2 @4xl:grid-cols-3"
       : itemCount === 2
-        ? "grid grid-cols-1 gap-px bg-border @xl:grid-cols-2"
-        : "grid grid-cols-1 gap-px bg-border";
+        ? "grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border @xl:grid-cols-2"
+        : "grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-border bg-border";
 
   return (
     <div className={gridClassName}>
@@ -247,7 +247,7 @@ function InlinePathCell({
   const cleanupBlockId = `cleanup-block-${managerId.toLowerCase()}-${path.kind.toLowerCase()}`;
 
   return (
-    <div className={`${className} telemetry-cell border bg-background p-2`}>
+    <div className={`${className} telemetry-cell p-3`}>
       <div className="flex min-h-10 items-start justify-between gap-1">
         <div className="flex min-w-0 items-center gap-1">
           <p className="truncate text-xs font-medium text-foreground">{pathLabel(path.label)}</p>
@@ -281,18 +281,16 @@ function InlinePathCell({
 
 function PathNoteTooltip({ label, note }: { label: string; note: string }) {
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button aria-label={label} className="size-5 text-muted-foreground hover:text-foreground" size="icon-xs" type="button" variant="ghost">
-            <Info />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent align="start">
-          {note}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button aria-label={label} className="size-5 text-muted-foreground hover:text-foreground" size="icon-xs" type="button" variant="ghost">
+          <Info />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent align="start">
+        {note}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

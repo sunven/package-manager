@@ -43,6 +43,8 @@ fn session_detail() -> MaintenanceDetail {
             days: None,
             confirmed_count: Some(1),
             confirmed_records: None,
+            directory: None,
+            cutoff_ms: None,
         },
         execution_total: None,
         results: Vec::new(),
@@ -62,7 +64,7 @@ fn older_than_sessions_append_each_item_and_finish() {
         },
     ];
     let receipt =
-        remove_sessions_older_than(&history, SessionSourceKind::Codex, 7, Some(2), |sink| {
+        remove_sessions_older_than(&history, SessionSourceKind::Codex, 7, Some(2), None, None, |sink| {
             for item in &items {
                 sink(item);
             }
@@ -90,7 +92,7 @@ fn older_than_sessions_append_each_item_and_finish() {
 #[test]
 fn single_session_buffers_items_into_the_finished_record() {
     let (_directory, history) = store();
-    let receipt = remove_session_record(&history, SessionSourceKind::Claude, None, || {
+    let receipt = remove_session_record(&history, SessionSourceKind::Claude, None, None, || {
         Ok(SessionRemovalResult {
             moved: 1,
             failed: 0,

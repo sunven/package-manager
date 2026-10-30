@@ -247,7 +247,7 @@ export function usePackageManagers() {
     async (index: number) => {
       const pkg = packageAt(index);
       if (!pkg) return;
-      const value = `${pkg.name}@${pkg.version}`;
+      const value = selectedManagerRef.current === "AndroidSdk" ? pkg.name : `${pkg.name}@${pkg.version}`;
       await copyValue(value, value, "copy-package", true);
     },
     [copyValue, packageAt],
@@ -265,15 +265,19 @@ export function usePackageManagers() {
   const requestPackageUninstall = useCallback((index: number) => {
     const managerId = selectedManagerRef.current;
     const pkg = packageAt(index);
+    const subject = managerId === "AndroidSdk" ? "SDK 组件" : "全局包";
     if (!pkg) {
-      setUiMessage({ tone: "warn", title: "暂时无法卸载全局包", message: "清单中的软件包已不存在；请刷新后重新选择。" });
+      setUiMessage({ tone: "warn", title: `暂时无法卸载${subject}`, message: "清单中的软件包已不存在；请刷新后重新选择。" });
       return;
     }
-    if (managerId !== "Npm" && managerId !== "Pnpm") return;
-    const request: MaintenanceRequest = { kind: "uninstallGlobalPackage", managerId, packageName: pkg.name, packageIndex: index };
+    if (managerId !== "Npm" && managerId !== "Pnpm" && managerId !== "AndroidSdk") return;
+    const manager = workflow.read().managerSnapshots[managerId];
+    const request: MaintenanceRequest = managerId === "AndroidSdk"
+      ? { kind: "uninstallSdkComponent", managerId, packageName: pkg.name, packageIndex: index, sdkRoot: manager?.androidSdk?.cli?.sdkRoot ?? "" }
+      : { kind: "uninstallGlobalPackage", managerId, packageName: pkg.name, packageIndex: index };
     const blocked = workflow.maintenanceBlockReason(request);
     if (blocked) {
-      setUiMessage({ tone: "warn", title: "暂时无法卸载全局包", message: blocked });
+      setUiMessage({ tone: "warn", title: `暂时无法卸载${subject}`, message: blocked });
       return;
     }
     if (workflow.requestPackageUninstall(managerId, pkg.name)) setOpenPackageActionMenuIndex(null);
@@ -293,13 +297,35 @@ export function usePackageManagers() {
   // Capture the rendered operation ID so callbacks from an old dialog cannot
   // confirm or dismiss a newer request.
   const operationId = maintenance?.id;
-  const cancelMaintenance = () => {
+  const cancelMaintenance = useCallback(() => {
     if (operationId !== undefined) workflow.cancelMaintenance(operationId);
-  };
-  const confirmMaintenance = () => operationId === undefined ? Promise.resolve() : workflow.confirmMaintenance(operationId);
-  const retryVerification = () => operationId === undefined ? Promise.resolve() : workflow.retryVerification(operationId);
+  }, [operationId, workflow]);
+  const confirmMaintenance = useCallback(
+    () => operationId === undefined ? Promise.resolve() : workflow.confirmMaintenance(operationId),
+    [operationId, workflow],
+  );
+  const retryVerification = useCallback(
+    () => operationId === undefined ? Promise.resolve() : workflow.retryVerification(operationId),
+    [operationId, workflow],
+  );
 
-  const actions: PackageManagerActions = {
+  const setHomebrewFilter = useCallback((filter: HomebrewFilter) => {
+    setSelectedHomebrewFilter(filter);
+    setSelectedPackageIndex(null);
+    setOpenPackageActionMenuIndex(null);
+  }, []);
+  const setMavenFilter = useCallback((filter: MavenFilter) => {
+    setSelectedMavenFilter(filter);
+    setSelectedPackageIndex(null);
+    setOpenPackageActionMenuIndex(null);
+  }, []);
+  const setPipFilter = useCallback((filter: PipFilter) => {
+    setSelectedPipFilter(filter);
+    setSelectedPackageIndex(null);
+    setOpenPackageActionMenuIndex(null);
+  }, []);
+
+  const actions = useMemo<PackageManagerActions>(() => ({
     refresh,
     refreshEnabled: workflow.refreshEnabled,
     selectManager,
@@ -319,22 +345,16 @@ export function usePackageManagers() {
     copyPackageAction,
     copyPackage,
     openPackage,
-    setHomebrewFilter: (filter) => {
-      setSelectedHomebrewFilter(filter);
-      setSelectedPackageIndex(null);
-      setOpenPackageActionMenuIndex(null);
-    },
-    setMavenFilter: (filter) => {
-      setSelectedMavenFilter(filter);
-      setSelectedPackageIndex(null);
-      setOpenPackageActionMenuIndex(null);
-    },
-    setPipFilter: (filter) => {
-      setSelectedPipFilter(filter);
-      setSelectedPackageIndex(null);
-      setOpenPackageActionMenuIndex(null);
-    },
-  };
+    setHomebrewFilter,
+    setMavenFilter,
+    setPipFilter,
+  }), [
+    cancelMaintenance, closePackageActions, confirmMaintenance, copyCleanupCommand,
+    copyCommand, copyPackage, copyPackageAction, copyPathValue, openPackage,
+    openPathValue, refresh, requestCacheCleanupAction, requestPackageUninstall,
+    retryVerification, selectManager, selectPackage, setHomebrewFilter,
+    setManagerEnabled, setMavenFilter, setPipFilter, togglePackageActions, workflow,
+  ]);
 
   return {
     historyRevision: view.historyRevision,

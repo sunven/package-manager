@@ -1,5 +1,7 @@
 # 符号链接不是会话记录
 
+后续 [ADR-0030](0030-grok-session-removal-preserves-local-recovery-boundary.md) 为 Grok Build 增加普通会话目录这一来源例外；下述普通文件限制继续适用于 Codex／Claude，不跟随符号链接的原则保留。
+
 会话记录必须是来源目录里的普通文件。符号链接不进入列表，也不能被移除。不跟随链接去移走它的目标。
 
 ## Considered Options

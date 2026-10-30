@@ -46,7 +46,7 @@ import {
 } from "../vscodeRemoval";
 import type { ObservationCoverageItem } from "../observationCoverage";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, Panel, PanelHead, RefreshNotice, StatCard } from "./ui";
+import { EmptyState, PageHeader, Panel, PanelHead, RefreshNotice, StatCard } from "./ui";
 
 const projectStatusLabels: Record<VscodeWorkspace["projectStatus"], string> = {
   Available: "路径存在",
@@ -91,18 +91,27 @@ export function VscodeStoragePage({
     () => filterVscodeWorkspaces(scan?.workspaces ?? [], query),
     [scan, query],
   );
-  const summary = scan ? summarizeVscodeStorage(scan) : null;
+  const summary = useMemo(() => (scan ? summarizeVscodeStorage(scan) : null), [scan]);
   const selection = useSessionSelection({
     records: scan ? workspaces : null,
     isSelectable: (workspace: VscodeWorkspace) => workspace.removable,
     completedIds: outcome?.completedIds ?? null,
   });
-  const selectedSet = new Set(selection.selectedIds);
-  const selectedWorkspaces = workspaces.filter((workspace) => selectedSet.has(workspace.id));
+  const selectedSet = useMemo(() => new Set(selection.selectedIds), [selection.selectedIds]);
   const selectedCount = selection.selectedIds.length;
-  const selectableVisible = workspaces.filter((workspace) => workspace.removable);
-  const allVisibleSelected = selectableVisible.length > 0
-    && selectableVisible.every((workspace) => selectedSet.has(workspace.id));
+  const { selectedWorkspaces, selectableVisible } = useMemo(() => {
+    const selected: VscodeWorkspace[] = [];
+    const selectable: VscodeWorkspace[] = [];
+    for (const workspace of workspaces) {
+      if (selectedSet.has(workspace.id)) selected.push(workspace);
+      if (workspace.removable) selectable.push(workspace);
+    }
+    return { selectedWorkspaces: selected, selectableVisible: selectable };
+  }, [workspaces, selectedSet]);
+  const allVisibleSelected = useMemo(
+    () => selectableVisible.length > 0 && selectableVisible.every((workspace) => selectedSet.has(workspace.id)),
+    [selectableVisible, selectedSet],
+  );
   const selectionTrigger = useRef<HTMLButtonElement | null>(null);
 
   const pending = operation && operation.phase !== "refreshing" ? operation.target : null;
@@ -129,21 +138,19 @@ export function VscodeStoragePage({
 
   return (
     <main className="view-grid" aria-busy={scanning}>
+      <PageHeader
+        title="VS Code 占用"
+        description="统计 VS Code 工作区存储（workspaceStorage）中的编辑器状态和扩展数据，不包含项目源码占用。"
+        actions={
+          <Button disabled={scanning} onClick={() => void refresh()} size="sm" type="button" variant="outline">
+            <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
+            {scanning ? "扫描中" : "刷新"}
+          </Button>
+        }
+      />
       <Panel>
-        <PanelHead
-          title="VS Code 占用"
-          action={
-            <Button disabled={scanning} onClick={() => void refresh()} size="sm" type="button" variant="outline">
-              <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
-              {scanning ? "扫描中" : "刷新"}
-            </Button>
-          }
-        />
+        <PanelHead title="扫描范围" />
         <CardContent className="flex flex-col gap-2 p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">可移除</Badge>
-            <p className="text-sm text-muted-foreground">仅统计 VS Code 工作区存储（workspaceStorage）中的编辑器状态和扩展数据，不包含项目源码占用。</p>
-          </div>
           <p className="break-all text-xs text-muted-foreground">
             {scan
               ? formatHomePath(scan.storagePath, homeDirectory)
@@ -226,7 +233,7 @@ export function VscodeStoragePage({
         </>
       ) : null}
 
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="stat-grid grid-cols-2 lg:grid-cols-4">
         <StatCard label="工作区存储" value={scan ? `${scan.workspaces.length} 个` : "—"} />
         <StatCard label="存储占用" value={formatFootprint(summary?.bytes ?? null, summary?.complete ?? false)} />
         <StatCard label="路径不存在" value={summary ? `${summary.missingCount} 个` : "—"} />

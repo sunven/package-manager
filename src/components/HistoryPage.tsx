@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } fr
 import { Button } from "../../components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { managerLabels } from "../constants";
-import { removalReasonLabels } from "../sessionRecords";
+import { formatSessionRecordId, removalReasonLabels } from "../sessionRecords";
 import { vscodeRemovalReasonLabels } from "../vscodeRemoval";
 import { useObservationTools } from "../hooks/useObservationTools";
 import { useMaintenanceHistory } from "../hooks/useMaintenanceHistory";
@@ -31,12 +31,13 @@ import {
 } from "../maintenanceHistory";
 import type { ManagerId } from "../types";
 import { formatBytes, formatHomePath } from "../utils/format";
-import { Notice } from "./ui";
+import { Notice, PageHeader } from "./ui";
 import { SnapshotHistory } from "./SnapshotHistory";
 
-const selectClass = "max-w-full rounded-lg border bg-background px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-ring";
+const selectClass = "select-control";
 const PAGE_SIZE = 50;
-const time = (value: number | null) => value === null ? "—" : new Date(value).toLocaleString();
+const dateTimeFormatter = new Intl.DateTimeFormat();
+const time = (value: number | null) => value === null ? "—" : dateTimeFormatter.format(value);
 
 export interface HistoryRequest {
   domain?: MaintenanceDomain;
@@ -97,19 +98,19 @@ export function HistoryPage({
     }
   }, [domain, execution]);
 
-  return <main className="grid gap-4" aria-label="维护历史">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h2 className="text-lg font-semibold">历史</h2>
-        <p className="mt-1 text-sm text-muted-foreground">回看已确认的维护操作、逐目标结果和后续读取或核对。历史只读，不构成撤销或维护授权。</p>
-      </div>
-      <Button variant="outline" disabled={maintenance.loading} onClick={() => { void maintenance.refresh(); if (tab === "snapshots") void snapshots.refreshHistory(); }}>
-        重新读取历史
-      </Button>
-    </div>
-    <div className="flex gap-2" role="group" aria-label="历史类型">
-      <Button variant={tab === "records" ? "secondary" : "ghost"} aria-pressed={tab === "records"} onClick={() => setTab("records")}>维护记录</Button>
-      <Button variant={tab === "snapshots" ? "secondary" : "ghost"} aria-pressed={tab === "snapshots"} onClick={() => setTab("snapshots")}>快照对比</Button>
+  return <main className="view-grid" aria-label="维护历史">
+    <PageHeader
+      title="历史"
+      description="回看已确认的维护操作、逐目标结果和后续读取或核对。历史只读，不构成撤销或维护授权。"
+      actions={
+        <Button variant="outline" disabled={maintenance.loading} onClick={() => { void maintenance.refresh(); if (tab === "snapshots") void snapshots.refreshHistory(); }}>
+          重新读取历史
+        </Button>
+      }
+    />
+    <div className="tab-line" role="group" aria-label="历史类型">
+      <button aria-pressed={tab === "records"} onClick={() => setTab("records")} type="button">维护记录</button>
+      <button aria-pressed={tab === "snapshots"} onClick={() => setTab("snapshots")} type="button">快照对比</button>
     </div>
 
     {tab === "snapshots" ? <SnapshotHistory state={snapshots} homeDirectory={homeDirectory} selectionRequest={snapshotRequest} /> : <>
@@ -117,13 +118,13 @@ export function HistoryPage({
       {maintenance.warnings.map((warning) => <Notice key={warning} title="部分历史无法读取" message={warning} />)}
       {maintenance.loading ? <p role="status" className="text-sm text-muted-foreground">正在读取维护记录…</p> : null}
       <div className="flex flex-wrap items-end gap-3">
-        <label className="grid gap-1 text-xs text-muted-foreground">领域
+        <label className="filter-label">领域
           <select className={selectClass} value={domain} onChange={(event) => setDomain(event.target.value as MaintenanceDomain | "all")}>
             <option value="all">全部领域</option>
             {Object.entries(maintenanceDomainLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
-        <label className="grid gap-1 text-xs text-muted-foreground">执行结果
+        <label className="filter-label">执行结果
           <select className={selectClass} value={execution} onChange={(event) => setExecution(event.target.value as ExecutionSummary | "all")}>
             <option value="all">全部状态</option>
             {Object.entries(executionSummaryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -132,12 +133,12 @@ export function HistoryPage({
         <span className="text-xs text-muted-foreground">{filtered.length} 条记录</span>
       </div>
 
-      {!filtered.length ? <p className="rounded-xl border p-5 text-sm text-muted-foreground">{maintenance.records.length ? "当前筛选没有匹配记录。" : "还没有维护记录。确认执行维护操作后，这里会保留范围、结果和后续读取。"}</p> : (
+      {!filtered.length ? <p className="rounded-lg border p-5 text-sm text-muted-foreground">{maintenance.records.length ? "当前筛选没有匹配记录。" : "还没有维护记录。确认执行维护操作后，这里会保留范围、结果和后续读取。"}</p> : (
         <div className="grid gap-4 min-[1100px]:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)] min-[1100px]:items-start">
           <div className="grid gap-4">
             {groups.map((group) => <section className="grid gap-2" key={group.key} aria-label={group.label}>
               <h3 className="text-xs font-medium text-muted-foreground">{group.label}</h3>
-              <div className="overflow-hidden rounded-xl border bg-card">
+              <div className="overflow-hidden rounded-lg border bg-card">
                 {group.records.map((record) => <button
                   className={`grid w-full gap-1 border-b p-4 text-left last:border-b-0 focus-visible:outline-2 focus-visible:outline-ring ${maintenance.selectedId === record.id ? "bg-muted/60" : ""}`}
                   key={record.id}
@@ -157,7 +158,7 @@ export function HistoryPage({
               <Button variant="outline" size="sm" disabled={page + 1 >= pageCount} onClick={() => setPage((value) => value + 1)}>下一页</Button>
             </div>
           </div>
-          <section className={`rounded-xl border bg-card p-4 min-[1100px]:sticky min-[1100px]:top-2 ${maintenance.selectedId ? "max-[1099px]:fixed max-[1099px]:inset-3 max-[1099px]:z-50 max-[1099px]:overflow-y-auto max-[1099px]:bg-background max-[1099px]:shadow-xl" : "max-[1099px]:hidden"}`} aria-label="维护记录详情">
+          <section className={`rounded-lg border bg-card p-4 min-[1100px]:sticky min-[1100px]:top-2 ${maintenance.selectedId ? "max-[1099px]:fixed max-[1099px]:inset-3 max-[1099px]:z-50 max-[1099px]:overflow-y-auto max-[1099px]:bg-background" : "max-[1099px]:hidden"}`} aria-label="维护记录详情">
             {maintenance.selectedId ? <div className="mb-2 flex justify-end min-[1100px]:hidden"><Button onClick={() => void maintenance.select(null)} size="sm" type="button" variant="outline">关闭详情</Button></div> : null}
             {!maintenance.selectedId ? <p className="text-sm text-muted-foreground">选择一条记录查看确认范围、执行结果和后续读取或核对。</p> : maintenance.detailLoading ? <p className="text-sm text-muted-foreground">正在读取记录详情…</p> : maintenance.detailError ? <Notice title="记录详情无法读取" message={maintenance.detailError} /> : maintenance.detail ? <RecordDetail detail={maintenance.detail} homeDirectory={homeDirectory} onShowSnapshots={(manager, before, after) => { snapshots.setHistoryManager(manager); setSnapshotRequest({ manager, before, after }); setTab("snapshots"); }} onOpenDomain={onOpenDomain} /> : null}
           </section>
@@ -213,7 +214,7 @@ function ProjectScope({ detail, homeDirectory }: { detail: ProjectCleanupDetail;
     <Row label="结束方式" value={detail.finish === "stopped" ? "用户停止" : "完成"} />
     <div className="grid gap-1">
       <p className="text-xs text-muted-foreground">确认候选 {detail.scope.candidates.length} 项</p>
-      {detail.scope.candidates.map((candidate) => <div className="rounded-lg border p-2 text-xs" key={candidate.candidateId}>
+      {detail.scope.candidates.map((candidate) => <div className="border-t py-2 text-xs" key={candidate.candidateId}>
         <p className="break-all font-medium">{candidate.order + 1}. {candidate.kind} · {formatHomePath(candidate.directoryPath, homeDirectory)}</p>
         <p className="text-muted-foreground">确认时占用 {candidate.confirmedBytes === null ? "未测得" : formatBytes(candidate.confirmedBytes)}{candidate.confirmedComplete ? "" : " · 测量不完整"}</p>
       </div>)}
@@ -224,7 +225,7 @@ function ProjectScope({ detail, homeDirectory }: { detail: ProjectCleanupDetail;
 function VscodeScope({ detail, homeDirectory }: { detail: VscodeStorageDetail; homeDirectory: string | null }) {
   return <div className="grid gap-2 text-sm">
     <p className="text-xs text-muted-foreground">确认记录 {detail.scope.workspaces.length} 项</p>
-    {detail.scope.workspaces.map((workspace) => <div className="rounded-lg border p-2 text-xs" key={workspace.id}>
+    {detail.scope.workspaces.map((workspace) => <div className="border-t py-2 text-xs" key={workspace.id}>
       <p className="break-all font-medium">{workspace.name}</p>
       <p className="break-all text-muted-foreground">{workspace.projectPath ? formatHomePath(workspace.projectPath, homeDirectory) : "项目位置未识别"} · {workspace.projectStatus}</p>
       <p className="text-muted-foreground">确认时占用 {workspace.bytes === null ? "未测得" : formatBytes(workspace.bytes)}{workspace.usageComplete ? "" : " · 测量不完整"}</p>
@@ -233,15 +234,19 @@ function VscodeScope({ detail, homeDirectory }: { detail: VscodeStorageDetail; h
 }
 
 function SessionScope({ detail }: { detail: SessionTrashDetail }) {
-  const source = detail.scope.source === "codex" ? "Codex" : "Claude Code";
+  const source = detail.scope.source === "grok" ? "Grok Build" : detail.scope.source === "codex" ? "Codex" : detail.scope.source === "qoder" ? "Qoder" : detail.scope.source === "qoder-cn" ? "Qoder CN" : "Claude Code";
   return <div className="grid gap-2 text-sm">
     <Row label="来源" value={source} />
+    {detail.scope.directory ? <Row label="确认来源目录" value={detail.scope.directory} /> : null}
+    {detail.scope.cutoffMs != null ? <Row label="确认年龄门槛" value={time(detail.scope.cutoffMs)} /> : null}
+    {detail.scope.source === "grok" ? <p className="text-xs text-muted-foreground">移入废纸篓仅作用于本机会话目录，外部搜索索引与远端副本保留，独立关联记录不自动连带移除。</p> : null}
+    {detail.scope.source === "qoder" || detail.scope.source === "qoder-cn" ? <p className="text-xs text-muted-foreground">一条记录的转写与配套目录会一起移入废纸篓，诊断日志不在操作范围内。</p> : null}
     <Row label="模式" value={detail.scope.mode === "olderThan" ? `按年龄 · ${detail.scope.days} 天` : detail.scope.mode === "selected" ? "明确选择" : "单条"} />
     {detail.scope.confirmedCount !== null ? <Row label="确认时条数" value={String(detail.scope.confirmedCount)} /> : null}
     {detail.executionTotal !== null ? <Row label="执行时目标总数" value={String(detail.executionTotal)} /> : null}
     {detail.scope.confirmedRecords ? <div className="grid gap-1">
       <p className="text-xs text-muted-foreground">确认时记录</p>
-      {detail.scope.confirmedRecords.map((record) => <div className="rounded-lg border p-2 text-xs" key={record.id}>
+      {detail.scope.confirmedRecords.map((record) => <div className="border-t py-2 text-xs" key={record.id}>
         <p className="break-all font-medium">{record.title}</p>
         <p className="break-all text-muted-foreground">{record.workingDirectory ?? "没有工作目录"} · {record.lastActivityMs === null ? "最后活动时间未知" : time(record.lastActivityMs)}</p>
       </div>)}
@@ -258,7 +263,7 @@ function OpenCodeScope({ detail }: { detail: OpenCodeDeletionDetail }) {
     <Row label="删除计划" value={detail.scope.planId} />
     <Row label="冻结根会话" value={String(detail.scope.confirmedRoots.length)} />
     <Row label="冻结级联范围" value={String(detail.scope.confirmedAffected.length)} />
-    {detail.scope.confirmedRoots.map((record) => <div className="rounded-lg border p-2 text-xs" key={record.id}>
+    {detail.scope.confirmedRoots.map((record) => <div className="border-t py-2 text-xs" key={record.id}>
       <p className="break-all font-medium">{record.title}</p>
       <p className="break-all text-muted-foreground">{record.workingDirectory ?? "没有工作目录"} · {time(record.lastActivityMs)}{record.archived ? " · 已归档" : ""}</p>
     </div>)}
@@ -270,13 +275,13 @@ function Results({ detail }: { detail: MaintenanceDetail }) {
   if (detail.kind === "manager") return <ManagerResults detail={detail} />;
   if (detail.kind === "projectCleanup") return <ProjectResults detail={detail} />;
   if (detail.kind === "vscodeStorage") return <SimpleResults items={detail.results.map((item) => ({ id: item.id, status: item.status, reason: item.reason, message: item.message }))} reasonLabels={vscodeRemovalReasonLabels as Record<string, string>} />;
-  if (detail.kind === "sessionTrash") return <SimpleResults items={detail.results.map((item) => ({ id: item.id, status: item.status, reason: item.reason, message: item.message }))} reasonLabels={removalReasonLabels as Record<string, string>} />;
+  if (detail.kind === "sessionTrash") return <SimpleResults items={detail.results.map((item) => ({ id: item.id, label: formatSessionRecordId(detail.scope.source, item.id), status: item.status, reason: item.reason, message: item.message }))} reasonLabels={removalReasonLabels as Record<string, string>} />;
   return <OpenCodeResults detail={detail} />;
 }
 
 function ManagerResults({ detail }: { detail: ManagerDetail }) {
   if (!detail.steps) return <p className="text-sm text-muted-foreground">此记录没有逐步骤数据。</p>;
-  return <div className="grid gap-1 text-sm">{detail.steps.map((step, index) => <div className="rounded-lg border p-2 text-xs" key={`${index}:${step.label}`}>
+  return <div className="grid gap-1 text-sm">{detail.steps.map((step, index) => <div className="border-t py-2 text-xs" key={`${index}:${step.label}`}>
     <p className="font-medium">{step.label} · {step.state === "succeeded" ? "已完成" : step.state === "failed" ? "失败" : "跳过"}</p>
     {step.failureMessage ? <p className="break-words text-muted-foreground">{step.failureMessage}</p> : null}
   </div>)}</div>;
@@ -287,7 +292,7 @@ function ProjectResults({ detail }: { detail: ProjectCleanupDetail }) {
   return <div className="grid gap-1 text-sm">{detail.scope.candidates.map((candidate) => {
     const result = byId.get(candidate.candidateId);
     const cleaned = result?.cleanedBytes;
-    return <div className="rounded-lg border p-2 text-xs" key={candidate.candidateId}>
+    return <div className="border-t py-2 text-xs" key={candidate.candidateId}>
       <p className="break-all font-medium">{candidate.order + 1}. {candidate.directoryPath}</p>
       <p className="text-muted-foreground">{result ? projectStatusLabel(result.status) : detail.finish === "stopped" ? "未执行（批次停止）" : "未确认"}{cleaned !== null && cleaned !== undefined ? ` · 清理 ${formatBytes(cleaned)}` : ""}</p>
       {result?.failureMessage ? <p className="break-words text-muted-foreground">{result.failureMessage}</p> : null}
@@ -297,10 +302,10 @@ function ProjectResults({ detail }: { detail: ProjectCleanupDetail }) {
   })}</div>;
 }
 
-function SimpleResults({ items, reasonLabels }: { items: { id: string; status: string; reason: string | null; message: string | null }[]; reasonLabels: Record<string, string> }) {
+function SimpleResults({ items, reasonLabels }: { items: { id: string; label?: string; status: string; reason: string | null; message: string | null }[]; reasonLabels: Record<string, string> }) {
   if (!items.length) return <p className="text-sm text-muted-foreground">没有逐目标结果。</p>;
-  return <div className="grid gap-1 text-sm">{items.map((item) => <div className="rounded-lg border p-2 text-xs" key={item.id}>
-    <p className="break-all font-medium">{item.id} · {statusLabel(item.status)}</p>
+  return <div className="grid gap-1 text-sm">{items.map((item) => <div className="border-t py-2 text-xs" key={item.id}>
+    <p className="break-all font-medium">{item.label ?? item.id} · {statusLabel(item.status)}</p>
     {item.reason ? <p className="text-muted-foreground">{reasonLabels[item.reason] ?? item.reason}</p> : null}
     {item.message ? <p className="break-words text-muted-foreground">{item.message}</p> : null}
   </div>)}</div>;
@@ -308,7 +313,7 @@ function SimpleResults({ items, reasonLabels }: { items: { id: string; status: s
 
 function OpenCodeResults({ detail }: { detail: OpenCodeDeletionDetail }) {
   if (!detail.results.length) return <p className="text-sm text-muted-foreground">没有逐根结果。</p>;
-  return <div className="grid gap-1 text-sm">{detail.results.map((item) => <div className="rounded-lg border p-2 text-xs" key={item.id}>
+  return <div className="grid gap-1 text-sm">{detail.results.map((item) => <div className="border-t py-2 text-xs" key={item.id}>
     <p className="break-all font-medium">{item.id} · {item.status === "Deleted" ? "已删除" : item.status === "Failed" ? "失败" : "未尝试"}</p>
     {item.message ? <p className="break-words text-muted-foreground">{item.message}</p> : null}
   </div>)}</div>;
