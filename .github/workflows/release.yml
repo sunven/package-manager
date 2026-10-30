@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check updater pubkey is configured
+        run: |
+          if grep -q "REPLACE_WITH_UPDATER_PUBKEY" src-tauri/tauri.conf.json; then
+            echo "::error::plugins.updater.pubkey 尚未配置，先运行 node scripts/update-pubkey.mjs"
+            exit 1
+          fi
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
+      - name: Compose release notes
+        id: notes
+        run: |
+          git-cliff --latest --strip header > RELEASE_NOTES.md
+          {
+            echo 'body<<RELEASE_NOTES_EOF'
+            cat RELEASE_NOTES.md
+            echo 'RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "包管理器控制中心 ${{ github.ref_name }}"
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: false
+          prerelease: false
+          retryAttempts: 2
+          uploadUpdaterJson: true
+          args: --target aarch64-apple-darwin --bundles dmg,app
+
+      - name: Verify updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/updater"
+          gh release download "$TAG" --pattern latest.json --dir "$RUNNER_TEMP/updater" --clobber
+          jq -e '.version and .platforms["darwin-aarch64"].url and (.platforms["darwin-aarch64"].signature | length > 0)' "$RUNNER_TEMP/updater/latest.json"
+          jq '.platforms["darwin-aarch64"]' "$RUNNER_TEMP/updater/latest.json"

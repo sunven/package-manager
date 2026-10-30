@@ -242,6 +242,14 @@ src-tauri/target/release/bundle/macos/Package Manager Control Center.app
 src-tauri/target/release/bundle/dmg/Package Manager Control Center_0.1.0_aarch64.dmg
 ```
 
+### 应用更新与发布
+
+设置页的「软件更新」展示当前版本，可手动检查、下载并安装新版本；启动后也会自动检查一次。发现新版本时右上角提示可跳转到设置页，关闭提示只影响本次会话，「跳过此版本」才会在本机记住该版本。下载完成后应用自动重启。开发模式下不检查更新，只显示说明。
+
+更新只替换应用安装包，不读取、升级或移除任何管理器、插件、技能或项目数据。渠道与签名选择见 [ADR-0034](docs/adr/0034-app-update-via-github-releases.md)。
+
+更新从 GitHub Releases 的 `latest.json` 读取，发布由 `v*` tag 触发，只构建 Apple Silicon 产物。签名密钥准备、发布脚本与已知限制见 [scripts/README.md](scripts/README.md)。
+
 ## 扫描方式
 
 后端通过 Tauri command 执行结构化命令，不拼 shell string。每条命令都有 program、args、preview、timeout。

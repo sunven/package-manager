@@ -1,15 +1,18 @@
 import { managerLabels, managerOrder } from "../constants";
 import type { DisplayStatus, ManagerId, ManagerSnapshot } from "../types";
 import { Checkbox } from "../../components/ui/checkbox";
+import { AppUpdatePanel, type AppUpdatePanelProps } from "./AppUpdatePanel";
 import { Panel, PanelHead, StatusBadge } from "./ui";
 
 export function SettingsPage({
+  appUpdate,
   enabledManagers,
   lockedManager,
   managerSnapshots,
   onSetManagerEnabled,
   scanningManagers,
 }: {
+  appUpdate: AppUpdatePanelProps;
   enabledManagers: ManagerId[];
   lockedManager?: ManagerId | null;
   managerSnapshots: Partial<Record<ManagerId, ManagerSnapshot>>;
@@ -66,6 +69,7 @@ export function SettingsPage({
           })}
         </div>
       </Panel>
+      <AppUpdatePanel {...appUpdate} />
     </main>
   );
 }

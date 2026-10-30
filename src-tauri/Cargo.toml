@@ -22,6 +22,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "~2.3.2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "system-proxy", "zip"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 roxmltree = "0.20"

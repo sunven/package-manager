@@ -16,6 +16,12 @@ function isScopedPermission(permission: unknown): permission is ScopedPermission
 }
 
 describe("Tauri capabilities", () => {
+  it("allows the app to check for updates and restart", () => {
+    expect(defaultCapability.permissions).toEqual(
+      expect.arrayContaining(["updater:default", "process:allow-restart"]),
+    );
+  });
+
   it("allows local paths to be opened from the package manager UI", () => {
     const openPathPermission = defaultCapability.permissions.find(
       (permission): permission is ScopedPermission =>

@@ -56,6 +56,8 @@ import { Shell } from "./components/Shell";
 import { ManagerDiagnostics } from "./components/ManagerDiagnostics";
 import { Panel } from "./components/ui";
 import { Toaster } from "../components/ui/sonner";
+import { AppUpdateToast, appUpdateToastId } from "./components/AppUpdateToast";
+import { useAppUpdate } from "./hooks/useAppUpdate";
 
 type Theme = "dark" | "light";
 
@@ -76,6 +78,7 @@ function initialTheme(): Theme {
 
 export function App() {
   const state = usePackageManagers();
+  const appUpdate = useAppUpdate();
   const projectCleanup = useProjectCleanup();
   const [activeView, setActiveView] = useState<"health" | "history" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
   const [overviewTab, setOverviewTab] = useState("overview");
@@ -211,6 +214,33 @@ export function App() {
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [actions]);
+
+  const updatePromptVersion = appUpdate.view.promptVersion;
+  const dismissUpdatePrompt = appUpdate.dismissPrompt;
+
+  useEffect(() => {
+    if (!updatePromptVersion) {
+      toast.dismiss(appUpdateToastId);
+      return;
+    }
+    toast.custom(
+      (toastId) => (
+        <AppUpdateToast
+          onClose={() => {
+            dismissUpdatePrompt();
+            toast.dismiss(toastId);
+          }}
+          onView={() => {
+            dismissUpdatePrompt();
+            toast.dismiss(toastId);
+            setActiveView("settings");
+          }}
+          version={updatePromptVersion}
+        />
+      ),
+      { duration: Infinity, id: appUpdateToastId, unstyled: true },
+    );
+  }, [dismissUpdatePrompt, updatePromptVersion]);
 
   function showHistoryRecord(recordId: string) {
     actions.closePackageActions();
@@ -463,6 +493,15 @@ export function App() {
           />
         ) : activeView === "settings" ? (
           <SettingsPage
+            appUpdate={{
+              view: appUpdate.view,
+              onCheck: appUpdate.checkForUpdate,
+              onDownload: appUpdate.downloadAndInstall,
+              onSkip: () => {
+                toast.dismiss(appUpdateToastId);
+                appUpdate.skipVersion();
+              },
+            }}
             lockedManager={state.lockedManager}
             enabledManagers={state.enabledManagers}
             managerSnapshots={state.managerSnapshots}
