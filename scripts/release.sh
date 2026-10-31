@@ -56,7 +56,7 @@ git commit -m "chore(release): prepare for v$VERSION"
 git tag -a "v$VERSION" -m "Release v$VERSION"
 
 echo
-echo "已创建 tag v$VERSION。推送后将触发 GitHub Actions 构建并发布。"
+echo "已创建 tag v${VERSION}。推送后将触发 GitHub Actions 构建并发布。"
 read -r -p "现在推送到 origin/main 与该 tag？(y/N) " REPLY
 
 if [[ "$REPLY" =~ ^[Yy]$ ]]; then
