@@ -4,12 +4,15 @@ use crate::session_records::{
     SessionRemovalItem, SessionRemovalProgress, SessionRemovalReason, SessionRemovalResult,
     SessionRemovalStatus, SessionScanStatus, SessionSourceKind, SessionSourceScan,
 };
+use crate::session_scan_cache::{
+    DirFingerprint, SessionScanState, TranscriptKind, TranscriptState,
+};
 use crate::types::AgeEligibleCounts;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -146,7 +149,7 @@ fn timestamp_millis(raw: &RawValue) -> Option<i64> {
     }
 }
 
-fn note_timestamp(parsed: &mut ParsedTranscript, raw: Option<&RawValue>) {
+fn note_timestamp(parsed: &mut TranscriptState, raw: Option<&RawValue>) {
     let Some(raw) = raw else {
         return;
     };
@@ -161,55 +164,54 @@ fn note_timestamp(parsed: &mut ParsedTranscript, raw: Option<&RawValue>) {
     );
 }
 
-fn parse_transcript(path: &Path) -> ParsedTranscript {
-    let mut parsed = ParsedTranscript::default();
-    let Ok(file) = File::open(path) else {
-        return parsed;
+fn parse_transcript(path: &Path, state: &SessionScanState) -> ParsedTranscript {
+    state
+        .transcripts()
+        .read(TranscriptKind::Qoder, path, &mut apply_qoder_line)
+        .map(|parsed| ParsedTranscript {
+            ai_title: parsed.ai_title,
+            custom_title: parsed.custom_title,
+            working_directory: parsed.working_directory,
+            last_activity_ms: parsed.last_activity_ms,
+        })
+        .unwrap_or_default()
+}
+
+fn apply_qoder_line(parsed: &mut TranscriptState, trimmed: &str) {
+    let Ok(record) = serde_json::from_str::<QoderLine>(trimmed) else {
+        return;
     };
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else {
-            continue;
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<QoderLine>(trimmed) else {
-            continue;
-        };
-        note_timestamp(&mut parsed, record.timestamp);
-        if parsed.working_directory.is_none() {
-            parsed.working_directory = record
-                .cwd
-                .filter(|cwd| !cwd.trim().is_empty())
-                .map(str::to_owned);
-        }
-        if parsed.working_directory.is_none() {
-            parsed.working_directory = record
-                .directories
-                .as_ref()
-                .and_then(|directories| {
-                    directories
-                        .iter()
-                        .find(|directory| !directory.trim().is_empty())
-                })
-                .cloned();
-        }
-        match record.kind {
-            Some("ai-title") => {
-                if let Some(title) = record.ai_title.and_then(normalize_title) {
-                    parsed.ai_title = Some(title);
-                }
-            }
-            Some("custom-title") => {
-                if let Some(title) = record.custom_title.and_then(normalize_title) {
-                    parsed.custom_title = Some(title);
-                }
-            }
-            _ => {}
-        }
+    note_timestamp(parsed, record.timestamp);
+    if parsed.working_directory.is_none() {
+        parsed.working_directory = record
+            .cwd
+            .filter(|cwd| !cwd.trim().is_empty())
+            .map(str::to_owned);
     }
-    parsed
+    if parsed.working_directory.is_none() {
+        parsed.working_directory = record
+            .directories
+            .as_ref()
+            .and_then(|directories| {
+                directories
+                    .iter()
+                    .find(|directory| !directory.trim().is_empty())
+            })
+            .cloned();
+    }
+    match record.kind {
+        Some("ai-title") => {
+            if let Some(title) = record.ai_title.and_then(normalize_title) {
+                parsed.ai_title = Some(title);
+            }
+        }
+        Some("custom-title") => {
+            if let Some(title) = record.custom_title.and_then(normalize_title) {
+                parsed.custom_title = Some(title);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[derive(Deserialize)]
@@ -264,8 +266,8 @@ impl RecordPaths {
             })
     }
 
-    fn activity_ms(&self) -> Option<i64> {
-        read_details(self).last_activity_ms
+    fn activity_ms(&self, state: &SessionScanState) -> Option<i64> {
+        read_details(self, state).last_activity_ms
     }
 }
 
@@ -275,11 +277,11 @@ struct RecordDetails {
     last_activity_ms: Option<i64>,
 }
 
-fn read_details(paths: &RecordPaths) -> RecordDetails {
+fn read_details(paths: &RecordPaths, state: &SessionScanState) -> RecordDetails {
     let parsed = paths
         .transcript
         .as_deref()
-        .map(parse_transcript)
+        .map(|path| parse_transcript(path, state))
         .unwrap_or_default();
     let sidecar = paths.sidecar.as_deref().and_then(read_sidecar);
     let working_directory = parsed.working_directory.clone().or_else(|| {
@@ -347,7 +349,7 @@ fn measure(path: &Path, budget: &mut usize) -> u64 {
     bytes
 }
 
-fn record_bytes(paths: &RecordPaths) -> u64 {
+fn record_bytes(paths: &RecordPaths, state: &SessionScanState) -> u64 {
     let transcript = paths
         .transcript
         .as_deref()
@@ -358,15 +360,36 @@ fn record_bytes(paths: &RecordPaths) -> u64 {
     let sidecar = paths
         .sidecar
         .as_deref()
-        .map(|directory| {
-            let mut budget = MEASURE_BUDGET;
-            measure(directory, &mut budget)
-        })
+        .map(|directory| sidecar_bytes(directory, state))
         .unwrap_or(0);
     transcript.saturating_add(sidecar)
 }
 
-fn list_records(root: &Path, label: &str, open_paths: &HashSet<PathBuf>) -> SessionSourceScan {
+fn sidecar_bytes(directory: &Path, state: &SessionScanState) -> u64 {
+    let fingerprint = DirFingerprint::read(directory);
+    if let Some(fingerprint) = fingerprint {
+        if let Ok(cache) = state.qoder_sidecar_bytes().lock() {
+            if let Some((cached, bytes)) = cache.get(directory) {
+                if *cached == fingerprint {
+                    return *bytes;
+                }
+            }
+        }
+    }
+    let mut budget = MEASURE_BUDGET;
+    let bytes = measure(directory, &mut budget);
+    if let (Some(fingerprint), Ok(mut cache)) = (fingerprint, state.qoder_sidecar_bytes().lock()) {
+        cache.insert(directory.to_path_buf(), (fingerprint, bytes));
+    }
+    bytes
+}
+
+fn list_records(
+    root: &Path,
+    label: &str,
+    open_paths: &HashSet<PathBuf>,
+    state: &SessionScanState,
+) -> SessionSourceScan {
     let mut scan = empty_scan(root);
     match fs::symlink_metadata(root) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -444,17 +467,29 @@ fn list_records(root: &Path, label: &str, open_paths: &HashSet<PathBuf>) -> Sess
             }
         }
     }
+    let mut seen = HashSet::new();
+    let mut seen_sidecars = HashSet::new();
     for paths in groups.into_values() {
-        let details = read_details(&paths);
+        if let Some(transcript) = paths.transcript.as_deref() {
+            seen.insert(transcript.to_path_buf());
+        }
+        if let Some(sidecar) = paths.sidecar.as_deref() {
+            seen_sidecars.insert(sidecar.to_path_buf());
+        }
+        let details = read_details(&paths, state);
         scan.records.push(SessionRecord {
             id: paths.id(),
             title: details.title.unwrap_or_else(|| UNNAMED_TITLE.to_string()),
             last_activity_ms: details.last_activity_ms,
             working_directory: details.working_directory,
-            bytes: record_bytes(&paths),
+            bytes: record_bytes(&paths, state),
             in_use: paths.is_open(open_paths),
             grok: None,
         });
+    }
+    state.transcripts().retain_source(root, &seen);
+    if let Ok(mut cache) = state.qoder_sidecar_bytes().lock() {
+        cache.retain(|path, _| !path.starts_with(root) || seen_sidecars.contains(path));
     }
     scan.records.sort_by(|left, right| {
         right
@@ -472,21 +507,21 @@ fn list_records(root: &Path, label: &str, open_paths: &HashSet<PathBuf>) -> Sess
     scan
 }
 
-pub(crate) fn scan_default(edition: QoderEdition) -> SessionSourceScan {
+pub(crate) fn scan_default(edition: QoderEdition, state: &SessionScanState) -> SessionSourceScan {
     let root = match edition.projects_dir() {
         Ok(root) => root,
         Err(message) => return failed_scan(String::new(), message),
     };
     let (open_paths, lsof_error) = match fs::symlink_metadata(&root) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            match open_files_under(&root) {
+            match state.open_files().under(&root) {
                 Ok(paths) => (paths, None),
                 Err(message) => (HashSet::new(), Some(message)),
             }
         }
         _ => (HashSet::new(), None),
     };
-    let mut scan = list_records(&root, edition.label(), &open_paths);
+    let mut scan = list_records(&root, edition.label(), &open_paths, state);
     if let Some(message) = lsof_error {
         if scan.message.is_none() {
             scan.message = Some(message);
@@ -589,7 +624,8 @@ fn remove_record(
         return skipped(SessionRemovalReason::InUse, None);
     }
     if let Some(cutoff) = cutoff_ms {
-        match paths.activity_ms() {
+        let state = SessionScanState::default();
+        match paths.activity_ms(&state) {
             None => return skipped(SessionRemovalReason::ActivityUnknown, None),
             Some(activity) if activity >= cutoff => {
                 return skipped(SessionRemovalReason::ActivityChanged, None);
@@ -644,7 +680,7 @@ fn remove_records(
         let Some(cutoff) = cutoff_ms else {
             return SessionRemovalResult::aborted("缺少已确认的年龄门槛。".into());
         };
-        let scan = list_records(root, label, &HashSet::new());
+        let scan = list_records(root, label, &HashSet::new(), &SessionScanState::default());
         if scan.status == SessionScanStatus::Failed {
             return SessionRemovalResult::aborted(
                 scan.message.unwrap_or_else(|| INVALID_RECORD.into()),
@@ -706,7 +742,7 @@ pub(crate) fn open_default(
     if !uuid_id(&paths.stem) {
         return Err("此标识暂无法保证按精确 ID 继续，请在 Qoder 中打开会话。".into());
     }
-    let details = read_details(&paths);
+    let details = read_details(&paths, &SessionScanState::default());
     let cwd = details
         .working_directory
         .filter(|cwd| Path::new(cwd).is_absolute() && Path::new(cwd).is_dir())
@@ -830,7 +866,12 @@ mod tests {
         let mut open = HashSet::new();
         open.insert(fixture.root().join("-Users-test-proj").join(STEM));
 
-        let scan = list_records(&fixture.root(), "Qoder", &open);
+        let scan = list_records(
+            &fixture.root(),
+            "Qoder",
+            &open,
+            &SessionScanState::default(),
+        );
         assert_eq!(scan.status, SessionScanStatus::Ready);
         assert_eq!(scan.records.len(), 2);
         let record = scan
@@ -866,9 +907,27 @@ mod tests {
     }
 
     #[test]
+    fn repeated_scans_reuse_transcript_parses() {
+        let fixture = Fixture::new();
+        fixture.session("-Users-test-proj", STEM);
+        fixture.sidecar("-Users-test-proj", STEM, "2025-01-03T00:00:00.000Z");
+        let state = SessionScanState::default();
+        let first = list_records(&fixture.root(), "Qoder", &HashSet::new(), &state);
+        let after_first = state.transcripts().stats();
+        assert!(after_first.bytes_read > 0);
+
+        let second = list_records(&fixture.root(), "Qoder", &HashSet::new(), &state);
+        assert_eq!(second.records.len(), first.records.len());
+        let after_second = state.transcripts().stats();
+        assert_eq!(after_second.bytes_read, after_first.bytes_read);
+        assert!(after_second.reused > after_first.reused);
+    }
+
+    #[test]
     fn scan_reports_missing_and_symlinked_roots() {
         let fixture = Fixture::new();
-        let missing = list_records(&fixture.root(), "Qoder", &HashSet::new());
+        let state = SessionScanState::default();
+        let missing = list_records(&fixture.root(), "Qoder", &HashSet::new(), &state);
         assert_eq!(missing.status, SessionScanStatus::Missing);
 
         fs::create_dir_all(fixture.dir.path().join("real")).unwrap();
@@ -877,7 +936,7 @@ mod tests {
             fixture.root(),
         )
         .unwrap();
-        let linked = list_records(&fixture.root(), "Qoder CN", &HashSet::new());
+        let linked = list_records(&fixture.root(), "Qoder CN", &HashSet::new(), &state);
         assert_eq!(linked.status, SessionScanStatus::Failed);
         assert!(linked.message.unwrap().contains("Qoder CN"));
     }
@@ -996,7 +1055,12 @@ mod tests {
                 .join("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl"),
         )
         .unwrap();
-        let scan = list_records(&fixture.root(), "Qoder", &HashSet::new());
+        let scan = list_records(
+            &fixture.root(),
+            "Qoder",
+            &HashSet::new(),
+            &SessionScanState::default(),
+        );
         assert_eq!(scan.records.len(), 1);
     }
 

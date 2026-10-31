@@ -1,7 +1,7 @@
 import { Input } from "../../components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "../../components/ui/toggle-group";
 import { ArrowClockwise as RefreshCw, ArrowSquareOut, CaretDown, CaretRight, Trash } from "@phosphor-icons/react";
-import { useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,11 +40,10 @@ import {
   type SessionUsageFilter,
   selectedRemovalConfirmText,
   selectedRemovalRequest,
-  sessionSections,
+  sessionSection,
   type SessionSort,
   singleRemovalConfirmText,
   type SessionRecord,
-  type SessionSectionView,
   type SessionSourceId,
   type SessionSourceScan,
 } from "../sessionRecords";
@@ -70,6 +69,7 @@ function openableSource(key: SessionSourceId) {
 
 const selectableSession = (record: SessionRecord) => !record.inUse;
 const selectableOpenCode = () => true;
+const GROUP_PAGE_SIZE = 100;
 
 export function SessionRecordsPage({
   records,
@@ -119,7 +119,28 @@ export function SessionRecordsPage({
   const openCodeDeleteResult = openCode.outcome;
   const [sorts, setSorts] = useState<Record<SessionSourceId, SessionSort>>({ codex: "time", claude: "time", grok: "time", qoder: "time", "qoder-cn": "time" });
   const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" }, grok: { query: "", usage: "all" }, qoder: { query: "", usage: "all" }, "qoder-cn": { query: "", usage: "all" } });
-  const sections = useMemo(() => (scan ? sessionSections(scan, sorts, filters) : null), [scan, sorts, filters]);
+  const deferredFilters = useDeferredValue(filters);
+  const counts = useMemo(() => {
+    if (!scan) return null;
+    return Object.fromEntries(
+      sources.map((source) => [
+        source.key,
+        filterSessionRecords(scan[source.key]?.records ?? [], deferredFilters[source.key]).length,
+      ]),
+    ) as Record<SessionSourceId, number>;
+  }, [scan, deferredFilters]);
+  const openSessionRef = useRef(records.openSession);
+  openSessionRef.current = records.openSession;
+  const requestRemovalRef = useRef(records.request);
+  requestRemovalRef.current = records.request;
+  const openSessionForSource = useCallback(
+    (source: SessionSourceId, record: SessionRecord) => openSessionRef.current(source, record),
+    [],
+  );
+  const requestRemovalForSource = useCallback(
+    (source: SessionSourceId, record: SessionRecord) => requestRemovalRef.current({ kind: "one", source, record }),
+    [],
+  );
   const [activeSource, setActiveSource] = useState<SessionSourceId | "opencode">(initialSource);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const selectionTrigger = useRef<HTMLButtonElement | null>(null);
@@ -388,7 +409,7 @@ export function SessionRecordsPage({
       <Tabs className="min-w-0" onValueChange={(value) => setActiveSource(value as SessionSourceId | "opencode")} value={activeSource}>
         <TabsList className="h-auto w-full flex-wrap">
           {sources.map((source) => {
-            const count = sections?.[source.key]?.count;
+            const count = counts?.[source.key];
             return (
               <TabsTrigger key={source.key} value={source.key}>
                 {source.label}
@@ -405,16 +426,15 @@ export function SessionRecordsPage({
         </TabsList>
         {sources.map((source) => {
           const data = scan?.[source.key];
-          const view = sections?.[source.key];
           const selection = selections[source.key];
           return (
             <TabsContent className="min-w-0" key={source.key} value={source.key}>
               <SourceSection
                 collapsed={collapsed}
                 emptyMessage={data?.status === "Failed" ? "未能读取会话记录，请查看错误信息后刷新重试"
-                  : data?.status === "Partial" && !view?.totalCount ? "尚未读到会话记录，请查看读取不完整的提示"
+                  : data?.status === "Partial" && !data?.records.length ? "尚未读到会话记录，请查看读取不完整的提示"
                     : data?.status === "Missing" ? `未找到 ${source.label} 会话记录目录`
-                      : view?.totalCount ? "没有匹配的会话记录，请调整搜索词或使用状态筛选" : source.empty}
+                      : data?.records.length ? "没有匹配的会话记录，请调整搜索词或使用状态筛选" : source.empty}
                 filter={filters[source.key]}
                 onFilterChange={(patch) => {
                   setFilters((current) => ({ ...current, [source.key]: { ...current[source.key], ...patch } }));
@@ -423,23 +443,21 @@ export function SessionRecordsPage({
                 fallbackPath={source.fallback}
                 homeDirectory={homeDirectory}
                 label={source.label}
-                onOpen={openableSource(source.key) ? (record) => records.openSession(source.key, record) : undefined}
+                onOpen={openableSource(source.key) ? openSessionForSource : undefined}
                 openingId={records.openingSession?.source === source.key ? records.openingSession.id : null}
                 nowMs={currentTime}
                 onClearSelection={() => selection.clear()}
                 onRequestAgeRemoval={(days, count) => {
                   records.request({ kind: "age", source: source.key, label: source.label, days, count });
                 }}
-                onRequestRemoval={(record) => {
-                  records.request({ kind: "one", source: source.key, record });
-                }}
+                onRequestRemoval={requestRemovalForSource}
                 onRequestSelectedRemoval={(selectedRecords, trigger) => {
                   selectionTrigger.current = trigger;
                   records.request({ kind: "selected", source: source.key, label: source.label, records: selectedRecords });
                 }}
                 onSelectAll={() => selection.selectAll(filterSessionRecords(data?.records ?? [], filters[source.key]))}
                 onSetGroupSelected={(records, selected) => selection.selectGroup(records, selected)}
-                onSetRecordSelected={(id, selected) => selection.toggle(id, selected)}
+                onSetRecordSelected={selection.toggle}
                 onRefresh={() => onRefresh(source.key)}
                 onSortChange={(next) => setSorts((current) => ({ ...current, [source.key]: next }))}
                 onToggle={(groupKey, nextCollapsed) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: nextCollapsed }))}
@@ -450,7 +468,6 @@ export function SessionRecordsPage({
                 source={data ?? null}
                 coverageItem={coverageItems[source.key]}
                 sourceKey={source.key}
-                view={view ?? null}
               />
             </TabsContent>
           );
@@ -696,11 +713,96 @@ function OpenCodeSection({
   );
 }
 
+const SessionRow = memo(function SessionRow({
+  record,
+  sourceKey,
+  label,
+  selected,
+  projectMode,
+  homeDirectory,
+  mutationBlocked,
+  removing,
+  scanning,
+  sourceFailed,
+  blockedReason,
+  opening,
+  onOpen,
+  onOpenError,
+  onRequestRemoval,
+  onSetRecordSelected,
+}: {
+  record: SessionRecord;
+  sourceKey: SessionSourceId;
+  label: string;
+  selected: boolean;
+  projectMode: boolean;
+  homeDirectory: string | null;
+  mutationBlocked: boolean;
+  removing: boolean;
+  scanning: boolean;
+  sourceFailed: boolean;
+  blockedReason: string | null | undefined;
+  opening: boolean;
+  onOpen?: (record: SessionRecord) => Promise<string | null>;
+  onOpenError: (message: string | null) => void;
+  onRequestRemoval: (record: SessionRecord) => void;
+  onSetRecordSelected: (id: string, selected: boolean) => void;
+}) {
+  return (
+    <li className={`grid items-center gap-3 py-3 sm:grid-cols-[auto_minmax(0,1.4fr)_minmax(0,1fr)_auto] ${projectMode ? "pl-10 pr-4" : "px-4"}`}>
+      <Checkbox
+        aria-label={`选择 ${record.title}`}
+        aria-describedby={record.inUse ? `${sourceKey}-in-use-${encodeURIComponent(record.id)}` : undefined}
+        checked={selected}
+        disabled={mutationBlocked || record.inUse}
+        onCheckedChange={(checked) => onSetRecordSelected(record.id, checked === true)}
+      />
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium">{record.title}</span>
+        <span className="mt-1 block truncate text-xs text-muted-foreground">
+          {record.workingDirectory
+            ? formatHomePath(record.workingDirectory, homeDirectory)
+            : "没有工作目录"}
+        </span>
+        {record.grok?.parentSessionId ? <span className="mt-1 block break-all text-xs text-muted-foreground">来源记录：{record.grok.parentSessionId}</span> : null}
+        {record.grok?.relatedSessionIds.length ? <span className="mt-1 block text-xs text-muted-foreground">关联 {record.grok.relatedSessionIds.length} 条记录，移除不自动连带</span> : null}
+        {record.grok?.resumeError ? <span className="mt-1 block text-xs text-muted-foreground" id={`grok-resume-${encodeURIComponent(record.id)}`}>{record.grok.resumeError}</span> : null}
+      </span>
+      <span className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+        <span>{record.lastActivityMs === null ? "没有最后活动时间" : formatSessionActivity(record.lastActivityMs)}</span>
+        <span className="font-medium tabular-nums text-foreground">{record.grok?.bytesComplete === false ? record.bytes ? `已测 ${formatBytes(record.bytes)}` : "大小未知" : formatBytes(record.bytes)}</span>
+      </span>
+      <span className="flex flex-wrap items-center justify-end gap-2">
+        {onOpen ? <Button
+          aria-label={`在 ${label} 中继续 ${record.title}`}
+          aria-describedby={record.grok?.resumeError ? `grok-resume-${encodeURIComponent(record.id)}` : undefined}
+          disabled={removing || scanning || sourceFailed || Boolean(record.grok?.resumeError)}
+          onClick={async () => { onOpenError(null); onOpenError(await onOpen(record)); }}
+          size="sm" type="button" variant="outline"
+        ><ArrowSquareOut aria-hidden="true" />{opening ? "打开中" : "继续会话"}</Button> : null}
+        {record.inUse ? <span className="text-xs text-muted-foreground" id={`${sourceKey}-in-use-${encodeURIComponent(record.id)}`}>使用中，暂不移除</span> : (
+          <Button
+            aria-label={`将 ${record.title || record.id} 移入废纸篓`}
+            disabled={mutationBlocked}
+            aria-describedby={blockedReason ? `${sourceKey}-removal-blocked` : undefined}
+            onClick={() => onRequestRemoval(record)}
+            size="icon-sm"
+            title="移入废纸篓"
+            type="button"
+            variant="outline"
+          >
+            <Trash aria-hidden="true" />
+          </Button>
+        )}
+      </span>
+    </li>
+  );
+});
+
 function SourceSection({
   filter,
   onFilterChange,
   source,
-  view,
   label,
   onOpen,
   openingId,
@@ -729,22 +831,21 @@ function SourceSection({
   filter: SessionFilter;
   onFilterChange: (patch: Partial<SessionFilter>) => void;
   source: SessionSourceScan | null;
-  view: SessionSectionView | null;
   label: string;
-  onOpen?: (record: SessionRecord) => Promise<string | null>;
+  onOpen?: (source: SessionSourceId, record: SessionRecord) => Promise<string | null>;
   openingId?: string | null;
   emptyMessage: string;
   fallbackPath: string;
   homeDirectory: string | null;
   collapsed: Record<string, boolean>;
-  sourceKey: string;
+  sourceKey: SessionSourceId;
   coverageItem: ObservationCoverageItem;
   onToggle: (groupKey: string, collapsed: boolean) => void;
   nowMs: number;
   onSortChange: (sort: SessionSort) => void;
   onClearSelection: () => void;
   onRequestAgeRemoval: (days: 7 | 30, count: number) => void;
-  onRequestRemoval: (record: SessionRecord) => void;
+  onRequestRemoval: (source: SessionSourceId, record: SessionRecord) => void;
   onRefresh: () => void;
   onRequestSelectedRemoval: (records: SessionRecord[], trigger: HTMLButtonElement) => void;
   onSelectAll: () => void;
@@ -756,6 +857,23 @@ function SourceSection({
   sort: SessionSort;
 }) {
   const [openError, setOpenError] = useState<string | null>(null);
+  const deferredFilter = useDeferredValue(filter);
+  const view = useMemo(
+    () => (source ? sessionSection(source, sort, deferredFilter) : null),
+    [source, sort, deferredFilter],
+  );
+  const openRecord = useMemo(
+    () => (onOpen ? (record: SessionRecord) => onOpen(sourceKey, record) : undefined),
+    [onOpen, sourceKey],
+  );
+  const requestRemoval = useMemo(
+    () => (record: SessionRecord) => onRequestRemoval(sourceKey, record),
+    [onRequestRemoval, sourceKey],
+  );
+  const [shown, setShown] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setShown({});
+  }, [filter.query, filter.usage, sort]);
   const grok = sourceKey === "grok";
   const qoder = sourceKey === "qoder" || sourceKey === "qoder-cn";
   const blockedReason = grok ? source?.status === "Failed" ? "请先成功读取 Grok Build 会话记录。" : source?.removalBlockedReason : null;
@@ -946,57 +1064,46 @@ function SourceSection({
                   </button>
                 </div>
                 {isCollapsed ? null : (
-                  <ul className="divide-y">
-                    {group.records.map((record) => (
-                      <li className={`grid items-center gap-3 py-3 sm:grid-cols-[auto_minmax(0,1.4fr)_minmax(0,1fr)_auto] ${projectMode ? "pl-10 pr-4" : "px-4"}`} key={record.id}>
-                        <Checkbox
-                          aria-label={`选择 ${record.title}`}
-                          aria-describedby={record.inUse ? `${sourceKey}-in-use-${encodeURIComponent(record.id)}` : undefined}
-                          checked={!record.inUse && selectedSet.has(record.id)}
-                          disabled={mutationBlocked || record.inUse}
-                          onCheckedChange={(checked) => onSetRecordSelected(record.id, checked === true)}
+                  <>
+                    <ul className="divide-y">
+                      {group.records.slice(0, shown[collapseKey] ?? GROUP_PAGE_SIZE).map((record) => (
+                        <SessionRow
+                          blockedReason={blockedReason}
+                          homeDirectory={homeDirectory}
+                          key={record.id}
+                          label={label}
+                          mutationBlocked={mutationBlocked}
+                          onOpen={openRecord}
+                          onOpenError={setOpenError}
+                          onRequestRemoval={requestRemoval}
+                          onSetRecordSelected={onSetRecordSelected}
+                          opening={openingId === record.id}
+                          projectMode={projectMode}
+                          record={record}
+                          removing={removing}
+                          scanning={scanning}
+                          selected={!record.inUse && selectedSet.has(record.id)}
+                          sourceFailed={source?.status === "Failed"}
+                          sourceKey={sourceKey}
                         />
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium">{record.title}</span>
-                          <span className="mt-1 block truncate text-xs text-muted-foreground">
-                            {record.workingDirectory
-                              ? formatHomePath(record.workingDirectory, homeDirectory)
-                              : "没有工作目录"}
-                          </span>
-                          {record.grok?.parentSessionId ? <span className="mt-1 block break-all text-xs text-muted-foreground">来源记录：{record.grok.parentSessionId}</span> : null}
-                          {record.grok?.relatedSessionIds.length ? <span className="mt-1 block text-xs text-muted-foreground">关联 {record.grok.relatedSessionIds.length} 条记录，移除不自动连带</span> : null}
-                          {record.grok?.resumeError ? <span className="mt-1 block text-xs text-muted-foreground" id={`grok-resume-${encodeURIComponent(record.id)}`}>{record.grok.resumeError}</span> : null}
-                        </span>
-                        <span className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-                          <span>{record.lastActivityMs === null ? "没有最后活动时间" : formatSessionActivity(record.lastActivityMs)}</span>
-                          <span className="font-medium tabular-nums text-foreground">{record.grok?.bytesComplete === false ? record.bytes ? `已测 ${formatBytes(record.bytes)}` : "大小未知" : formatBytes(record.bytes)}</span>
-                        </span>
-                        <span className="flex flex-wrap items-center justify-end gap-2">
-                          {onOpen ? <Button
-                            aria-label={`在 ${label} 中继续 ${record.title}`}
-                            aria-describedby={record.grok?.resumeError ? `grok-resume-${encodeURIComponent(record.id)}` : undefined}
-                            disabled={removing || scanning || source?.status === "Failed" || Boolean(record.grok?.resumeError)}
-                            onClick={async () => { setOpenError(null); setOpenError(await onOpen(record)); }}
-                            size="sm" type="button" variant="outline"
-                          ><ArrowSquareOut aria-hidden="true" />{openingId === record.id ? "打开中" : "继续会话"}</Button> : null}
-                          {record.inUse ? <span className="text-xs text-muted-foreground" id={`${sourceKey}-in-use-${encodeURIComponent(record.id)}`}>使用中，暂不移除</span> : (
-                            <Button
-                              aria-label={`将 ${record.title || record.id} 移入废纸篓`}
-                              disabled={mutationBlocked}
-                              aria-describedby={blockedReason ? `${sourceKey}-removal-blocked` : undefined}
-                              onClick={() => onRequestRemoval(record)}
-                              size="icon-sm"
-                              title="移入废纸篓"
-                              type="button"
-                              variant="outline"
-                            >
-                              <Trash aria-hidden="true" />
-                            </Button>
-                          )}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                      ))}
+                    </ul>
+                    {group.records.length > (shown[collapseKey] ?? GROUP_PAGE_SIZE) ? (
+                      <div className="border-b px-4 py-2">
+                        <Button
+                          onClick={() => setShown((current) => ({
+                            ...current,
+                            [collapseKey]: (current[collapseKey] ?? GROUP_PAGE_SIZE) + GROUP_PAGE_SIZE * 2,
+                          }))}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          {`显示更多（剩余 ${group.records.length - (shown[collapseKey] ?? GROUP_PAGE_SIZE)} 条）`}
+                        </Button>
+                      </div>
+                    ) : null}
+                  </>
                 )}
               </section>
             );

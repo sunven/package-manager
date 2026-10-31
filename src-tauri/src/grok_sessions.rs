@@ -4,6 +4,9 @@ use crate::session_records::{
     SessionRemovalItem, SessionRemovalProgress, SessionRemovalReason, SessionRemovalResult,
     SessionRemovalStatus, SessionScanStatus, SessionSourceScan,
 };
+use crate::session_scan_cache::{
+    CachedTree, DirFingerprint, FileFingerprint, SessionScanState, TreeFingerprint,
+};
 use crate::types::AgeEligibleCounts;
 use serde::Serialize;
 use serde_json::Value;
@@ -12,6 +15,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -147,94 +151,202 @@ fn resume_error(path: &Path, session_id: &str, cwd: Option<&str>) -> Option<Stri
     None
 }
 
-fn measure(path: &Path, budget: &mut usize) -> (u64, bool) {
-    if *budget == 0 {
-        return (0, false);
-    }
-    *budget -= 1;
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return (0, false);
-    };
-    if metadata.file_type().is_symlink() {
-        return (0, true);
-    }
-    if metadata.is_file() {
-        return (metadata.len(), true);
-    }
-    if !metadata.is_dir() {
-        return (0, false);
-    }
-    let Ok(entries) = fs::read_dir(path) else {
-        return (0, false);
-    };
-    let mut bytes = 0u64;
-    let mut complete = true;
-    for entry in entries {
-        let Ok(entry) = entry else {
-            complete = false;
-            continue;
-        };
-        let (next, measured) = measure(&entry.path(), budget);
-        bytes = bytes.saturating_add(next);
-        complete &= measured;
-        if *budget == 0 {
-            complete = false;
-            break;
-        }
-    }
-    (bytes, complete)
+#[derive(Clone, Debug)]
+struct TreeScan {
+    bytes: u64,
+    bytes_complete: bool,
+    related_ids: Vec<String>,
+    relations_complete: bool,
 }
 
-fn subagent_relations(
+impl TreeScan {
+    fn new() -> Self {
+        Self {
+            bytes: 0,
+            bytes_complete: true,
+            related_ids: Vec::new(),
+            relations_complete: true,
+        }
+    }
+}
+
+fn scan_tree_cached(path: &Path, session_id: &str, state: &SessionScanState) -> TreeScan {
+    let Some(dir) = DirFingerprint::read(path) else {
+        return TreeScan {
+            bytes_complete: false,
+            ..TreeScan::new()
+        };
+    };
+    let fingerprint = TreeFingerprint {
+        dir,
+        updates: FileFingerprint::read(&path.join("updates.jsonl")),
+        summary: FileFingerprint::read(&path.join("summary.json")),
+        subagents: DirFingerprint::read(&path.join("subagents")),
+    };
+    if let Ok(cache) = state.grok_trees().lock() {
+        if let Some(cached) = cache.get(path) {
+            if cached.fingerprint == fingerprint {
+                return TreeScan {
+                    bytes: cached.bytes,
+                    bytes_complete: cached.bytes_complete,
+                    related_ids: cached.related_ids.clone(),
+                    relations_complete: cached.relations_complete,
+                };
+            }
+        }
+    }
+    let scan = scan_tree(path, session_id);
+    if let Ok(mut cache) = state.grok_trees().lock() {
+        cache.insert(
+            path.to_path_buf(),
+            CachedTree {
+                fingerprint,
+                bytes: scan.bytes,
+                bytes_complete: scan.bytes_complete,
+                related_ids: scan.related_ids.clone(),
+                relations_complete: scan.relations_complete,
+            },
+        );
+    }
+    scan
+}
+
+fn scan_tree(path: &Path, session_id: &str) -> TreeScan {
+    let mut scan = TreeScan::new();
+    let mut file_budget = 100_000usize;
+    let mut relation_budget = 10_000usize;
+    walk_tree(
+        path,
+        true,
+        None,
+        session_id,
+        &mut scan,
+        &mut file_budget,
+        &mut relation_budget,
+    );
+    scan
+}
+
+#[cfg(test)]
+fn measure(path: &Path, budget: &mut usize) -> (u64, bool) {
+    let mut scan = TreeScan::new();
+    let mut relation_budget = 10_000usize;
+    walk_tree(path, true, None, "", &mut scan, budget, &mut relation_budget);
+    (scan.bytes, scan.bytes_complete)
+}
+
+fn walk_tree(
     path: &Path,
-    parent: &str,
-    depth: usize,
-    budget: &mut usize,
-    ids: &mut Vec<String>,
-) -> bool {
+    at_root: bool,
+    relation_depth: Option<usize>,
+    session_id: &str,
+    scan: &mut TreeScan,
+    file_budget: &mut usize,
+    relation_budget: &mut usize,
+) {
+    if *file_budget == 0 {
+        scan.bytes_complete = false;
+        return;
+    }
+    *file_budget -= 1;
+
+    let mut relations_active = false;
+    if let Some(depth) = relation_depth {
+        if depth > 8 {
+            scan.relations_complete = false;
+        } else if *relation_budget == 0 {
+            scan.relations_complete = false;
+        } else {
+            *relation_budget -= 1;
+            relations_active = true;
+        }
+    }
+
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
-        Err(_) => return false,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            scan.bytes_complete = false;
+            return;
+        }
+        Err(_) => {
+            scan.bytes_complete = false;
+            if relation_depth.is_some() {
+                scan.relations_complete = false;
+            }
+            return;
+        }
     };
     if metadata.file_type().is_symlink() {
-        return true;
+        return;
     }
-    if depth > 8 || *budget == 0 {
-        return false;
-    }
-    *budget -= 1;
     if metadata.is_file() {
-        if path.file_name().is_some_and(|name| name == "meta.json") {
+        scan.bytes = scan.bytes.saturating_add(metadata.len());
+        if relations_active && path.file_name().is_some_and(|name| name == "meta.json") {
             let Ok(value) = read_metadata(path) else {
-                return false;
+                scan.relations_complete = false;
+                return;
             };
-            if text_field(&value, "parent_session_id") == Some(parent) {
+            if text_field(&value, "parent_session_id") == Some(session_id) {
                 if let Some(child) = text_field(&value, "child_session_id") {
-                    ids.push(child.into());
+                    scan.related_ids.push(child.into());
                 }
             }
         }
-        return true;
+        return;
+    }
+    if !metadata.is_dir() {
+        scan.bytes_complete = false;
+        if relation_depth.is_some() {
+            scan.relations_complete = false;
+        }
+        return;
     }
     let Ok(entries) = fs::read_dir(path) else {
-        return false;
+        scan.bytes_complete = false;
+        if relation_depth.is_some() {
+            scan.relations_complete = false;
+        }
+        return;
     };
-    let mut complete = true;
     for entry in entries {
         let Ok(entry) = entry else {
-            complete = false;
+            scan.bytes_complete = false;
+            if relation_depth.is_some() {
+                scan.relations_complete = false;
+            }
             continue;
         };
-        complete &= subagent_relations(&entry.path(), parent, depth + 1, budget, ids);
-        if *budget == 0 {
-            return false;
+        let next_relation_depth = if at_root && entry.file_name() == "subagents" {
+            Some(0)
+        } else {
+            relation_depth.map(|depth| depth + 1)
+        };
+        walk_tree(
+            &entry.path(),
+            false,
+            next_relation_depth,
+            session_id,
+            scan,
+            file_budget,
+            relation_budget,
+        );
+        if *file_budget == 0 {
+            scan.bytes_complete = false;
+            break;
         }
     }
-    complete
 }
 
 fn read_record(root: &Path, id: &str, measure_bytes: bool) -> Result<SessionRecord, String> {
+    read_record_with_state(root, id, measure_bytes, &SessionScanState::default())
+}
+
+fn read_record_with_state(
+    root: &Path,
+    id: &str,
+    measure_bytes: bool,
+    state: &SessionScanState,
+) -> Result<SessionRecord, String> {
     let path = record_path(root, id)?;
     let summary = read_metadata(&path.join("summary.json"))?;
     let info = summary.get("info").ok_or(INVALID_RECORD)?;
@@ -253,34 +365,25 @@ fn read_record(root: &Path, id: &str, measure_bytes: bool) -> Result<SessionReco
     .split_whitespace()
     .collect::<Vec<_>>()
     .join(" ");
-    let (bytes, bytes_complete) = if measure_bytes {
-        measure(&path, &mut 100_000)
+    let tree = if measure_bytes {
+        scan_tree_cached(&path, session_id, state)
     } else {
-        (0, true)
+        TreeScan::new()
     };
-    let mut related_session_ids = Vec::new();
-    let relations_complete = !measure_bytes
-        || subagent_relations(
-            &path.join("subagents"),
-            session_id,
-            0,
-            &mut 10_000,
-            &mut related_session_ids,
-        );
     Ok(SessionRecord {
         id: id.into(),
         title: title.chars().take(200).collect(),
         last_activity_ms: text_field(&summary, "last_active_at").and_then(activity_time),
         working_directory: cwd.clone(),
-        bytes,
+        bytes: tree.bytes,
         in_use: false,
         grok: Some(RecordDetails {
             session_id: session_id.into(),
-            bytes_complete,
+            bytes_complete: tree.bytes_complete,
             resume_error: resume_error(&path, session_id, cwd.as_deref()),
             parent_session_id: text_field(&summary, "parent_session_id").map(str::to_owned),
-            related_session_ids,
-            relations_complete,
+            related_session_ids: tree.related_ids,
+            relations_complete: tree.relations_complete,
         }),
     })
 }
@@ -297,6 +400,10 @@ fn empty_scan(root: &Path) -> SessionSourceScan {
 }
 
 fn list_records(root: &Path) -> SessionSourceScan {
+    list_records_with_state(root, &SessionScanState::default())
+}
+
+fn list_records_with_state(root: &Path, state: &SessionScanState) -> SessionSourceScan {
     let mut scan = empty_scan(root);
     match fs::symlink_metadata(root) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -316,6 +423,7 @@ fn list_records(root: &Path) -> SessionSourceScan {
         scan.message = Some("无法读取 Grok Build 会话来源。".into());
         return scan;
     };
+    let mut seen = HashSet::new();
     for group in groups {
         let Ok(group) = group else {
             unreadable += 1;
@@ -354,7 +462,8 @@ fn list_records(root: &Path) -> SessionSourceScan {
                 unreadable += 1;
                 continue;
             };
-            match read_record(root, &id, true) {
+            seen.insert(entry.path());
+            match read_record_with_state(root, &id, true, state) {
                 Ok(record) => {
                     if record.grok.as_ref().is_some_and(|details| {
                         !details.bytes_complete || !details.relations_complete
@@ -366,6 +475,9 @@ fn list_records(root: &Path) -> SessionSourceScan {
                 Err(_) => unreadable += 1,
             }
         }
+    }
+    if let Ok(mut cache) = state.grok_trees().lock() {
+        cache.retain(|path, _| !path.starts_with(root) || seen.contains(path));
     }
     let relations = scan
         .records
@@ -492,7 +604,7 @@ fn probe_command(program: &str, args: &[&str], timeout: Duration) -> Result<Prob
     })
 }
 
-fn check_runtime(root: &Path) -> Result<(), String> {
+fn probe_processes() -> Result<Arc<HashMap<u32, String>>, String> {
     if !cfg!(target_os = "macos") {
         return Err(RUNTIME_UNKNOWN.into());
     }
@@ -505,7 +617,22 @@ fn check_runtime(root: &Path) -> Result<(), String> {
     if run.exit_code != Some(0) || !run.stderr.trim().is_empty() {
         return Err(RUNTIME_UNKNOWN.into());
     }
-    let processes = process_snapshot(&run.stdout)?;
+    Ok(Arc::new(process_snapshot(&run.stdout)?))
+}
+
+fn check_runtime(root: &Path) -> Result<(), String> {
+    let processes = probe_processes()?;
+    check_runtime_with(&processes, root)
+}
+
+fn check_runtime_cached(state: &SessionScanState, root: &Path) -> Result<(), String> {
+    let processes = state
+        .processes()
+        .get(Duration::from_secs(2), probe_processes)?;
+    check_runtime_with(&processes, root)
+}
+
+fn check_runtime_with(processes: &HashMap<u32, String>, root: &Path) -> Result<(), String> {
     if processes.values().any(|path| grok_host(path)) {
         return Err(RUNTIME_RUNNING.into());
     }
@@ -600,7 +727,7 @@ fn parse_open_paths(
     Ok(paths)
 }
 
-pub(crate) fn scan_default() -> SessionSourceScan {
+pub(crate) fn scan_default(state: &SessionScanState) -> SessionSourceScan {
     let root = match sessions_dir() {
         Ok(root) => root,
         Err(message) => {
@@ -610,15 +737,15 @@ pub(crate) fn scan_default() -> SessionSourceScan {
             return scan;
         }
     };
-    let mut scan = list_records(&root);
+    let mut scan = list_records_with_state(&root, state);
     if matches!(
         scan.status,
         SessionScanStatus::Missing | SessionScanStatus::Failed
     ) {
         return scan;
     }
-    scan.removal_blocked_reason = check_runtime(&root).err();
-    match open_paths(&root) {
+    scan.removal_blocked_reason = check_runtime_cached(state, &root).err();
+    match state.open_files().under(&root) {
         Ok(open) => {
             for record in &mut scan.records {
                 let path = root.join(&record.id);

@@ -31,6 +31,7 @@ mod project_scan_history;
 mod qoder_sessions;
 mod scan_diagnostics;
 mod session_records;
+mod session_scan_cache;
 mod skill_installation_copy;
 mod types;
 mod vscode_removal;
@@ -530,8 +531,11 @@ async fn remove_session_records(
 }
 
 #[tauri::command]
-async fn scan_session_records() -> Result<session_records::SessionRecordScan, String> {
-    tauri::async_runtime::spawn_blocking(session_records::scan_default)
+async fn scan_session_records(
+    state: tauri::State<'_, session_scan_cache::SessionScanState>,
+) -> Result<session_records::SessionRecordScan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || session_records::scan_default(&state))
         .await
         .map_err(|error| format!("会话记录读取失败：{error}"))?
 }
@@ -539,10 +543,14 @@ async fn scan_session_records() -> Result<session_records::SessionRecordScan, St
 #[tauri::command]
 async fn scan_session_source(
     source: session_records::SessionSourceKind,
+    state: tauri::State<'_, session_scan_cache::SessionScanState>,
 ) -> Result<session_records::SessionSourceScan, String> {
-    tauri::async_runtime::spawn_blocking(move || session_records::scan_source_default(source))
-        .await
-        .map_err(|error| format!("会话记录读取失败：{error}"))?
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        session_records::scan_source_default(source, &state)
+    })
+    .await
+    .map_err(|error| format!("会话记录读取失败：{error}"))?
 }
 
 #[tauri::command]
@@ -1035,6 +1043,7 @@ pub fn run() {
         .manage(codex_plugins::CodexPluginsState::default())
         .manage(codex_marketplaces::MarketplacesState::default())
         .manage(opencode_deletion::DeletionState::default())
+        .manage(session_scan_cache::SessionScanState::default())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

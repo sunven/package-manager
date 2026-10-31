@@ -1,10 +1,12 @@
+use crate::session_scan_cache::{
+    log_cache_stats, timed, SessionScanState, TranscriptKind, TranscriptState,
+};
 use crate::types::AgeEligibleCounts;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::value::RawValue;
 use std::collections::HashSet;
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader};
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -58,51 +60,72 @@ pub(crate) struct SessionRecord {
     pub grok: Option<crate::grok_sessions::RecordDetails>,
 }
 
-pub(crate) fn scan_default() -> Result<SessionRecordScan, String> {
+pub(crate) fn scan_default(state: &SessionScanState) -> Result<SessionRecordScan, String> {
     if !cfg!(target_os = "macos") {
         return Err("会话记录目前只支持 macOS".to_string());
     }
     Ok(SessionRecordScan {
-        codex: scan_source(codex_sessions_dir(), RecordFormat::Codex),
-        claude: scan_source(claude_projects_dir(), RecordFormat::Claude),
-        grok: Some(crate::grok_sessions::scan_default()),
-        qoder: Some(crate::qoder_sessions::scan_default(
-            crate::qoder_sessions::QoderEdition::International,
-        )),
-        qoder_cn: Some(crate::qoder_sessions::scan_default(
-            crate::qoder_sessions::QoderEdition::Cn,
-        )),
+        codex: timed("codex", || {
+            scan_source(codex_sessions_dir(), RecordFormat::Codex, state)
+        }),
+        claude: timed("claude", || {
+            scan_source(claude_projects_dir(), RecordFormat::Claude, state)
+        }),
+        grok: Some(timed("grok", || {
+            crate::grok_sessions::scan_default(state)
+        })),
+        qoder: Some(timed("qoder", || {
+            crate::qoder_sessions::scan_default(
+                crate::qoder_sessions::QoderEdition::International,
+                state,
+            )
+        })),
+        qoder_cn: Some(timed("qoder-cn", || {
+            crate::qoder_sessions::scan_default(crate::qoder_sessions::QoderEdition::Cn, state)
+        })),
     })
 }
 
-pub(crate) fn scan_source_default(source: SessionSourceKind) -> Result<SessionSourceScan, String> {
+pub(crate) fn scan_source_default(
+    source: SessionSourceKind,
+    state: &SessionScanState,
+) -> Result<SessionSourceScan, String> {
     if !cfg!(target_os = "macos") {
         return Err("会话记录目前只支持 macOS".to_string());
     }
     Ok(match source {
-        SessionSourceKind::Codex => scan_source(codex_sessions_dir(), RecordFormat::Codex),
-        SessionSourceKind::Claude => scan_source(claude_projects_dir(), RecordFormat::Claude),
-        SessionSourceKind::Grok => crate::grok_sessions::scan_default(),
+        SessionSourceKind::Codex => {
+            scan_source(codex_sessions_dir(), RecordFormat::Codex, state)
+        }
+        SessionSourceKind::Claude => {
+            scan_source(claude_projects_dir(), RecordFormat::Claude, state)
+        }
+        SessionSourceKind::Grok => crate::grok_sessions::scan_default(state),
         SessionSourceKind::Qoder => crate::qoder_sessions::scan_default(
             crate::qoder_sessions::QoderEdition::International,
+            state,
         ),
         SessionSourceKind::QoderCn => {
-            crate::qoder_sessions::scan_default(crate::qoder_sessions::QoderEdition::Cn)
+            crate::qoder_sessions::scan_default(crate::qoder_sessions::QoderEdition::Cn, state)
         }
     })
 }
 
-fn scan_source(directory: Result<PathBuf, String>, format: RecordFormat) -> SessionSourceScan {
+fn scan_source(
+    directory: Result<PathBuf, String>,
+    format: RecordFormat,
+    state: &SessionScanState,
+) -> SessionSourceScan {
     let directory = match directory {
         Ok(directory) => directory,
         Err(message) => return failed_source(String::new(), message),
     };
     let open_paths = match fs::symlink_metadata(&directory) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            match open_files_under(&directory) {
+            match state.open_files().under(&directory) {
                 Ok(paths) => paths,
                 Err(message) => {
-                    return match list_records(&directory, &|_| false, format) {
+                    return match list_records_with_state(&directory, &|_| false, format, state) {
                         Ok(mut scan) => {
                             scan.message = Some(message);
                             scan
@@ -116,7 +139,12 @@ fn scan_source(directory: Result<PathBuf, String>, format: RecordFormat) -> Sess
         }
         _ => HashSet::new(),
     };
-    source_or_failure(&directory, &|path| open_paths.contains(path), format)
+    source_or_failure(
+        &directory,
+        &|path| open_paths.contains(path),
+        format,
+        state,
+    )
 }
 
 fn failed_source(directory: String, message: String) -> SessionSourceScan {
@@ -162,7 +190,7 @@ pub(crate) fn claude_projects_dir() -> Result<PathBuf, String> {
     Ok(projects_dir_from(None, Path::new(&home)))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum RecordFormat {
     Codex,
     Claude,
@@ -174,9 +202,10 @@ pub(crate) fn list_session_sources(
     claude_dir: &Path,
     is_open: &dyn Fn(&Path) -> bool,
 ) -> SessionRecordScan {
+    let state = SessionScanState::default();
     SessionRecordScan {
-        codex: source_or_failure(codex_dir, is_open, RecordFormat::Codex),
-        claude: source_or_failure(claude_dir, is_open, RecordFormat::Claude),
+        codex: source_or_failure(codex_dir, is_open, RecordFormat::Codex, &state),
+        claude: source_or_failure(claude_dir, is_open, RecordFormat::Claude, &state),
         grok: None,
         qoder: None,
         qoder_cn: None,
@@ -383,7 +412,8 @@ pub(crate) fn remove_older_than_with_reporter(
     on_item: &mut dyn FnMut(&SessionRemovalItem),
 ) -> SessionRemovalResult {
     let cutoff = cutoff_ms(i64::try_from(days).unwrap_or(0), now_ms);
-    let scan = match list_records(directory, is_open, format) {
+    let state = SessionScanState::default();
+    let scan = match list_records_with_state(directory, is_open, format, &state) {
         Ok(scan) => scan,
         Err(message) => {
             return SessionRemovalResult::aborted(message);
@@ -399,7 +429,16 @@ pub(crate) fn remove_older_than_with_reporter(
     let mut result = SessionRemovalResult::default();
     for (index, record) in candidates.into_iter().enumerate() {
         let previous = result.items.len();
-        remove_older_record(directory, &record, cutoff, is_open, format, trash, &mut result);
+        remove_older_record(
+            directory,
+            &record,
+            cutoff,
+            is_open,
+            format,
+            trash,
+            &state,
+            &mut result,
+        );
         if result.items.len() > previous {
             on_item(&result.items[previous]);
         }
@@ -421,6 +460,7 @@ fn remove_older_record(
     is_open: &dyn Fn(&Path) -> bool,
     format: RecordFormat,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
+    state: &SessionScanState,
     result: &mut SessionRemovalResult,
 ) {
     if record.in_use {
@@ -454,8 +494,8 @@ fn remove_older_record(
         return;
     }
     let parsed = match format {
-        RecordFormat::Codex => parse_session_file(&path),
-        RecordFormat::Claude => parse_claude_file(&path),
+        RecordFormat::Codex => parse_session_file(&path, state),
+        RecordFormat::Claude => parse_claude_file(&path, state),
     };
     let Some(latest_ms) = parsed.last_activity_ms else {
         result.record(
@@ -703,17 +743,28 @@ fn source_or_failure(
     directory: &Path,
     is_open: &dyn Fn(&Path) -> bool,
     format: RecordFormat,
+    state: &SessionScanState,
 ) -> SessionSourceScan {
-    match list_records(directory, is_open, format) {
+    match list_records_with_state(directory, is_open, format, state) {
         Ok(scan) => scan,
         Err(message) => failed_source(directory.to_string_lossy().into_owned(), message),
     }
 }
 
+#[cfg(test)]
 fn list_records(
     directory: &Path,
     is_open: &dyn Fn(&Path) -> bool,
     format: RecordFormat,
+) -> Result<SessionSourceScan, String> {
+    list_records_with_state(directory, is_open, format, &SessionScanState::default())
+}
+
+fn list_records_with_state(
+    directory: &Path,
+    is_open: &dyn Fn(&Path) -> bool,
+    format: RecordFormat,
+    state: &SessionScanState,
 ) -> Result<SessionSourceScan, String> {
     let mut scan = SessionSourceScan {
         directory: directory.to_string_lossy().into_owned(),
@@ -742,14 +793,15 @@ fn list_records(
     let mut files = Vec::new();
     collect_session_files(directory, &mut files, &mut scan);
     files.sort();
+    let seen = files.iter().cloned().collect::<HashSet<_>>();
     for path in files {
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) if metadata.file_type().is_file() => metadata,
             _ => continue,
         };
         let parsed = match format {
-            RecordFormat::Codex => parse_session_file(&path),
-            RecordFormat::Claude => parse_claude_file(&path),
+            RecordFormat::Codex => parse_session_file(&path, state),
+            RecordFormat::Claude => parse_claude_file(&path, state),
         };
         let id = path
             .strip_prefix(directory)
@@ -771,6 +823,11 @@ fn list_records(
             grok: None,
         });
     }
+    state.transcripts().retain_source(directory, &seen);
+    log_cache_stats(
+        &format!("{:?}", format),
+        state.transcripts().stats(),
+    );
     scan.age_eligible = age_eligible_counts(&scan.records, now_ms());
     Ok(scan)
 }
@@ -851,67 +908,59 @@ fn collect_session_files(dir: &Path, files: &mut Vec<PathBuf>, scan: &mut Sessio
     }
 }
 
+#[derive(Default)]
 struct ParsedSession {
     title: Option<String>,
     working_directory: Option<String>,
     last_activity_ms: Option<i64>,
 }
 
-fn parse_claude_file(path: &Path) -> ParsedSession {
-    let mut parsed = ParsedSession {
-        title: None,
-        working_directory: None,
-        last_activity_ms: None,
+fn parse_claude_file(path: &Path, state: &SessionScanState) -> ParsedSession {
+    state
+        .transcripts()
+        .read(TranscriptKind::Claude, path, &mut apply_claude_line)
+        .map(|parsed| ParsedSession {
+            title: parsed.ai_title.or(parsed.user_title),
+            working_directory: parsed.working_directory,
+            last_activity_ms: parsed.last_activity_ms,
+        })
+        .unwrap_or_default()
+}
+
+fn apply_claude_line(state: &mut TranscriptState, trimmed: &str) {
+    let Ok(record) = serde_json::from_str::<ClaudeLine>(trimmed) else {
+        return;
     };
-    let mut user_title = None;
-    let mut ai_title = None;
-    let Ok(file) = File::open(path) else {
-        return parsed;
-    };
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else {
-            continue;
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<ClaudeLine>(trimmed) else {
-            continue;
-        };
-        note_timestamp(&mut parsed, record.timestamp.as_deref());
-        if parsed.working_directory.is_none() {
-            parsed.working_directory = record.cwd.filter(|cwd| !cwd.is_empty());
-        }
-        match record.kind.as_deref() {
-            Some("ai-title") => {
-                if let Some(title) = record.ai_title.filter(|value| !value.trim().is_empty()) {
-                    ai_title = Some(truncate_chars(
-                        &title.split_whitespace().collect::<Vec<_>>().join(" "),
-                        TITLE_LIMIT,
-                    ));
-                }
-            }
-            Some("user") => {
-                if record.is_sidechain == Some(true) {
-                    continue;
-                }
-                let Some(text) = record.message.and_then(claude_message_text) else {
-                    continue;
-                };
-                if !is_human_prompt(&text) || user_title.is_some() {
-                    continue;
-                }
-                let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
-                if !compact.is_empty() {
-                    user_title = Some(truncate_chars(&compact, TITLE_LIMIT));
-                }
-            }
-            _ => {}
-        }
+    note_timestamp(state, record.timestamp.as_deref());
+    if state.working_directory.is_none() {
+        state.working_directory = record.cwd.filter(|cwd| !cwd.is_empty());
     }
-    parsed.title = ai_title.or(user_title);
-    parsed
+    match record.kind.as_deref() {
+        Some("ai-title") => {
+            if let Some(title) = record.ai_title.filter(|value| !value.trim().is_empty()) {
+                state.ai_title = Some(truncate_chars(
+                    &title.split_whitespace().collect::<Vec<_>>().join(" "),
+                    TITLE_LIMIT,
+                ));
+            }
+        }
+        Some("user") => {
+            if record.is_sidechain == Some(true) {
+                return;
+            }
+            let Some(text) = record.message.and_then(claude_message_text) else {
+                return;
+            };
+            if !is_human_prompt(&text) || state.user_title.is_some() {
+                return;
+            }
+            let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !compact.is_empty() {
+                state.user_title = Some(truncate_chars(&compact, TITLE_LIMIT));
+            }
+        }
+        _ => {}
+    }
 }
 
 fn claude_message_text(message: &RawValue) -> Option<String> {
@@ -945,77 +994,71 @@ fn is_human_prompt(text: &str) -> bool {
             || trimmed.starts_with("[Request interrupted"))
 }
 
-fn parse_session_file(path: &Path) -> ParsedSession {
-    let mut parsed = ParsedSession {
-        title: None,
-        working_directory: None,
-        last_activity_ms: None,
-    };
-    let Ok(file) = File::open(path) else {
-        return parsed;
-    };
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else {
-            continue;
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let Ok(envelope) = serde_json::from_str::<LineEnvelope>(trimmed) else {
-            continue;
-        };
-        note_timestamp(&mut parsed, envelope.timestamp);
-        let Some(kind) = envelope.kind else {
-            continue;
-        };
-        let Some(payload) = envelope.payload else {
-            continue;
-        };
-        match kind {
-            "session_meta" => {
-                if let Ok(meta) = serde_json::from_str::<MetaPayload>(payload.get()) {
-                    note_timestamp(&mut parsed, meta.timestamp.as_deref());
-                    if parsed.working_directory.is_none() {
-                        parsed.working_directory = meta.cwd.filter(|cwd| !cwd.is_empty());
-                    }
-                }
-            }
-            "response_item" => {
-                if let Ok(message) = serde_json::from_str::<MessagePayload>(payload.get()) {
-                    note_user_title(&mut parsed, user_text_from_message(&message));
-                }
-            }
-            "event_msg" => {
-                if let Ok(event) = serde_json::from_str::<EventPayload>(payload.get()) {
-                    if event.kind.as_deref() == Some("user_message") {
-                        note_user_title(&mut parsed, event.message);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    parsed
+fn parse_session_file(path: &Path, state: &SessionScanState) -> ParsedSession {
+    state
+        .transcripts()
+        .read(TranscriptKind::Codex, path, &mut apply_codex_line)
+        .map(|parsed| ParsedSession {
+            title: parsed.user_title,
+            working_directory: parsed.working_directory,
+            last_activity_ms: parsed.last_activity_ms,
+        })
+        .unwrap_or_default()
 }
 
-fn note_timestamp(parsed: &mut ParsedSession, value: Option<&str>) {
+fn apply_codex_line(state: &mut TranscriptState, trimmed: &str) {
+    let Ok(envelope) = serde_json::from_str::<LineEnvelope>(trimmed) else {
+        return;
+    };
+    note_timestamp(state, envelope.timestamp);
+    let Some(kind) = envelope.kind else {
+        return;
+    };
+    let Some(payload) = envelope.payload else {
+        return;
+    };
+    match kind {
+        "session_meta" => {
+            if let Ok(meta) = serde_json::from_str::<MetaPayload>(payload.get()) {
+                note_timestamp(state, meta.timestamp.as_deref());
+                if state.working_directory.is_none() {
+                    state.working_directory = meta.cwd.filter(|cwd| !cwd.is_empty());
+                }
+            }
+        }
+        "response_item" => {
+            if let Ok(message) = serde_json::from_str::<MessagePayload>(payload.get()) {
+                note_user_title(state, user_text_from_message(&message));
+            }
+        }
+        "event_msg" => {
+            if let Ok(event) = serde_json::from_str::<EventPayload>(payload.get()) {
+                if event.kind.as_deref() == Some("user_message") {
+                    note_user_title(state, event.message);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn note_timestamp(state: &mut TranscriptState, value: Option<&str>) {
     let Some(value) = value else {
         return;
     };
     let Some(millis) = parse_rfc3339_millis(value) else {
         return;
     };
-    parsed.last_activity_ms = Some(
-        parsed
+    state.last_activity_ms = Some(
+        state
             .last_activity_ms
             .map(|current| current.max(millis))
             .unwrap_or(millis),
     );
 }
 
-fn note_user_title(parsed: &mut ParsedSession, text: Option<String>) {
-    if parsed.title.is_some() {
+fn note_user_title(state: &mut TranscriptState, text: Option<String>) {
+    if state.user_title.is_some() {
         return;
     }
     let Some(text) = text else {
@@ -1028,7 +1071,7 @@ fn note_user_title(parsed: &mut ParsedSession, text: Option<String>) {
     {
         return;
     }
-    parsed.title = Some(truncate_chars(&compact, TITLE_LIMIT));
+    state.user_title = Some(truncate_chars(&compact, TITLE_LIMIT));
 }
 
 fn user_text_from_message(message: &MessagePayload) -> Option<String> {
@@ -1254,7 +1297,10 @@ struct ClaudeContentItem {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static FIXTURE_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
     struct Fixture(PathBuf);
 
@@ -1264,8 +1310,11 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let root =
-                std::env::temp_dir().join(format!("codex-sessions-{stamp}-{}", std::process::id()));
+            let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "codex-sessions-{stamp}-{}-{sequence}",
+                std::process::id()
+            ));
             fs::create_dir_all(root.join("sessions")).unwrap();
             Self(root)
         }
@@ -1894,6 +1943,102 @@ mod tests {
         let counts = age_eligible_counts(&records, now);
         assert_eq!(counts.days7, 2);
         assert_eq!(counts.days30, 1);
+    }
+
+    #[test]
+    fn unchanged_claude_sessions_are_reused_between_scans() {
+        let fixture = Fixture::new();
+        let projects = fixture.0.join("projects").join("-work-app");
+        fs::create_dir_all(&projects).unwrap();
+        let chat = projects.join("chat.jsonl");
+        fs::write(
+            &chat,
+            [
+                r#"{"type":"user","timestamp":"2026-09-01T01:00:00Z","cwd":"/work/app","message":{"content":[{"type":"text","text":"第一条消息"}]}}"#,
+                r#"{"type":"ai-title","timestamp":"2026-09-01T02:00:00Z","aiTitle":"旧标题"}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        let state = SessionScanState::default();
+        let root = fixture.0.join("projects");
+        let first =
+            list_records_with_state(&root, &|_| false, RecordFormat::Claude, &state).unwrap();
+        assert_eq!(first.records[0].title, "旧标题");
+        let after_first = state.transcripts().stats();
+        assert!(after_first.bytes_read > 0);
+
+        let second =
+            list_records_with_state(&root, &|_| false, RecordFormat::Claude, &state).unwrap();
+        assert_eq!(second.records[0].title, "旧标题");
+        let after_second = state.transcripts().stats();
+        assert_eq!(after_second.bytes_read, after_first.bytes_read);
+        assert!(after_second.reused > after_first.reused);
+    }
+
+    #[test]
+    fn appended_claude_lines_only_read_new_bytes() {
+        let fixture = Fixture::new();
+        let projects = fixture.0.join("projects").join("-work-app");
+        fs::create_dir_all(&projects).unwrap();
+        let chat = projects.join("chat.jsonl");
+        fs::write(
+            &chat,
+            r#"{"type":"user","timestamp":"2026-09-01T01:00:00Z","cwd":"/work/app","message":{"content":[{"type":"text","text":"第一条消息"}]}}"#.to_string() + "\n",
+        )
+        .unwrap();
+        let state = SessionScanState::default();
+        let root = fixture.0.join("projects");
+        let first =
+            list_records_with_state(&root, &|_| false, RecordFormat::Claude, &state).unwrap();
+        assert_eq!(first.records[0].title, "第一条消息");
+        let before = state.transcripts().stats().bytes_read;
+
+        let appended = "{\"type\":\"ai-title\",\"timestamp\":\"2026-09-02T02:00:00Z\",\"aiTitle\":\"更新标题\"}\n";
+        let mut file = fs::OpenOptions::new().append(true).open(&chat).unwrap();
+        use std::io::Write as _;
+        file.write_all(appended.as_bytes()).unwrap();
+        drop(file);
+
+        let second =
+            list_records_with_state(&root, &|_| false, RecordFormat::Claude, &state).unwrap();
+        assert_eq!(second.records[0].title, "更新标题");
+        assert_eq!(
+            second.records[0].last_activity_ms,
+            parse_rfc3339_millis("2026-09-02T02:00:00Z")
+        );
+        assert_eq!(
+            state.transcripts().stats().bytes_read - before,
+            appended.len() as u64
+        );
+    }
+
+    #[test]
+    fn truncated_sessions_are_reparsed() {
+        let fixture = Fixture::new();
+        let projects = fixture.0.join("projects").join("-work-app");
+        fs::create_dir_all(&projects).unwrap();
+        let chat = projects.join("chat.jsonl");
+        fs::write(
+            &chat,
+            r#"{"type":"user","timestamp":"2026-09-01T01:00:00Z","cwd":"/work/app","message":{"content":[{"type":"text","text":"很长的第一条消息"}]}}"#.to_string() + "\n",
+        )
+        .unwrap();
+        let state = SessionScanState::default();
+        let root = fixture.0.join("projects");
+        list_records_with_state(&root, &|_| false, RecordFormat::Claude, &state).unwrap();
+
+        fs::write(
+            &chat,
+            r#"{"type":"user","timestamp":"2026-09-03T01:00:00Z","message":{"content":[{"type":"text","text":"新内容"}]}}"#.to_string() + "\n",
+        )
+        .unwrap();
+        let scan = list_records_with_state(&root, &|_| false, RecordFormat::Claude, &state).unwrap();
+        assert_eq!(scan.records[0].title, "新内容");
+        assert_eq!(
+            scan.records[0].last_activity_ms,
+            parse_rfc3339_millis("2026-09-03T01:00:00Z")
+        );
     }
 }
 

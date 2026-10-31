@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import {
+  ageEligibleCounts,
   removeCompletedRecords,
   type SessionRecord,
   type SessionRecordScan,
@@ -153,9 +154,15 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
   completedIds: (_target, result) => result.items
     .filter((item) => item.status === "Moved")
     .map((item) => item.id),
-  removeCompleted: (scans, target, completedIds) =>
-    removeCompletedRecords(scans, target.source, completedIds),
-  shouldRefresh: () => true,
+  removeCompleted: (scans, target, completedIds) => {
+    const next = removeCompletedRecords(scans, target.source, completedIds);
+    if (completedIds.length === 0) return next;
+    const scan = next[target.source];
+    return scan
+      ? { ...next, [target.source]: { ...scan, ageEligible: ageEligibleCounts(scan.records, Date.now()) } }
+      : next;
+  },
+  shouldRefresh: () => false,
 };
 
 export function useSessionRecords(active: boolean) {
@@ -163,8 +170,20 @@ export function useSessionRecords(active: boolean) {
     useSessionOperation(adapter, {
       active,
       scopes: SESSION_SCOPES,
+      readOnActivate: false,
       recordFollowUp: recordMaintenanceFollowUp,
     });
+  const activated = useRef(false);
+
+  useEffect(() => {
+    if (!active) {
+      activated.current = false;
+      return;
+    }
+    if (activated.current) return;
+    activated.current = true;
+    void Promise.all(SESSION_SCOPES.map((scope) => refresh([scope])));
+  }, [active, refresh]);
 
   const [openingSession, setOpeningSession] = useState<{ source: SessionSourceId; id: string } | null>(null);
   const opening = useRef(false);
@@ -207,7 +226,7 @@ export function useSessionRecords(active: boolean) {
       } else if (source === "qoder" || source === "qoder-cn") {
         await invoke("open_qoder_session", { source, id: record.id, expectedDirectory: scanSource.directory });
       }
-      await refresh([source]);
+      void refresh([source]);
       return null;
     } catch (caught) {
       return errorToString(caught);

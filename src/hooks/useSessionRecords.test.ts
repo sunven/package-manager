@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -26,6 +26,12 @@ afterEach(cleanup);
 
 function record(id: string): SessionRecord {
   return { id, title: id, lastActivityMs: 1, bytes: 10, inUse: false, workingDirectory: null };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((yes) => { resolve = yes; });
+  return { promise, resolve };
 }
 
 function source(title: string, overrides: Partial<SessionSourceScan> = {}): SessionSourceScan {
@@ -139,7 +145,7 @@ describe("Session records adapter", () => {
     expect(mockedInvoke.mock.calls.filter(([name]) => name === command)).toHaveLength(1);
     expect(result.current.outcome?.result).toEqual(removal);
     expect(result.current.outcome?.completedIds).toEqual(["record"]);
-    expect(result.current.outcome?.refresh.status).toBe("ready");
+    expect(result.current.outcome?.refresh.status).toBe("notRequested");
     expect(result.current.operation).toBeNull();
   });
 
@@ -156,23 +162,27 @@ describe("Session records adapter", () => {
     await act(async () => { await result.current.confirm(result.current.operation!.id); });
     expect(mockedInvoke).toHaveBeenCalledWith("record_maintenance_followup", {
       id: "history-1",
-      status: "ready",
+      status: "notRequested",
       message: null,
     });
     expect(result.current.outcome?.followUpWarning).toBeNull();
   });
 
   it("removes only confirmed Moved records from the target source", async () => {
-    mockedInvoke.mockResolvedValueOnce(initial);
+    mockedInvoke.mockResolvedValueOnce({
+      codex: source("record", { records: [record("record"), record("kept")] }),
+      claude: source("claude"),
+    });
     const { result } = renderHook(() => useSessionRecords(false));
     await act(async () => { await result.current.refresh(); });
-    mockedInvoke.mockResolvedValueOnce(removal).mockResolvedValueOnce({ ...source("after"), records: [] });
+    mockedInvoke.mockResolvedValueOnce(removal);
     act(() => result.current.request({ kind: "one", source: "codex", record: record("record") }));
     await act(async () => { await result.current.confirm(result.current.operation!.id); });
-    expect(result.current.scan?.codex.records).toEqual([]);
+    expect(result.current.scan?.codex.records.map((row) => row.id)).toEqual(["kept"]);
+    expect(result.current.scan?.codex.ageEligible).toEqual({ days7: 1, days30: 1 });
     expect(result.current.scan?.claude.records[0].title).toBe("claude");
     expect(result.current.outcome?.completedIds).toEqual(["record"]);
-    expect(mockedInvoke).toHaveBeenCalledWith("scan_session_source", { source: "codex" });
+    expect(mockedInvoke).not.toHaveBeenCalledWith("scan_session_source", { source: "codex" });
   });
 
   it("forwards batch progress from the channel into the operation", async () => {
@@ -205,12 +215,9 @@ describe("Session records adapter", () => {
     expect(result.current.operation).toBeNull();
   });
 
-  it("maps a failed execution to an aborted result and failed reconciliation", async () => {
+  it("maps a failed execution to an aborted result without a blocking refresh", async () => {
     mockedInvoke.mockImplementation(async (name) => {
       if (name === "remove_session_record") throw new Error("cannot inspect open files");
-      if (name === "scan_session_source") {
-        return { ...source("after"), status: "Partial", message: "some records unreadable" };
-      }
       throw new Error(`Unexpected command ${name}`);
     });
     const { result } = renderHook(() => useSessionRecords(false));
@@ -226,7 +233,27 @@ describe("Session records adapter", () => {
         message: null,
       },
       completedIds: [],
-      refresh: { status: "failed", message: "some records unreadable" },
+      refresh: { status: "notRequested", message: null },
     });
+  });
+
+  it("loads each source in parallel and exposes it as soon as it lands", async () => {
+    const codex = deferred<SessionSourceScan>();
+    const claude = deferred<SessionSourceScan>();
+    mockedInvoke.mockImplementation((name, args) => {
+      if (name !== "scan_session_source") throw new Error(`Unexpected command ${name}`);
+      const scope = (args as { source: string }).source;
+      if (scope === "codex") return codex.promise;
+      if (scope === "claude") return claude.promise;
+      return Promise.resolve({ ...source("empty"), status: "Missing", records: [] });
+    });
+    const { result } = renderHook(() => useSessionRecords(true));
+
+    codex.resolve(source("codex-live"));
+    await waitFor(() => expect(result.current.scan?.codex.records[0]?.title).toBe("codex-live"));
+    expect(result.current.scan?.claude.records).toEqual([]);
+
+    claude.resolve(source("claude-live"));
+    await waitFor(() => expect(result.current.scan?.claude.records[0]?.title).toBe("claude-live"));
   });
 });

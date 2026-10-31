@@ -647,4 +647,21 @@ describe("session project grouping", () => {
     fireEvent.click(screen.getByRole("button", { name: "按时间" }));
     expect(screen.getByRole("button", { name: /1970年1月/ })).toBeTruthy();
   });
+
+  it("limits long groups and reveals the remaining rows on demand", async () => {
+    const many = Array.from({ length: 150 }, (_, index) => ({
+      id: `many-${index}.jsonl`,
+      title: `记录 ${index}`,
+      workingDirectory: "/code/many",
+      lastActivityMs: 1,
+      bytes: 10,
+      inUse: false,
+    }));
+    await setup({
+      scan: { ...scan, codex: { ...scan.codex, records: many } },
+    });
+    expect(screen.getAllByRole("checkbox", { name: /选择 记录/ })).toHaveLength(100);
+    fireEvent.click(screen.getByRole("button", { name: /显示更多（剩余 50 条）/ }));
+    expect(screen.getAllByRole("checkbox", { name: /选择 记录/ })).toHaveLength(150);
+  });
 });

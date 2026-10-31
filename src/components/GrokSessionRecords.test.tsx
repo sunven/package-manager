@@ -143,7 +143,8 @@ describe("Grok Build session records", () => {
     await act(async () => { fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "移入废纸篓" })); });
     await screen.findByText(/移入废纸篓 1 条，跳过 0 条，失败 0 条，未执行 1 条/);
     expect(screen.getByRole("checkbox", { name: "选择 今天的修复记录" }).getAttribute("aria-checked")).toBe("true");
-    expect(screen.getByRole("checkbox", { name: "选择 旧的设计记录" }).getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByRole("checkbox", { name: "选择 旧的设计记录" })).toBeNull();
+    expect(screen.queryByText("旧的设计记录")).toBeNull();
     expect(mockedInvoke).toHaveBeenCalledWith("remove_session_records", expect.objectContaining({
       source: "grok", expectedDirectory: directory, ids: ["project/recent", "project/old"],
     }));

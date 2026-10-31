@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type SelectionInput<Item> = {
   records: readonly Item[] | null;
@@ -35,7 +35,7 @@ export function useSessionSelection<Item extends { id: string }>({
     });
   }, [completedIds]);
 
-  function selectableIds(items: readonly Item[]) {
+  const selectableIds = useCallback((items: readonly Item[]) => {
     const seen = new Set<string>();
     const ids: string[] = [];
     for (const item of items) {
@@ -44,9 +44,9 @@ export function useSessionSelection<Item extends { id: string }>({
       ids.push(item.id);
     }
     return ids;
-  }
+  }, []);
 
-  function toggle(id: string, selected: boolean) {
+  const toggle = useCallback((id: string, selected: boolean) => {
     if (selected) {
       const item = latest.current.records?.find((candidate) => candidate.id === id);
       if (!item || !latest.current.isSelectable(item)) return;
@@ -54,13 +54,13 @@ export function useSessionSelection<Item extends { id: string }>({
     } else {
       setSelectedIds((current) => current.filter((currentId) => currentId !== id));
     }
-  }
+  }, []);
 
-  function selectAll(items: readonly Item[]) {
+  const selectAll = useCallback((items: readonly Item[]) => {
     setSelectedIds(selectableIds(items));
-  }
+  }, [selectableIds]);
 
-  function selectGroup(items: readonly Item[], selected: boolean) {
+  const selectGroup = useCallback((items: readonly Item[], selected: boolean) => {
     const ids = selectableIds(items);
     if (!ids.length) return;
     setSelectedIds((current) => {
@@ -71,11 +71,11 @@ export function useSessionSelection<Item extends { id: string }>({
       }
       return [...next];
     });
-  }
+  }, [selectableIds]);
 
-  function clear() {
+  const clear = useCallback(() => {
     setSelectedIds((current) => current.length ? [] : current);
-  }
+  }, []);
 
   return { selectedIds, toggle, selectAll, selectGroup, clear };
 }

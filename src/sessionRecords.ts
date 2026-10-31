@@ -217,6 +217,16 @@ export function removableSessionRecords(records: SessionRecord[]) {
   return records.filter((record) => !record.inUse);
 }
 
+export function ageEligibleCounts(records: SessionRecord[], nowMs: number): AgeEligibleCounts {
+  const count = (days: number) => {
+    const cutoff = nowMs - days * 86_400_000;
+    return records.filter(
+      (record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs < cutoff,
+    ).length;
+  };
+  return { days7: count(7), days30: count(30) };
+}
+
 export function removeCompletedRecords<
   Source extends string,
   Scan extends { records: { id: string }[] },
@@ -307,6 +317,14 @@ export function sessionSections(
       ? sectionView(scan["qoder-cn"], mode("qoder-cn"), filters["qoder-cn"])
       : undefined,
   };
+}
+
+export function sessionSection(
+  source: SessionSourceScan,
+  sort: SessionSort,
+  filter?: SessionFilter,
+): SessionSectionView {
+  return sectionView(source, sort, filter);
 }
 
 function sectionView(source: SessionSourceScan, sort: SessionSort, filter?: SessionFilter): SessionSectionView {
