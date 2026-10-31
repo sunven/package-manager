@@ -247,6 +247,69 @@ describe("VS Code workspace storage removal", () => {
     await waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
+  it("removes a single row from the action column", async () => {
+    const result = movedResult(["missing"]);
+    const control = await setup({ result });
+
+    fireEvent.click(screen.getByRole("button", { name: "移入废纸篓 missing" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/将把 1 条工作区存储记录移入废纸篓/)).toBeTruthy();
+    const list = within(dialog).getByRole("list", { name: "待移入废纸篓的工作区存储记录" });
+    expect(list.children).toHaveLength(1);
+    expect(within(list).getByText("missing")).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "移入废纸篓 1 项" }));
+    await waitFor(() => expect(within(dialog).getByText(/正在移入废纸篓 1\/1/)).toBeTruthy());
+
+    await act(async () => {
+      control.finish();
+    });
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(await screen.findByText("VS Code 工作区存储移除结果")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "移入废纸篓 missing" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /选择 missing/ })).toBeNull();
+  });
+
+  it("disables the action column for non-removable workspaces", async () => {
+    await setup();
+
+    const blocked = screen.getByRole("button", { name: /available 不可移除/ }) as HTMLButtonElement;
+    expect(blocked.disabled).toBe(true);
+    expect(blocked.getAttribute("aria-label")).toContain("项目路径存在");
+
+    expect(
+      (screen.getByRole("button", { name: "移入废纸篓 missing" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("restores focus to the row action after canceling", async () => {
+    await setup();
+
+    const trigger = screen.getByRole("button", { name: "移入废纸篓 missing" });
+    fireEvent.click(trigger);
+
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("rechecks VS Code before opening the confirmation from the action column", async () => {
+    const control = await setup();
+
+    control.setEditorStatus("Running");
+    fireEvent.click(screen.getByRole("button", { name: "移入废纸篓 missing" }));
+
+    expect(await screen.findByText("VS Code 正在运行")).toBeTruthy();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "移入废纸篓 missing" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
   it("shows skipped reasons and reports a refresh failure separately", async () => {
     const result: VscodeStorageRemovalResult = {
       moved: 0,

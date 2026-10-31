@@ -1,4 +1,4 @@
-import { ArrowClockwise as RefreshCw } from "@phosphor-icons/react";
+import { ArrowClockwise as RefreshCw, Trash } from "@phosphor-icons/react";
 import { useMemo, useRef, useState } from "react";
 import {
   AlertDialog,
@@ -314,6 +314,7 @@ export function VscodeStoragePage({
                 <TableHead>存储目录</TableHead>
                 <TableHead className="text-right" aria-sort="descending">占用</TableHead>
                 <TableHead>状态</TableHead>
+                <TableHead className="text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -358,6 +359,28 @@ export function VscodeStoragePage({
                             {workspace.usage.bytes === null ? "无法测量" : "统计不完整"}
                           </Badge>
                         ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end">
+                        <Button
+                          aria-label={workspace.removable
+                            ? `移入废纸篓 ${workspace.name}`
+                            : `${workspace.name} 不可移除：${workspace.removalBlockReason ?? "当前记录不可移除"}`}
+                          disabled={!workspace.removable || controlsDisabled || checkingEditor || editorBlocked}
+                          onClick={(event) => {
+                            selectionTrigger.current = event.currentTarget;
+                            void request({ workspaces: [workspace] });
+                          }}
+                          size="icon-sm"
+                          title={!workspace.removable
+                            ? workspace.removalBlockReason ?? "当前记录不可移除"
+                            : removeTitle ?? "移入废纸篓"}
+                          type="button"
+                          variant="ghost"
+                        >
+                          <Trash aria-hidden="true" />
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>

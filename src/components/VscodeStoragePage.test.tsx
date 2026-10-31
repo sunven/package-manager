@@ -203,6 +203,10 @@ describe("VS Code workspace storage", () => {
     expect(html).toContain("不是普通存储目录，未跟随符号链接");
     expect(html).toContain("选择 missing");
     expect((html.match(/role="checkbox"/g) ?? [])).toHaveLength(3);
+    expect(html).toContain("操作");
+    expect(html).toContain("移入废纸篓 missing");
+    expect(html).toContain("available 不可移除");
+    expect(html).toContain("symlink 不可移除");
   });
 
   it("warns and disables removal while VS Code is running or unknown", () => {
