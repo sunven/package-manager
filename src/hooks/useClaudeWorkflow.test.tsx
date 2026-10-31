@@ -2,7 +2,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { claudeExtensionFixture, claudeHookFixture } from "../test/claudeCodeFixtures";
+import { claudeHookFixture, claudeMarketplacesFixture, claudePluginFixture } from "../test/claudeCodeFixtures";
 import { useClaudeWorkflow } from "./useClaudeWorkflow";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -11,7 +11,8 @@ const mockedInvoke = vi.mocked(invoke);
 beforeEach(() => {
   vi.resetAllMocks();
   mockedInvoke.mockImplementation(async (command) => {
-    if (command === "scan_claude_extensions") return claudeExtensionFixture();
+    if (command === "scan_claude_marketplaces") return claudeMarketplacesFixture();
+    if (command === "scan_claude_plugins") return claudePluginFixture();
     if (command === "scan_claude_hooks") return claudeHookFixture();
     if (command === "prepare_claude_hook") return { previewId: "preview-1", source: "/settings.json", before: null, after: {}, message: "预览完成" };
     if (command === "commit_claude_hook") return { status: "Succeeded", message: "定义已保存", executed: true };

@@ -1,12 +1,18 @@
-import type { ClaudeExtensionScan, ClaudeHookScan } from "../claudeCode";
+import type { ClaudeHookScan, ClaudeMarketplaceScan, ClaudePluginScan } from "../claudeCode";
 
-export function claudeExtensionFixture(): ClaudeExtensionScan {
+export function claudeMarketplacesFixture(): ClaudeMarketplaceScan {
   return {
-    snapshotId: "claude-1", directory: "/Users/example/.claude", version: "2.1.300", status: "Ready", message: null, writeBlockedReason: null,
+    snapshotId: "claude-marketplaces-1", directory: "/Users/example/.claude", version: "2.1.300", status: "Ready", message: null, writeBlockedReason: null,
     marketplaces: [
       { name: "team-tools", sourceKind: "github", source: "example/developer-tools", root: "/Users/example/.claude/plugins/marketplaces/team-tools", refName: "main", sparsePaths: [], readOnlyReason: null, removeBlockedReason: null, affectedPlugins: ["reviewer@team-tools"] },
       { name: "project-shared", sourceKind: "git", source: "https://example.invalid/shared.git", root: "/Users/example/.claude/plugins/marketplaces/project-shared", refName: null, sparsePaths: [], readOnlyReason: null, removeBlockedReason: "此市场存在项目或其他作用域安装，移除可能连带卸载，已阻止。", affectedPlugins: [] },
     ],
+  };
+}
+
+export function claudePluginFixture(): ClaudePluginScan {
+  return {
+    snapshotId: "claude-plugins-1", directory: "/Users/example/.claude", version: "2.1.300", status: "Ready", message: null, writeBlockedReason: null,
     plugins: [
       { id: "reviewer@team-tools", name: "reviewer", marketplaceName: "team-tools", installed: true, version: "1.2.0", enabled: false, userEnabled: false, source: "./plugins/reviewer", readOnlyReason: null,
         details: { origin: "installed", root: "/Users/example/.claude/plugins/cache/team-tools/reviewer/1.2.0", description: "检查代码变更，整理审查要点。", author: "Example team", skills: ["review-changes"], agents: ["reviewer.md"], mcpServers: [], hooks: ["PreToolUse"], messages: [] } },

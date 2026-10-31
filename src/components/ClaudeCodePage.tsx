@@ -9,7 +9,7 @@ import { ClaudeHooksPage } from "./ClaudeHooksPage";
 
 export function ClaudeCodePage({ workflow, coverage, tab, onTabChange }: {
   workflow: ClaudeWorkflow;
-  coverage: { extensions: ObservationCoverageItem; hooks: ObservationCoverageItem; skills: ObservationCoverageItem };
+  coverage: { marketplaces: ObservationCoverageItem; plugins: ObservationCoverageItem; hooks: ObservationCoverageItem; skills: ObservationCoverageItem };
   tab: string;
   onTabChange: (tab: string) => void;
 }) {
@@ -27,7 +27,7 @@ export function ClaudeCodePage({ workflow, coverage, tab, onTabChange }: {
       <AlertTitle>{state.result.status === "Succeeded" ? "操作已完成" : state.result.status === "Conflict" ? "内容已变化" : "操作未能完整确认"}</AlertTitle>
       <AlertDescription>{state.result.message}</AlertDescription>
     </Alert> : null}
-    <TabsContent value="marketplaces"><ClaudeMarketplacesPage coverageItem={coverage.extensions} state={state} focusedPluginId={focusedPluginId} onShowHooks={() => onTabChange("hooks")} /></TabsContent>
+    <TabsContent value="marketplaces"><ClaudeMarketplacesPage coverage={{ marketplaces: coverage.marketplaces, plugins: coverage.plugins }} state={state} focusedPluginId={focusedPluginId} onShowHooks={() => onTabChange("hooks")} /></TabsContent>
     <TabsContent value="hooks"><ClaudeHooksPage coverageItem={coverage.hooks} state={state} /></TabsContent>
     <TabsContent value="skills"><ClaudeSkillsPage coverageItem={coverage.skills} workflow={skills} onShowPlugins={(pluginId) => { setFocusedPluginId(pluginId); onTabChange("marketplaces"); }} /></TabsContent>
     </Tabs>

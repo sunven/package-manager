@@ -13,12 +13,20 @@ export type ClaudePlugin = {
   };
 };
 
-export type ClaudeExtensionScan = {
+export type ClaudeMarketplaceScan = {
   snapshotId: string | null; directory: string; version: string | null; status: string;
-  message: string | null; writeBlockedReason: string | null; marketplaces: ClaudeMarketplace[]; plugins: ClaudePlugin[];
+  message: string | null; writeBlockedReason: string | null; marketplaces: ClaudeMarketplace[];
+};
+
+export type ClaudePluginScan = {
+  snapshotId: string | null; directory: string; version: string | null; status: string;
+  message: string | null; writeBlockedReason: string | null; plugins: ClaudePlugin[];
 };
 
 export type ClaudeOperation = "AddMarket" | "UpdateMarket" | "RemoveMarket" | "Install" | "Update" | "Uninstall" | "Enable" | "Disable";
+export function isMarketOperation(operation: ClaudeOperation) {
+  return operation === "AddMarket" || operation === "UpdateMarket" || operation === "RemoveMarket";
+}
 export type ClaudeChangeRequest = {
   snapshotId: string; operation: ClaudeOperation; target?: string; source?: string;
   sourceKind?: "git" | "local" | "url"; refName?: string; sparsePaths?: string[];

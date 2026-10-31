@@ -8,7 +8,7 @@ import { claudeSkillsFixture } from "../test/claudeSkillFixtures";
 import type { SkillIntent, SkillOutcome, SkillPreview } from "../claudeSkills";
 import { ClaudeSkillsPage } from "./ClaudeSkillsPage";
 import { App } from "../App";
-import { claudeExtensionFixture, claudeHookFixture } from "../test/claudeCodeFixtures";
+import { claudeHookFixture, claudeMarketplacesFixture, claudePluginFixture } from "../test/claudeCodeFixtures";
 import { managerFixture } from "../test/fixtures";
 import { observationCoverageItem } from "../test/observationFixtures";
 
@@ -29,9 +29,10 @@ beforeEach(() => {
   vi.resetAllMocks(); scan = claudeSkillsFixture(); scanError = null; deferCommit = undefined;
   outcome = { status: "Saved", message: "用户调用设置已保存，请在新会话中核对。" };
   mockedInvoke.mockImplementation(async (command, args) => {
-    if (command === "scan_claude_extensions") return claudeExtensionFixture();
+    if (command === "scan_claude_marketplaces") return claudeMarketplacesFixture();
+    if (command === "scan_claude_plugins") return claudePluginFixture();
     if (command === "scan_claude_hooks") return claudeHookFixture();
-    if (command === "change_claude_extension") return { status: "Succeeded", message: "插件设置已保存", executed: true };
+    if (command === "change_claude_marketplace" || command === "change_claude_plugin") return { status: "Succeeded", message: "插件设置已保存", executed: true };
     if (command === "scan_manager") return { manager: managerFixture("Npm", { paths: [] }), scanDurationMs: 1, diagnostics: [] };
     if (command === "get_project_cleanup_settings") return { presets: [], activePresetId: null };
     if (command === "scan_claude_skills") { if (scanError) throw new Error(scanError); return structuredClone(scan); }
@@ -76,7 +77,8 @@ describe("Claude Skills", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     await waitFor(() => expect((screen.getByRole("tab", { name: "插件市场" }) as HTMLButtonElement).disabled).toBe(false));
     await user.click(screen.getByRole("tab", { name: "插件市场" }));
-    await waitFor(() => expect(calls("scan_claude_extensions")).toHaveLength(3));
+    await waitFor(() => expect(calls("scan_claude_marketplaces")).toHaveLength(3));
+    expect(calls("scan_claude_plugins")).toHaveLength(2);
     expect(calls("commit_claude_skill")).toHaveLength(1);
   });
 

@@ -205,7 +205,7 @@ describe("observation facts", () => {
       scan: { directory: "/codex", configPath: "/codex/config.toml", status: "Ready", warnings: [], message: null },
     })).success).toBeNull();
 
-    const claudeMessage = claudeObservationFacts("extensions", native({
+    const claudeMessage = claudeObservationFacts("marketplaces", native({
       scan: { directory: "/claude", status: "Ready", warnings: [], message: "limited" },
     }));
     expect(claudeMessage.success?.completeness).toBe("partial");

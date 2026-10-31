@@ -92,7 +92,8 @@ const REFRESHABLE = new Set<ObservationItemId>([
   "codex:plugins",
   "codex:hooks",
   "codex:skills",
-  "claude:extensions",
+  "claude:marketplaces",
+  "claude:plugins",
   "claude:hooks",
   "claude:skills",
 ]);

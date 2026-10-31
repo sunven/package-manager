@@ -280,7 +280,7 @@ export interface NativeObservationView {
 }
 
 type CodexKind = "marketplaces" | "plugins" | "hooks" | "skills";
-type ClaudeKind = "extensions" | "hooks" | "skills";
+type ClaudeKind = "marketplaces" | "plugins" | "hooks" | "skills";
 type NativeKind = `codex:${CodexKind}` | `claude:${ClaudeKind}`;
 
 function nativeScope(kind: NativeKind, scan: NativeObservationView["scan"]) {

@@ -1,6 +1,7 @@
 mod claude_cli;
 mod claude_documents;
 mod claude_hooks;
+mod claude_marketplaces;
 mod claude_plugin_details;
 mod claude_plugins;
 mod claude_skills;
@@ -158,9 +159,9 @@ async fn read_claude_skill(
 }
 
 #[tauri::command]
-async fn scan_claude_extensions(
-    state: tauri::State<'_, claude_plugins::ExtensionsState>,
-) -> Result<claude_plugins::ExtensionScan, String> {
+async fn scan_claude_marketplaces(
+    state: tauri::State<'_, claude_marketplaces::MarketplacesState>,
+) -> Result<claude_marketplaces::MarketplaceScan, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || state.scan())
         .await
@@ -168,9 +169,30 @@ async fn scan_claude_extensions(
 }
 
 #[tauri::command]
-async fn change_claude_extension(
-    request: claude_plugins::ChangeRequest,
-    state: tauri::State<'_, claude_plugins::ExtensionsState>,
+async fn change_claude_marketplace(
+    request: claude_marketplaces::MarketChangeRequest,
+    state: tauri::State<'_, claude_marketplaces::MarketplacesState>,
+) -> Result<claude_plugins::ChangeResult, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.change(request))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn scan_claude_plugins(
+    state: tauri::State<'_, claude_plugins::PluginsState>,
+) -> Result<claude_plugins::PluginScan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.scan())
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn change_claude_plugin(
+    request: claude_plugins::PluginChangeRequest,
+    state: tauri::State<'_, claude_plugins::PluginsState>,
 ) -> Result<claude_plugins::ChangeResult, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || state.change(request))
@@ -1006,7 +1028,8 @@ pub fn run() {
     tauri::Builder::default()
         .manage(codex_hooks::HooksState::default())
         .manage(codex_skills::SkillsState::default())
-        .manage(claude_plugins::ExtensionsState::default())
+        .manage(claude_marketplaces::MarketplacesState::default())
+        .manage(claude_plugins::PluginsState::default())
         .manage(claude_hooks::HooksState::default())
         .manage(claude_skills::SkillsState::default())
         .manage(codex_plugins::CodexPluginsState::default())
@@ -1060,8 +1083,10 @@ pub fn run() {
             commit_codex_skill,
             cancel_codex_skill,
             read_codex_skill,
-            scan_claude_extensions,
-            change_claude_extension,
+            scan_claude_marketplaces,
+            change_claude_marketplace,
+            scan_claude_plugins,
+            change_claude_plugin,
             scan_claude_hooks,
             prepare_claude_hook,
             commit_claude_hook,

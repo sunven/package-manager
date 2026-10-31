@@ -153,7 +153,8 @@ export function App() {
     facts["codex:plugins"] = codexObservationFacts("plugins", codex.extensions.plugins);
     facts["codex:hooks"] = codexObservationFacts("hooks", codex.extensions.hooks);
     facts["codex:skills"] = codexObservationFacts("skills", codex.skills);
-    facts["claude:extensions"] = claudeObservationFacts("extensions", claude.state.extensionsView);
+    facts["claude:marketplaces"] = claudeObservationFacts("marketplaces", claude.state.marketplacesView);
+    facts["claude:plugins"] = claudeObservationFacts("plugins", claude.state.pluginsView);
     facts["claude:hooks"] = claudeObservationFacts("hooks", claude.state.hooksView);
     facts["claude:skills"] = claudeObservationFacts("skills", claude.skills);
     return facts;
@@ -165,7 +166,7 @@ export function App() {
     sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.scanningSources.grok, sessionRecords.scanningSources.qoder, sessionRecords.scanningSources["qoder-cn"], sessionRecords.error,
     openCodeSessions.scan, openCodeSessions.scanning, openCodeSessions.error,
     codex.extensions.marketplaces, codex.extensions.plugins, codex.extensions.hooks, codex.skills,
-    claude.state.extensionsView, claude.state.hooksView, claude.skills,
+    claude.state.marketplacesView, claude.state.pluginsView, claude.state.hooksView, claude.skills,
   ]);
   const coverage = useMemo(() => buildObservationCoverage({
     records: observationLedger.records,
@@ -307,7 +308,8 @@ export function App() {
         setCodexTab("skills");
         setActiveView("plugins");
         return;
-      case "claude:extensions":
+      case "claude:marketplaces":
+      case "claude:plugins":
         setClaudeTab("marketplaces");
         setActiveView("claude");
         return;
@@ -349,7 +351,8 @@ export function App() {
       case "codex:plugins": await codex.extensions.readPlugins(); return;
       case "codex:hooks": await codex.extensions.readHooks(); return;
       case "codex:skills": await codex.skills.refresh(); return;
-      case "claude:extensions": await claude.state.refresh("marketplaces"); return;
+      case "claude:marketplaces": await claude.state.refresh("marketplaces"); return;
+      case "claude:plugins": await claude.state.readPlugins(); return;
       case "claude:hooks": await claude.state.refresh("hooks"); return;
       case "claude:skills": await claude.skills.refresh(); return;
     }
@@ -464,7 +467,8 @@ export function App() {
         ) : activeView === "claude" ? (
           <ClaudeCodePage
             coverage={{
-              extensions: requireCoverageItem(coverageById, "claude:extensions"),
+              marketplaces: requireCoverageItem(coverageById, "claude:marketplaces"),
+              plugins: requireCoverageItem(coverageById, "claude:plugins"),
               hooks: requireCoverageItem(coverageById, "claude:hooks"),
               skills: requireCoverageItem(coverageById, "claude:skills"),
             }}

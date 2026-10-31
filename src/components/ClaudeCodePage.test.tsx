@@ -7,7 +7,7 @@ import { ClaudeHooksPage } from "./ClaudeHooksPage";
 import { ClaudeHookEditor } from "./ClaudeHookEditor";
 import { useClaudeCode } from "../hooks/useClaudeCode";
 import type { ClaudeWorkflowState } from "../hooks/useClaudeWorkflow";
-import { claudeExtensionFixture, claudeHookFixture } from "../test/claudeCodeFixtures";
+import { claudeHookFixture, claudeMarketplacesFixture, claudePluginFixture } from "../test/claudeCodeFixtures";
 import { observationCoverageItem } from "../test/observationFixtures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
@@ -15,38 +15,46 @@ afterEach(cleanup);
 beforeEach(() => vi.resetAllMocks());
 const mockedInvoke = vi.mocked(invoke);
 const success = { status: "Succeeded" as const, message: "已完成", executed: true };
-const marketCoverage = observationCoverageItem("claude:extensions");
+const marketCoverage = observationCoverageItem("claude:marketplaces");
+const pluginCoverage = observationCoverageItem("claude:plugins");
+const coverage = { marketplaces: marketCoverage, plugins: pluginCoverage };
 const hookCoverage = observationCoverageItem("claude:hooks");
 function state(): ClaudeWorkflowState {
-  return { revision: 0, invalidate: vi.fn(), extensions: claudeExtensionFixture(), hooks: claudeHookFixture(),
-    extensionsView: { scan: claudeExtensionFixture(), current: true, revision: 0, scanning: false, error: null, result: null },
-    hooksView: { scan: claudeHookFixture(), current: true, revision: 0, scanning: false, error: null, result: null },
-    busy: false, error: null, result: null,
-    refresh: vi.fn().mockResolvedValue(claudeHookFixture()), change: vi.fn().mockResolvedValue(success),
-    prepareHook: vi.fn().mockResolvedValue({ previewId: "preview-1", source: "/settings.json", before: {}, after: {}, message: "预览完成" }), commitHook: vi.fn().mockResolvedValue(success), cancelHookPreview: vi.fn() };
+  const marketplaces = claudeMarketplacesFixture();
+  const plugins = claudePluginFixture();
+  const hooks = claudeHookFixture();
+  return { revision: 0, invalidate: vi.fn(), marketplaces, plugins, hooks,
+    marketplacesView: { scan: marketplaces, current: true, revision: 0, scanning: false, error: null, result: null },
+    pluginsView: { scan: plugins, current: true, revision: 0, scanning: false, error: null, result: null },
+    hooksView: { scan: hooks, current: true, revision: 0, scanning: false, error: null, result: null },
+    busy: false, scanning: false, marketplacesScanning: false, pluginsScanning: false, error: null, result: null,
+    refresh: vi.fn().mockResolvedValue(null), change: vi.fn().mockResolvedValue(success),
+    prepareHook: vi.fn().mockResolvedValue({ previewId: "preview-1", source: "/settings.json", before: {}, after: {}, message: "预览完成" }), commitHook: vi.fn().mockResolvedValue(success), cancelHookPreview: vi.fn(),
+    readMarketplaces: vi.fn().mockResolvedValue(undefined), readPlugins: vi.fn().mockResolvedValue(undefined) };
 }
 
 describe("Claude market and plugin interface", () => {
   it("opens the owning plugin and explains a missing plugin destination", async () => {
     const value = state();
-    const view = render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} focusedPluginId="reviewer@team-tools" onShowHooks={vi.fn()} />);
-    expect(document.querySelector('[data-observation-item="claude:extensions"]')).toBeTruthy();
+    const view = render(<ClaudeMarketplacesPage coverage={coverage} state={value} focusedPluginId="reviewer@team-tools" onShowHooks={vi.fn()} />);
+    expect(document.querySelector('[data-observation-item="claude:marketplaces"]')).toBeTruthy();
+    expect(document.querySelector('[data-observation-item="claude:plugins"]')).toBeTruthy();
     const target = await screen.findByRole("button", { name: /reviewer收起详情/ });
     await waitFor(() => expect(document.activeElement).toBe(target));
     expect(screen.getByText("技能声明")).toBeTruthy();
-    view.rerender(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} focusedPluginId="external@skills-dir" onShowHooks={vi.fn()} />);
+    view.rerender(<ClaudeMarketplacesPage coverage={coverage} state={value} focusedPluginId="external@skills-dir" onShowHooks={vi.fn()} />);
     expect(screen.getByText(/当前市场清单未找到插件 external@skills-dir/)).toBeTruthy();
   });
 
   it("blocks cross-scope market removal and shows the reason", () => {
-    render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={state()} onShowHooks={vi.fn()} />);
+    render(<ClaudeMarketplacesPage coverage={coverage} state={state()} onShowHooks={vi.fn()} />);
     const row = screen.getByText("project-shared").closest("tr")!;
     expect((within(row).getByRole("button", { name: "移除" }) as HTMLButtonElement).disabled).toBe(true);
     expect(within(row).getByText(/存在项目或其他作用域/)).toBeTruthy();
   });
 
   it("previews cascading market removal and cancels without executing", async () => {
-    const value = state(); render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} onShowHooks={vi.fn()} />);
+    const value = state(); render(<ClaudeMarketplacesPage coverage={coverage} state={value} onShowHooks={vi.fn()} />);
     const trigger = within(screen.getByText("team-tools").closest("tr")!).getByRole("button", { name: "移除" });
     fireEvent.click(trigger);
     const dialog = screen.getByRole("alertdialog");
@@ -58,20 +66,21 @@ describe("Claude market and plugin interface", () => {
   });
 
   it("filters plugins, keeps remote details incomplete and confirms the selected identity", async () => {
-    const value = state(); render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} onShowHooks={vi.fn()} />);
+    const value = state(); render(<ClaudeMarketplacesPage coverage={coverage} state={value} onShowHooks={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /team-tools/ }));
     fireEvent.change(screen.getByLabelText("搜索此市场"), { target: { value: "笔记" } });
     fireEvent.click(screen.getByRole("button", { name: /notes查看详情/ }));
     expect(screen.getByText(/未下载本地内容/)).toBeTruthy();
     expect(mockedInvoke).not.toHaveBeenCalled();
+    expect(value.readPlugins).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "安装 notes@team-tools" }));
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "确认执行" }));
-    await waitFor(() => expect(value.change).toHaveBeenCalledWith({ snapshotId: "claude-1", operation: "Install", target: "notes@team-tools" }));
+    await waitFor(() => expect(value.change).toHaveBeenCalledWith({ snapshotId: "claude-plugins-1", operation: "Install", target: "notes@team-tools" }));
   });
 
   it("retains an add form on native failure and submits ref and sparse through confirmation", async () => {
     const value = state(); vi.mocked(value.change).mockResolvedValue({ status: "Failed", message: "无权限", executed: true });
-    render(<ClaudeMarketplacesPage coverageItem={marketCoverage} state={value} onShowHooks={vi.fn()} />);
+    render(<ClaudeMarketplacesPage coverage={coverage} state={value} onShowHooks={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "添加市场" }));
     fireEvent.change(screen.getByLabelText("市场来源"), { target: { value: "org/plugins" } });
     fireEvent.change(screen.getByLabelText("分支或标签（可选）"), { target: { value: "v2" } });
@@ -79,8 +88,45 @@ describe("Claude market and plugin interface", () => {
     fireEvent.click(screen.getByRole("button", { name: "预览添加" }));
     expect(value.change).not.toHaveBeenCalled();
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "确认执行" }));
-    await waitFor(() => expect(value.change).toHaveBeenCalledWith({ snapshotId: "claude-1", operation: "AddMarket", source: "org/plugins", sourceKind: "git", refName: "v2", sparsePaths: [".claude-plugin", "plugins"] }));
+    await waitFor(() => expect(value.change).toHaveBeenCalledWith({ snapshotId: "claude-marketplaces-1", operation: "AddMarket", source: "org/plugins", sourceKind: "git", refName: "v2", sparsePaths: [".claude-plugin", "plugins"] }));
     expect((screen.getByLabelText("市场来源") as HTMLInputElement).value).toBe("org/plugins");
+  });
+
+  it("renders markets before plugins and loads plugins when a market is expanded", async () => {
+    const value = state();
+    value.plugins = null;
+    value.pluginsView = { scan: null, current: false, revision: 0, scanning: false, error: null, result: null };
+    const view = render(<ClaudeMarketplacesPage coverage={coverage} state={value} onShowHooks={vi.fn()} />);
+    expect(screen.getByText("team-tools")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /team-tools/ }));
+    expect(value.readPlugins).toHaveBeenCalledTimes(1);
+    view.rerender(<ClaudeMarketplacesPage coverage={coverage} state={{ ...value, pluginsScanning: true }} onShowHooks={vi.fn()} />);
+    expect(screen.getByLabelText("正在读取插件目录")).toBeTruthy();
+    view.rerender(<ClaudeMarketplacesPage coverage={coverage} state={state()} onShowHooks={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /reviewer查看详情/ })).toBeTruthy();
+  });
+
+  it("shows the built-in directory loading state when no markets are configured", () => {
+    const value = state();
+    value.marketplaces = { ...claudeMarketplacesFixture(), marketplaces: [] };
+    value.marketplacesView = { scan: value.marketplaces, current: true, revision: 0, scanning: false, error: null, result: null };
+    value.plugins = null;
+    value.pluginsView = { scan: null, current: false, revision: 0, scanning: false, error: null, result: null };
+    const view = render(<ClaudeMarketplacesPage coverage={coverage} state={{ ...value, pluginsScanning: true }} onShowHooks={vi.fn()} />);
+    expect(screen.getByLabelText(/正在读取内置插件目录/)).toBeTruthy();
+    view.rerender(<ClaudeMarketplacesPage coverage={coverage} state={value} onShowHooks={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "加载插件目录" })).toBeTruthy();
+  });
+
+  it("keeps plugin writes disabled until the plugin inventory is loaded", () => {
+    const value = state();
+    value.hooks = null;
+    value.plugins = null;
+    value.pluginsView = { scan: null, current: false, revision: 0, scanning: false, error: null, result: null };
+    render(<ClaudeMarketplacesPage coverage={coverage} state={value} onShowHooks={vi.fn()} />);
+    expect((screen.getAllByRole("button", { name: "更新目录" })[0] as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: /team-tools/ }));
+    expect(screen.getByRole("button", { name: "读取插件目录" })).toBeTruthy();
   });
 });
 
@@ -178,22 +224,46 @@ describe("Claude Hook interface", () => {
 });
 
 describe("Claude refresh and mutation state", () => {
-  it("retains the last inventory but disables writes when a later read fails", async () => {
-    mockedInvoke.mockResolvedValueOnce(claudeExtensionFixture()).mockRejectedValueOnce(new Error("offline"));
+  it("retains the market inventory but disables writes when a later read fails", async () => {
+    mockedInvoke.mockResolvedValueOnce(claudeMarketplacesFixture()).mockRejectedValueOnce(new Error("offline"));
     const { result } = renderHook(() => useClaudeCode(true, "marketplaces"));
-    await waitFor(() => expect(result.current.extensions?.snapshotId).toBe("claude-1"));
+    await waitFor(() => expect(result.current.marketplaces?.snapshotId).toBe("claude-marketplaces-1"));
+    expect(mockedInvoke.mock.calls.filter(([command]) => command === "scan_claude_plugins")).toHaveLength(0);
     await act(() => result.current.refresh());
-    expect(result.current.extensions?.plugins).toHaveLength(2); expect(result.current.extensions?.snapshotId).toBeNull();
+    expect(result.current.marketplaces?.marketplaces).toHaveLength(2);
+    expect(result.current.marketplaces?.snapshotId).toBeNull();
     expect(result.current.error).toContain("offline");
   });
 
-  it("does not replay a successful operation after refresh failure and invalidates Hooks", async () => {
-    mockedInvoke.mockResolvedValueOnce(claudeExtensionFixture()).mockResolvedValueOnce(success).mockRejectedValueOnce(new Error("refresh failed"));
+  it("loads plugins on demand and keeps the successful result after a failed plugin refresh", async () => {
+    let pluginReads = 0;
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "scan_claude_marketplaces") return claudeMarketplacesFixture();
+      if (command === "scan_claude_plugins") { pluginReads += 1; if (pluginReads === 1) return claudePluginFixture(); throw new Error("refresh failed"); }
+      if (command === "change_claude_plugin") return success;
+      throw new Error(`测试中未预期的命令：${command}`);
+    });
     const { result } = renderHook(() => useClaudeCode(true, "marketplaces"));
-    await waitFor(() => expect(result.current.busy).toBe(false));
-    await act(() => result.current.change({ snapshotId: "claude-1", operation: "Enable", target: "reviewer@team-tools" }));
-    expect(result.current.result?.status).toBe("Succeeded"); expect(result.current.error).toContain("refresh failed");
-    expect(mockedInvoke.mock.calls.filter(([command]) => command === "change_claude_extension")).toHaveLength(1);
-    expect(result.current.extensions?.snapshotId).toBeNull();
+    await waitFor(() => expect(result.current.marketplaces?.snapshotId).toBe("claude-marketplaces-1"));
+    expect(mockedInvoke.mock.calls.filter(([command]) => command === "scan_claude_plugins")).toHaveLength(0);
+    await act(() => result.current.readPlugins());
+    expect(result.current.plugins?.snapshotId).toBe("claude-plugins-1");
+    await act(() => result.current.change({ snapshotId: "claude-plugins-1", operation: "Enable", target: "reviewer@team-tools" }));
+    expect(result.current.result?.status).toBe("Succeeded");
+    expect(result.current.error).toContain("refresh failed");
+    expect(mockedInvoke.mock.calls.filter(([command]) => command === "change_claude_plugin")).toHaveLength(1);
+    expect(result.current.plugins?.snapshotId).toBeNull();
+  });
+
+  it("auto-loads the built-in plugin directory when no marketplaces are configured", async () => {
+    const empty = { ...claudeMarketplacesFixture(), marketplaces: [] };
+    mockedInvoke.mockImplementation(async (command) => {
+      if (command === "scan_claude_marketplaces") return empty;
+      if (command === "scan_claude_plugins") return claudePluginFixture();
+      throw new Error(`测试中未预期的命令：${command}`);
+    });
+    const { result } = renderHook(() => useClaudeCode(true, "marketplaces"));
+    await waitFor(() => expect(result.current.plugins?.snapshotId).toBe("claude-plugins-1"));
+    expect(mockedInvoke.mock.calls.filter(([command]) => command === "scan_claude_plugins")).toHaveLength(1);
   });
 });

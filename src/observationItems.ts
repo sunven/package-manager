@@ -34,7 +34,8 @@ export type ObservationItemId =
   | "codex:plugins"
   | "codex:hooks"
   | "codex:skills"
-  | "claude:extensions"
+  | "claude:marketplaces"
+  | "claude:plugins"
   | "claude:hooks"
   | "claude:skills";
 
@@ -81,7 +82,8 @@ export const OBSERVATION_ITEMS: ObservationItem[] = [
   { id: "codex:plugins", group: "codex", label: "Codex 插件" },
   { id: "codex:hooks", group: "codex", label: "Codex Hooks" },
   { id: "codex:skills", group: "codex", label: "Codex Skills" },
-  { id: "claude:extensions", group: "claude", label: "Claude 市场与插件" },
+  { id: "claude:marketplaces", group: "claude", label: "Claude 市场" },
+  { id: "claude:plugins", group: "claude", label: "Claude 插件" },
   { id: "claude:hooks", group: "claude", label: "Claude Hooks" },
   { id: "claude:skills", group: "claude", label: "Claude Skills" },
 ];
