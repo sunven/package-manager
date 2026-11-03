@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check as CheckIcon } from "@phosphor-icons/react"
+import { Check as CheckIcon, Minus as MinusIcon } from "@phosphor-icons/react"
 import { Checkbox as CheckboxPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
@@ -21,9 +21,10 @@ function Checkbox({
     >
       <CheckboxPrimitive.Indicator
         data-slot="checkbox-indicator"
-        className="grid place-content-center text-current"
+        className="group/indicator grid place-content-center text-current"
       >
-        <CheckIcon className="size-3.5" />
+        <CheckIcon aria-hidden="true" className="size-3.5 group-data-[state=indeterminate]/indicator:hidden" />
+        <MinusIcon aria-hidden="true" className="hidden size-3.5 group-data-[state=indeterminate]/indicator:block" />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   )

@@ -10,6 +10,8 @@ Clean Up is a desktop workspace for observing and maintaining local development 
 - Axes: light paper, rounded sans, chromatic yellow; restrained functional colour within the Hum palette.
 - Signature: the real enabled-manager inventory, presented as readable paper controls.
 - Content: existing facts, labels, safety notices and handlers remain authoritative. No sample metrics or imagery in the application.
+- Sidebar brand: keep the yellow `cu` mark beside a single-line `Clean Up` wordmark, with no subtitle.
+- Page titles: navigation identifies the active destination. Keep the page heading accessible to screen readers without displaying a repeated title in the content area; retain descriptions and actions, and omit empty header spacing.
 
 ## Tokens
 

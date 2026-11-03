@@ -26,13 +26,15 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <header className="page-header">
-      <div className="page-header-copy">
-        <h1>{title}</h1>
-        {description ? <p>{description}</p> : null}
-      </div>
-      {actions ? <div className="page-header-actions">{actions}</div> : null}
-    </header>
+    <>
+      <h1 className="sr-only">{title}</h1>
+      {description || actions ? (
+        <header className="page-header">
+          {description ? <div className="page-header-copy"><p>{description}</p></div> : null}
+          {actions ? <div className="page-header-actions">{actions}</div> : null}
+        </header>
+      ) : null}
+    </>
   );
 }
 

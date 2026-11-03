@@ -5,6 +5,7 @@ function Toaster({ ...props }: ToasterProps) {
     <Sonner
       className="toaster group"
       position="top-right"
+      expand
       toastOptions={{
         classNames: {
           toast:

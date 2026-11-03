@@ -56,7 +56,7 @@ function Button({
       data-slot="button"
       data-variant={variant}
       data-size={size}
-      className={cn(buttonVariants({ variant, size, className }), variant === "default" && "hum-primary")}
+      className={cn("hum-button", buttonVariants({ variant, size, className }), variant === "default" && "hum-primary")}
       {...props}
     />
   )

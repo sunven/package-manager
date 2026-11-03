@@ -13,7 +13,7 @@ export function AppUpdateToast({
   onView(): void;
 }) {
   return (
-    <div className="pointer-events-auto w-[320px] rounded-2xl border bg-card p-4 text-card-foreground shadow-lg" role="status">
+    <div className="hum-update-toast pointer-events-auto" role="status">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-medium">发现新版本</p>

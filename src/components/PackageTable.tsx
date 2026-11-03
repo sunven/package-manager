@@ -190,7 +190,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
   const showSourceColumn = !usesCompactTable;
   const showPathColumn = !usesCompactTable;
   const heading = usesCompactTable ? ["名称", "版本", "操作"] : ["名称", "版本", "来源", "路径", "操作"];
-  const packageNameClassName = usesCompactTable ? "min-w-24 max-w-35 truncate font-medium" : "min-w-45 max-w-70 truncate font-medium";
+  const packageNameClassName = usesCompactTable ? "min-w-0 font-medium" : "min-w-45 max-w-70 truncate font-medium";
 
   return (
     <>
@@ -212,7 +212,7 @@ function PackageTableContent(props: PackageTableProps & { rows: IndexedPackage[]
             <TableCell className="max-w-32 truncate text-muted-foreground">{pkg.version}</TableCell>
             {showSourceColumn ? <TableCell className="max-w-52 truncate text-muted-foreground">{shorten(formatHomePathsInText(pkg.source, homeDirectory))}</TableCell> : null}
             {showPathColumn ? <TableCell className="max-w-60 truncate text-muted-foreground">{pkg.path ? formatHomePath(pkg.path, homeDirectory) : "无"}</TableCell> : null}
-            <TableCell className={usesCompactTable ? "w-32 text-right" : "w-24 text-right"}>
+            <TableCell className={usesCompactTable ? "hum-package-actions-column text-right" : "w-24 text-right"}>
               <PackageActions
                 index={index}
                 managerId={manager.id}
@@ -351,11 +351,11 @@ function TableShell({
   heading: string[];
 }) {
   return (
-    <Table className={compact ? "table-fixed" : "min-w-[760px]"}>
+    <Table className={compact ? "hum-package-table--compact table-fixed" : "min-w-[760px]"}>
       <TableHeader>
         <TableRow className="hover:bg-transparent">
           {heading.map((item) => (
-            <TableHead className={cx(compact && item === "版本" && "w-32", item === "操作" && (compact ? "w-32 text-right" : "w-24 text-right"))} key={item}>
+            <TableHead className={cx(compact && item === "版本" && "hum-package-version-column", item === "操作" && (compact ? "hum-package-actions-column text-right" : "w-24 text-right"))} key={item}>
               {item}
             </TableHead>
           ))}
@@ -373,11 +373,11 @@ function PackageName({ children, onSelect, pkg, selected }: {
   selected: boolean;
 }) {
   return (
-    <span className="inline-flex max-w-full min-w-0 items-center gap-1.5">
+    <span className="hum-package-name inline-flex max-w-full min-w-0 items-center gap-1.5">
       <button
         aria-label={`选择 ${pkg.name} ${pkg.version}`}
         aria-pressed={selected}
-        className="min-w-0 truncate rounded-sm text-left font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        className="hum-package-name-trigger min-w-0 truncate rounded-sm text-left font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         onClick={(event) => { event.stopPropagation(); onSelect(); }}
         title={pkg.name}
         type="button"

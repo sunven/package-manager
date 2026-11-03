@@ -137,10 +137,7 @@ export function Shell({
             <span aria-hidden="true" className="studio-logo">
               cu
             </span>
-            <div className="studio-brand-copy">
-              <span className="studio-brand-name">Clean Up</span>
-              <p>本机开发环境观察台</p>
-            </div>
+            <span className="studio-brand-name">Clean Up</span>
           </div>
           <Button
             aria-controls={navigationId}
