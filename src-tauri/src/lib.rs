@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod app_environment;
 mod claude_cli;
 mod claude_documents;
 mod claude_hooks;
@@ -1033,6 +1035,9 @@ async fn run_cache_cleanup(manager: ManagerId, before_snapshot_id: Option<String
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    app_environment::initialize();
+
     tauri::Builder::default()
         .manage(codex_hooks::HooksState::default())
         .manage(codex_skills::SkillsState::default())

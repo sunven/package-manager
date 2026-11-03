@@ -263,6 +263,8 @@ src-tauri/target/release/bundle/dmg/Clean Up_0.1.0_aarch64.dmg
 
 后端通过 Tauri command 执行结构化命令，不拼 shell string。每条命令都有 program、args、preview、timeout。
 
+macOS 应用启动时会读取用户交互式登录 Shell 的 PATH，让从访达或启动台打开的安装版也能找到通过 nvm、Homebrew 等配置的命令。读取限时 5 秒，失败时保留原有 PATH；Shell 初始化脚本会运行一次，仅导入 PATH。后续命令执行和环境诊断共用这份应用 PATH，环境诊断本身只检查文件元数据。
+
 主要命令：
 
 ```text
