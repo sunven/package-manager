@@ -2,6 +2,12 @@
 
 本文件由 git-cliff 生成，记录每个发布版本的变更。
 
+## [0.1.5] - 2026-11-03
+
+### Bug Fixes
+
+- **macos**: Restore shell PATH before scanning managers
+
 ## [0.1.4] - 2026-11-03
 
 ### Features
