@@ -361,6 +361,15 @@
 .hum-settings-details .fact-list--columns { grid-template-columns: minmax(0, 1fr); }
 .hum-settings-details .fact-row dt { flex: none; }
 :root[data-theme="dark"] .overview-summary .stat-grid { background: var(--measurement); color: var(--foreground); }
+@media (min-width: 961px) {
+  .studio-main:has(.studio-manager-layout) { display: flex; flex-direction: column; overflow: clip; padding-bottom: var(--gutter); }
+  .studio-main:has(.studio-manager-layout) > :not(.telemetry-view-stage) { flex: none; }
+  .studio-main:has(.studio-manager-layout) > .telemetry-view-stage { display: flex; min-height: 0; flex: 1; }
+  .view-grid:has(> .studio-manager-layout) { min-height: 0; flex: 1; grid-template-rows: minmax(0, 1fr); }
+  .studio-manager-layout { min-height: 0; grid-template-rows: minmax(0, 1fr); align-items: stretch; }
+  .studio-manager-menu, .studio-manager-content { min-height: 0; max-height: none; overflow-y: auto; overflow-x: clip; overscroll-behavior-y: contain; scrollbar-gutter: stable; }
+  .studio-manager-content { padding: var(--space-2xs) var(--space-xs) var(--space-lg); }
+}
 @media (max-width: 1200px) {
   .studio-body { grid-template-columns: 196px minmax(0, 1fr); }
   .studio-main { padding-inline: var(--space-lg); }

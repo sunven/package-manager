@@ -43,7 +43,7 @@ Motion communicates interaction. The primary action has a short spring press; ot
 
 ## Variants
 
-Dark mode uses blue black paper with lighter stock surfaces, warm ink and the same pear action. Below 960px the sidebar becomes a 44px navigation disclosure showing the current destination; it closes after selection or Escape and returns focus to its trigger. Manager subnavigation becomes a horizontal rail. The phone overview puts scan totals before the inventory, while desktop keeps the inventory-led composition.
+Dark mode uses blue black paper with lighter stock surfaces, warm ink and the same pear action. On desktop, the manager list and its detail pane fill the available height and scroll independently, with scroll containment at each pane's edges. Below 960px the sidebar becomes a 44px navigation disclosure showing the current destination; it closes after selection or Escape and returns focus to its trigger. Manager subnavigation becomes a horizontal rail. The phone overview puts scan totals before the inventory, while desktop keeps the inventory-led composition.
 
 ## Exports
 
