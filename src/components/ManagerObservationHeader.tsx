@@ -30,7 +30,7 @@ export function ManagerObservationHeader({
     : null;
 
   return (
-    <div className="mb-3 mt-2 flex flex-wrap items-center justify-between gap-2">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
       <ObservationState
         extra={extra}
         item={item}

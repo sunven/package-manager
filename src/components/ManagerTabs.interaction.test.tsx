@@ -10,7 +10,7 @@ import type { ManagerId } from "../types";
 
 afterEach(cleanup);
 
-it("associates each manager tab with a panel and switches visible content by keyboard", async () => {
+it("associates each manager menu item with a panel and switches content vertically by keyboard", async () => {
   const user = userEvent.setup();
   function Managers() {
     const [selected, setSelected] = useState<ManagerId>("Npm");
@@ -21,7 +21,9 @@ it("associates each manager tab with a panel and switches visible content by key
     </ManagerTabs>;
   }
   render(<Managers />);
-  const tabs = within(screen.getByRole("tablist", { name: "包管理器" })).getAllByRole("tab");
+  const menu = screen.getByRole("tablist", { name: "包管理器" });
+  expect(menu.getAttribute("aria-orientation")).toBe("vertical");
+  const tabs = within(menu).getAllByRole("tab");
   for (const tab of tabs) {
     const panel = document.getElementById(tab.getAttribute("aria-controls")!);
     expect(panel?.getAttribute("role")).toBe("tabpanel");
@@ -30,13 +32,22 @@ it("associates each manager tab with a panel and switches visible content by key
   }
   expect(within(screen.getByRole("tabpanel", { name: /^Npm/ })).getByText("当前管理器：Npm")).toBeTruthy();
   tabs[0].focus();
-  await user.keyboard("{ArrowRight}");
+  await user.keyboard("{ArrowDown}");
   await waitFor(() => expect(tabs[1].getAttribute("aria-selected")).toBe("true"));
   expect(document.activeElement).toBe(tabs[1]);
   expect(within(screen.getByRole("tabpanel", { name: /^Pip/ })).getByText("当前管理器：Pip")).toBeTruthy();
   expect(screen.queryByText("当前管理器：Npm")).toBeNull();
   expect(screen.getAllByRole("button", { name: "刷新当前管理器" })).toHaveLength(1);
   expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
+
+  await user.keyboard("{ArrowUp}");
+  await waitFor(() => expect(tabs[0].getAttribute("aria-selected")).toBe("true"));
+  expect(document.activeElement).toBe(tabs[0]);
+  expect(screen.getByText("当前管理器：Npm")).toBeTruthy();
+
+  await user.click(tabs[1]);
+  expect(screen.getByText("当前管理器：Pip")).toBeTruthy();
+  expect(screen.queryByText("当前管理器：Npm")).toBeNull();
 });
 
 it("keeps the content available when no managers are enabled", () => {

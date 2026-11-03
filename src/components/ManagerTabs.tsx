@@ -29,11 +29,12 @@ export function ManagerTabs({
 
   return (
     <Tabs
+      className="studio-manager-layout"
       onValueChange={(value) => onSelect(value as ManagerId)}
-      orientation="horizontal"
+      orientation="vertical"
       value={selectedManager}
     >
-      <div className="studio-manager-scroll">
+      <aside aria-label="管理器切换" className="studio-manager-menu">
         <TabsList aria-label="包管理器" className="studio-manager-tabs">
           {managerIds.map((managerId) => {
             const manager = managerSnapshots[managerId];
@@ -61,9 +62,9 @@ export function ManagerTabs({
             );
           })}
         </TabsList>
-      </div>
+      </aside>
       {managerIds.map((managerId) => (
-        <TabsContent className="min-w-0" key={managerId} value={managerId}>
+        <TabsContent className="studio-manager-content" key={managerId} value={managerId}>
           {managerId === selectedManager ? children : null}
         </TabsContent>
       ))}

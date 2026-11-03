@@ -1,5 +1,5 @@
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "../../components/ui/dropdown-menu";
-import { ArrowClockwise as RefreshCw, ArrowDown, ArrowSquareOut as ExternalLink, ArrowUp, CaretUpDown, ClockCounterClockwise, Copy, FolderOpen, Square, Trash as Trash2, X } from "@phosphor-icons/react";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "../../components/ui/dropdown-menu";
+import { ArrowClockwise as RefreshCw, ArrowDown, ArrowSquareOut as ExternalLink, ArrowUp, CaretDown, CaretUpDown, ClockCounterClockwise, Copy, FolderOpen, Square, Trash as Trash2, X } from "@phosphor-icons/react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
@@ -202,14 +202,40 @@ export function ProjectCleanupPage({
           {view.settings.phase === "loading" ? (
             <Skeleton className="h-9 min-w-0 flex-1" />
           ) : (
-            <Input
-              aria-label="扫描根目录"
-              className="min-w-0 flex-1"
-              id="project-cleanup-root"
-              readOnly
-              title={view.settings.rootPath ?? undefined}
-              value={view.settings.rootPath ? formatHomePath(view.settings.rootPath, homeDirectory) : "尚未选择"}
-            />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  aria-label="选择扫描根目录"
+                  className="min-w-0 flex-1 justify-between font-normal"
+                  disabled={settingsBusy || scanBusy || Boolean(view.batch) || !view.settings.presets.length}
+                  id="project-cleanup-root"
+                  title={view.settings.rootPath ?? undefined}
+                  type="button"
+                  variant="outline"
+                >
+                  <span className="truncate">{view.settings.rootPath ? formatHomePath(view.settings.rootPath, homeDirectory) : "尚未选择"}</span>
+                  <CaretDown aria-hidden="true" className="shrink-0 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="min-w-72 max-w-[calc(100vw-2rem)]">
+                <DropdownMenuRadioGroup
+                  value={view.settings.activePresetId ?? ""}
+                  onValueChange={(id) => void workflow.selectPreset(id).then((outcome) => report(outcome, "无法切换目录预设"))}
+                >
+                  {view.settings.presets.map((preset) => {
+                    const latest = latestRecordForDepth(view.history.byPreset[preset.id] ?? [], preset.maxDepth);
+                    return (
+                      <DropdownMenuRadioItem key={preset.id} value={preset.id}>
+                        <div className="flex min-w-0 flex-col gap-0.5 whitespace-normal">
+                          <span className="break-all">{formatHomePath(preset.path, homeDirectory)} · 深度 {preset.maxDepth}</span>
+                          <span className="text-xs text-muted-foreground">{presetHistoryLabel(view.history, latest)}</span>
+                        </div>
+                      </DropdownMenuRadioItem>
+                    );
+                  })}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
           <label className="flex shrink-0 items-center gap-1" htmlFor="project-cleanup-depth">
             <span className="shrink-0 text-xs text-muted-foreground">深度</span>
@@ -275,25 +301,6 @@ export function ProjectCleanupPage({
           </Button>
         </div>
         <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button disabled={settingsBusy || scanBusy || Boolean(view.batch) || !view.settings.presets.length} variant="outline" size="sm" type="button">选择目录预设（{view.settings.presets.length}）</Button></DropdownMenuTrigger>
-            <DropdownMenuContent><DropdownMenuGroup>
-              {view.settings.presets.map((preset) => {
-                const latest = latestRecordForDepth(
-                  view.history.byPreset[preset.id] ?? [],
-                  preset.maxDepth,
-                );
-                return (
-                  <DropdownMenuItem key={preset.id} onSelect={() => void workflow.selectPreset(preset.id).then((outcome) => report(outcome, "无法切换目录预设"))}>
-                    <div className="flex max-w-96 flex-col gap-0.5 whitespace-normal">
-                      <span>{formatHomePath(preset.path, homeDirectory)} · 深度 {preset.maxDepth}{preset.id === view.settings.activePresetId ? " · 当前" : ""}</span>
-                      <span className="text-xs text-muted-foreground">{presetHistoryLabel(view.history, latest)}</span>
-                    </div>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuGroup></DropdownMenuContent>
-          </DropdownMenu>
           {view.settings.activePresetId ? <Button disabled={settingsBusy || scanBusy || Boolean(view.batch)} variant="outline" size="sm" type="button" onClick={() => void workflow.removePreset(view.settings.activePresetId!).then((outcome) => report(outcome, "无法移除目录预设"))}>移除当前预设（不删除目录）</Button> : null}
           <span className="text-xs text-muted-foreground">预设只保存扫描根目录和深度，切换后需要重新扫描。</span>
         </div>

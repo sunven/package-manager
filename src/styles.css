@@ -1132,68 +1132,89 @@ td[data-align="end"] {
   font-variant-numeric: tabular-nums;
 }
 
-/* Manager switcher: underline tabs, not a row of cards. */
+/* Manager workspace: 168px menu + 24px gutter + the remaining content width. */
 
-.studio-manager-scroll {
-  overflow: visible;
+.studio-manager-layout {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 168px minmax(0, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+
+.studio-manager-menu {
+  position: sticky;
+  top: 0;
+  min-width: 0;
+  max-height: calc(100dvh - 100px);
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .studio-manager-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
   width: 100%;
   height: auto;
-  gap: 0 22px;
-  overflow: visible;
+  gap: 2px;
   border: 0;
-  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   border-radius: 0;
   background: transparent;
-  padding: 0;
+  padding: 0 12px 0 0;
 }
 
 .studio-manager-tab {
-  display: inline-flex;
+  display: flex;
+  width: 100%;
   max-width: 100%;
-  height: 44px;
+  height: 48px;
   flex: none;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   border: 0;
-  border-radius: 0;
+  border-radius: 6px;
   background: transparent;
-  padding: 0;
+  padding: 8px;
   color: var(--muted-foreground);
 }
 
 .studio-manager-tab:hover {
+  background: var(--accent);
   color: var(--foreground);
 }
 
 .studio-manager-tab[data-state="active"],
 .studio-manager-tab[data-active] {
+  background: var(--accent);
   color: var(--foreground);
 }
 
+.studio-manager-tab:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
 .studio-manager-tab::after {
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 2px;
-  background: var(--data);
+  display: none;
 }
 
 .studio-manager-tab-copy {
   display: grid;
-  max-width: 22ch;
   min-width: 0;
+  flex: 1;
   text-align: left;
 }
 
 .studio-manager-tab-copy strong {
+  overflow: hidden;
   font-size: 13.5px;
   font-weight: 500;
   line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .studio-manager-tab-copy small {
@@ -1210,6 +1231,30 @@ td[data-align="end"] {
 .studio-manager-tab[data-active] .studio-mark {
   border-color: var(--data);
   color: var(--data);
+}
+
+.studio-manager-content {
+  min-width: 0;
+  container-type: inline-size;
+  container-name: manager-content;
+}
+
+.studio-manager-columns {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  gap: 24px;
+}
+
+@container manager-content (min-width: 44rem) {
+  .studio-manager-columns {
+    grid-template-columns: minmax(0, 1fr) 260px;
+  }
+
+  .studio-manager-details {
+    position: sticky;
+    top: 0;
+  }
 }
 
 /* Manager marks: one neutral token set, the accent marks the current one. */

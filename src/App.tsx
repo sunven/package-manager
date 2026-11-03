@@ -54,7 +54,7 @@ import { PathPanel } from "./components/PathPanel";
 import { SettingsPage } from "./components/SettingsPage";
 import { Shell } from "./components/Shell";
 import { ManagerDiagnostics } from "./components/ManagerDiagnostics";
-import { Panel, PageHeader } from "./components/ui";
+import { Panel } from "./components/ui";
 import { Toaster } from "../components/ui/sonner";
 import { AppUpdateToast, appUpdateToastId } from "./components/AppUpdateToast";
 import { useAppUpdate } from "./hooks/useAppUpdate";
@@ -586,10 +586,6 @@ export function App() {
           </Tabs>
         ) : (
           <div className="view-grid">
-            <PageHeader
-              title="包管理器"
-              description="查看已启用管理器的包清单、路径与缓存占用；维护操作在确认后执行。"
-            />
             <ManagerTabs
               coverageIndex={coverageById}
               managerIds={state.enabledManagers}
@@ -606,7 +602,7 @@ export function App() {
               scanState={state.scanStates[selectedManager]}
               scanning={scanning}
             />
-            <main className="view-grid min-[1100px]:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.7fr)] min-[1100px]:items-start">
+            <main className="studio-manager-columns">
               <Panel className="overflow-hidden">
                 <PackageTable
                   key={`${selectedManager}:${searchFocus?.sequence ?? 0}`}
@@ -634,7 +630,7 @@ export function App() {
                 />
               </Panel>
 
-              <aside className="grid gap-2 min-[1100px]:sticky min-[1100px]:top-2">
+              <aside className="studio-manager-details grid gap-2">
                 <ManagerDiagnostics
                   manager={currentManager} state={state.scanStates[selectedManager]}
                   homeDirectory={state.homeDirectory}

@@ -23,6 +23,7 @@ import type {
   DirectoryMeasurement,
   ProjectCleanupBatchProgress,
   ProjectCleanupResult,
+  ProjectCleanupSettings,
   ProjectDataCandidate,
   ProjectScanRecord,
 } from "../types";
@@ -116,6 +117,50 @@ it("lets a user edit a multi-digit depth before saving it for the next scan", as
   await waitFor(() => expect(workflow.read().settings.maxDepth).toBe(12));
   expect(updateDepth).toHaveBeenCalledWith("preset-1", 12);
   expect((screen.getByRole("button", { name: "扫描项目目录" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+it("selects a saved scan root from the path dropdown and restores its depth without scanning", async () => {
+  const user = userEvent.setup();
+  const presets = [
+    { id: "preset-1", path: "/home/developer/github", maxDepth: 8 },
+    { id: "preset-2", path: "/home/developer/work projects", maxDepth: 12 },
+  ];
+  const initial = presetSettings({ rootPath: presets[0].path, presets });
+  const selection = deferred<ProjectCleanupSettings>();
+  const selectPreset = vi.fn(() => selection.promise);
+  const scan = vi.fn();
+  const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
+    readSettings: async () => initial,
+    selectPreset,
+    scan,
+  }));
+  await workflow.initialize();
+  function Page() {
+    const view = useSyncExternalStore(workflow.subscribe, workflow.read);
+    return <ProjectCleanupPage coverageItem={projectCoverageItem(view)} homeDirectory="/home/developer" view={view} workflow={workflow} />;
+  }
+  render(<Page />);
+
+  const trigger = screen.getByRole("button", { name: "选择扫描根目录" });
+  expect(trigger.textContent).toBe("~/github");
+  expect(screen.queryByRole("button", { name: /选择目录预设/ })).toBeNull();
+  await user.click(trigger);
+  const current = screen.getByRole("menuitemradio", { name: /~\/github · 深度 8/ });
+  expect(current.getAttribute("aria-checked")).toBe("true");
+  await user.click(screen.getByRole("menuitemradio", { name: /~\/work projects · 深度 12/ }));
+  expect(selectPreset).toHaveBeenCalledWith("preset-2");
+  expect(screen.queryByRole("button", { name: "选择扫描根目录" })).toBeNull();
+  expect((screen.getByRole("button", { name: "扫描项目目录" }) as HTMLButtonElement).disabled).toBe(true);
+
+  selection.resolve(presetSettings({
+    rootId: "root-2", rootPath: presets[1].path, maxDepth: 12, presets, activePresetId: "preset-2",
+  }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "选择扫描根目录" }).textContent).toBe("~/work projects"));
+  expect((screen.getByRole("spinbutton", { name: /深度/ }) as HTMLInputElement).value).toBe("12");
+  expect((screen.getByRole("button", { name: "选择扫描根目录" }) as HTMLButtonElement).disabled).toBe(false);
+  expect(scan).not.toHaveBeenCalled();
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(screen.getByRole("button", { name: "添加目录预设" })).toBeTruthy();
 });
 
 it("filters candidate types by keyboard while retaining the selected candidates", async () => {
