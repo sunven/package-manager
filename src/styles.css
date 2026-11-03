@@ -7,7 +7,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ---------------------------------------------------------------------------
-   DevScope tokens — measured instrument panel.
+   Clean Up tokens — measured instrument panel.
    Dark is the default ground. Chrome stays achromatic; the blue hue belongs to
    data and the active selection line. Light is the same structure inverted.
 --------------------------------------------------------------------------- */

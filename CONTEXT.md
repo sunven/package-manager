@@ -1,6 +1,8 @@
-# DevScope
+# Clean Up
 
 一个本机开发环境观察与维护工具。它把多个互不相干的包管理器（npm、pnpm、Yarn、nvm、Homebrew、Maven、pip、Cargo、Docker、Bun、uv、Android SDK）、本地项目派生数据、编辑器工作区数据和代理留下的会话记录收敛成一套统一词汇，并在此之上提供受约束的维护操作。
+
+产品名称对外展示时统一写作 `Clean Up`，两个单词首字母大写并保留空格；小写写法为 `clean up`。它指整个产品；各维护操作仍分别使用下文定义的“清理”“卸载”“会话记录移除”等术语。
 
 ## Language
 

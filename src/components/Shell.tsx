@@ -124,7 +124,7 @@ export function Shell({
               <Cube weight="duotone" />
             </span>
             <div className="studio-brand-copy">
-              <span className="studio-brand-name">包管理器控制中心</span>
+              <span className="studio-brand-name">Clean Up</span>
               <p>本机开发环境观察台</p>
             </div>
           </div>

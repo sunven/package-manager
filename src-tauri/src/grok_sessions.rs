@@ -1394,7 +1394,7 @@ mod tests {
         assert!(grok_host(&snapshot[&99]));
         assert!(!grok_host("/usr/bin/login"));
         assert!(!grok_host(
-            "/Applications/DevScope.app/Contents/MacOS/package-manager-control-center"
+            "/Applications/Clean Up.app/Contents/MacOS/package-manager-control-center"
         ));
         assert!(process_snapshot("").is_err());
         assert!(process_snapshot("truncated").is_err());
