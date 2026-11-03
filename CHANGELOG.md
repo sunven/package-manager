@@ -2,6 +2,19 @@
 
 本文件由 git-cliff 生成，记录每个发布版本的变更。
 
+## [0.1.6] - 2026-11-03
+
+### Bug Fixes
+
+- **ui**: Polish Hum styling and simplify page headers
+- **ui**: Scroll manager list and details independently
+
+### Features
+
+- **ui**: Simplify manager and scan scope navigation
+- **ui**: Redesign all screens with Hum theme
+- Add skill
+
 ## [0.1.5] - 2026-11-03
 
 ### Bug Fixes
