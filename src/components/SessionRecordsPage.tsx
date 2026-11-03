@@ -53,7 +53,7 @@ import { useSessionSelection } from "../hooks/useSessionSelection";
 import type { ObservationCoverageItem } from "../observationCoverage";
 import { relativeObservationTime } from "../observationCoverage";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, Panel, RefreshNotice, StatCard } from "./ui";
+import { EmptyState, PageHeader, Panel, PanelHead, RefreshNotice, StatCard } from "./ui";
 
 const sources = [
   { key: "codex" as const, label: "Codex", empty: "没有 Codex 会话记录", fallback: "~/.codex/sessions" },
@@ -184,7 +184,8 @@ export function SessionRecordsPage({
   });
 
   return (
-    <main className="view-grid" aria-busy={scanningSources.codex || scanningSources.claude || scanningSources.grok || scanningSources.qoder || scanningSources["qoder-cn"] || openCodeScanning}>
+    <main className="view-grid hum-session-page" aria-busy={scanningSources.codex || scanningSources.claude || scanningSources.grok || scanningSources.qoder || scanningSources["qoder-cn"] || openCodeScanning}>
+      <PageHeader title="会话记录" />
       {error ? (
         <Alert variant="destructive">
           <AlertTitle>会话记录读取失败</AlertTitle>
@@ -262,7 +263,7 @@ export function SessionRecordsPage({
                   role="progressbar"
                 >
                   <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-150"
+                    className="h-full rounded-full bg-primary"
                     style={{ width: `${removalProgressPercent}%` }}
                   />
                 </div>
@@ -328,8 +329,8 @@ export function SessionRecordsPage({
                   <li className="flex min-w-0 items-center justify-between gap-3 px-4 py-3" key={record.id}>
                     <div className="min-w-0">
                       <p className="wrap-anywhere text-sm font-medium">{record.title || record.id}</p>
-                      <p className="break-all text-xs text-muted-foreground">{formatHomePath(record.workingDirectory, homeDirectory)}{record.archived ? " · 已归档" : ""}</p>
-                      {pendingOpenCodeDelete.kind === "age" ? <p className="break-all text-xs text-muted-foreground">{formatSessionActivity(record.lastActivityMs)}{record.parentId ? ` · 父会话：${record.parentTitle || record.parentId}` : ""}</p> : null}
+                      <p className="break-all text-xs text-muted-foreground">{formatHomePath(record.workingDirectory, homeDirectory)}{record.archived ? "，已归档" : ""}</p>
+                      {pendingOpenCodeDelete.kind === "age" ? <p className="break-all text-xs text-muted-foreground">{formatSessionActivity(record.lastActivityMs)}{record.parentId ? `，父会话：${record.parentTitle || record.parentId}` : ""}</p> : null}
                     </div>
                     <span className="shrink-0 text-xs text-muted-foreground">{pendingOpenCodeDelete.kind === "age" ? pendingOpenCodeDelete.roots.some((root) => root.id === record.id) ? "按年龄删除" : "级联删除" : isSelected ? "已选择" : "级联删除"}</span>
                   </li>
@@ -379,7 +380,7 @@ export function SessionRecordsPage({
                   {openCodeDeleteResult.result.items.map((item) => {
                     const title = openCodeDeleteResult.pending.roots.find((record) => record.id === item.id)?.title ?? item.id;
                     const status = item.status === "deleted" ? "已永久删除" : item.status === "failed" ? "失败" : "未执行";
-                    return <li className="break-all" key={item.id}>{title} · {status}{item.message ? ` · ${item.message}` : ""}</li>;
+                    return <li className="break-all" key={item.id}>{title}，{status}{item.message ? `，${item.message}` : ""}</li>;
                   })}
                 </ul>
               </>
@@ -391,7 +392,7 @@ export function SessionRecordsPage({
 
       {result ? (
         <Alert>
-          <AlertTitle>{resultSource} · {removalResultText(result)}</AlertTitle>
+          <AlertTitle>{resultSource}，{removalResultText(result)}</AlertTitle>
           <AlertDescription className="flex flex-col gap-2">
             {result.operationError ? <p>{result.operationError}。请刷新会话记录，核对后再试。</p> : <p>以上为实际移除结果，可能与确认时的条数不同。清空废纸篓前可恢复记录，磁盘空间不会立即释放。</p>}
             {result.message ? <p>{result.message}</p> : null}
@@ -400,14 +401,14 @@ export function SessionRecordsPage({
             {result.historyId && onShowHistory ? <Button className="w-fit" onClick={() => onShowHistory(result.historyId!)} size="sm" type="button" variant="outline">已保存到维护历史</Button> : null}
             {records.outcome ? <RefreshNotice value={records.outcome.refresh} onRetry={() => void records.refresh(removalSource)} /> : null}
             {result.items.length ? <details><summary className="cursor-pointer">查看逐条结果（{result.items.length}）</summary><ul className="mt-2 flex max-h-64 flex-col gap-2 overflow-auto">
-              {result.items.map((item) => <li key={item.id} className="break-all"><strong>{formatSessionRecordId(removalSource, item.id)}</strong> · {item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : item.status === "NotAttempted" ? "未执行" : "失败"}{item.message ? ` · ${item.message}` : ""}</li>)}
+              {result.items.map((item) => <li key={item.id} className="break-all"><strong>{formatSessionRecordId(removalSource, item.id)}</strong>，{item.status === "Moved" ? "已移入废纸篓" : item.reason ? removalReasonLabels[item.reason] : item.status === "Skipped" ? "跳过" : item.status === "NotAttempted" ? "未执行" : "失败"}{item.message ? `，${item.message}` : ""}</li>)}
             </ul></details> : null}
           </AlertDescription>
         </Alert>
       ) : null}
 
       <Tabs className="min-w-0" onValueChange={(value) => setActiveSource(value as SessionSourceId | "opencode")} value={activeSource}>
-        <TabsList className="h-auto w-full flex-wrap">
+        <TabsList className="hum-session-source-tabs h-auto w-full flex-wrap">
           {sources.map((source) => {
             const count = counts?.[source.key];
             return (
@@ -555,8 +556,9 @@ function OpenCodeSection({
     : null;
 
   return (
-    <Panel className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b p-3">
+    <Panel className="hum-session-opencode overflow-hidden">
+      <PanelHead title="OpenCode 会话记录" />
+      <div className="hum-session-filters flex flex-wrap items-center gap-3 border-b p-4">
         <Input type="search" aria-label="搜索 OpenCode 会话" placeholder="搜索标题或工作目录" value={filter.query} onChange={(event) => { setFilter((current) => ({ ...current, query: event.target.value })); onClearSelection(); }} className="min-w-40 flex-1" />
         <ToggleGroup type="single" value={filter.archived} onValueChange={(archived) => { if (archived) { setFilter((current) => ({ ...current, archived: archived as OpenCodeSessionFilter["archived"] })); onClearSelection(); } }} aria-label="OpenCode 归档状态">
           <ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="active">未归档</ToggleGroupItem><ToggleGroupItem value="archived">已归档</ToggleGroupItem>
@@ -570,15 +572,17 @@ function OpenCodeSection({
           />
         </div>
       </div>
-      <div className="flex flex-wrap items-center justify-end gap-2 border-b px-3 py-2">
+      <div className="hum-session-actions flex flex-wrap items-center justify-end gap-2 border-b px-4 py-3">
         <span aria-label="排序" className="flex gap-1" role="group">
           <Button aria-pressed={sort === "time"} onClick={() => setSort("time")} size="sm" type="button" variant={sort === "time" ? "secondary" : "outline"}>按时间</Button>
           <Button aria-pressed={sort === "project"} onClick={() => setSort("project")} size="sm" type="button" variant={sort === "project" ? "secondary" : "outline"}>按项目</Button>
         </span>
         <Button disabled={scanning || preparing || deletingId !== null} onClick={onRefresh} size="sm" type="button" variant="outline">
-          <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
+          <RefreshCw className={scanning ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
           {scanning ? "读取中" : "刷新"}
         </Button>
+      </div>
+      <div className="hum-session-age-actions flex flex-wrap items-center gap-2 px-4 py-3">
         {([7, 30] as const).map((days) => (
           <Button
             aria-describedby="opencode-age-deletion-help opencode-age-deletion-eligibility"
@@ -643,8 +647,8 @@ function OpenCodeSection({
                     </span>
                     <span className="shrink-0 text-xs font-normal text-muted-foreground">
                       {group.records.length} 条{projectMode
-                        ? ` · ${group.lastActivityMs == null ? "没有最后活动时间" : relativeObservationTime(group.lastActivityMs, nowMs)}`
-                        : ` · ${isCollapsed ? "展开" : "折叠"}`}
+                        ? `，${group.lastActivityMs == null ? "没有最后活动时间" : relativeObservationTime(group.lastActivityMs, nowMs)}`
+                        : `，${isCollapsed ? "展开" : "折叠"}`}
                     </span>
                   </button>
                 </h3>
@@ -906,15 +910,21 @@ function SourceSection({
   }, [source?.records, nowMs]);
   const ageEligibilityId = `${sourceKey}-age-removal-eligibility`;
   return (
-    <Panel className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b p-3">
+    <div className="hum-session-source">
+      <div className="stat-grid grid-cols-2">
+        <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
+        <StatCard label="当前结果的记录占用" value={view ? `${records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}${formatBytes(view.bytes)}` : "—"} />
+      </div>
+    <Panel className="hum-session-records overflow-hidden">
+      <PanelHead title={`${label} 会话记录`} />
+      <div className="hum-session-filters flex flex-wrap items-center gap-3 border-b p-4">
         <Input disabled={removing} type="search" aria-label={`搜索 ${label} 会话记录`} placeholder="搜索标题或工作目录" value={filter.query} onChange={(event) => onFilterChange({ query: event.target.value })} className="min-w-40 flex-1" />
         <ToggleGroup disabled={removing} type="single" value={filter.usage} onValueChange={(usage) => { if (usage) onFilterChange({ usage: usage as SessionUsageFilter }); }} aria-label={`${label} 使用状态`}>
           <ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="inUse">使用中</ToggleGroupItem><ToggleGroupItem value="notInUse">未使用中</ToggleGroupItem>
         </ToggleGroup>
         <span className="text-xs text-muted-foreground" role="status">{view ? `匹配 ${view.count} / 已读取 ${view.totalCount} 条` : "尚未读取会话记录"}</span>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-2">
+      <div className="hum-session-actions flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
         <div className="grid min-w-0 basis-48 grow gap-0.5">
           <ObservationState
             item={coverageItem}
@@ -938,9 +948,12 @@ function SourceSection({
             </Button>
           </span>
           <Button disabled={scanning || removing} onClick={onRefresh} size="sm" type="button" variant="outline">
-            <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
+            <RefreshCw className={scanning ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
             {scanning ? "读取中" : "刷新"}
           </Button>
+        </span>
+      </div>
+      <div className="hum-session-age-actions flex flex-wrap items-center gap-2 px-4 py-3">
           {([7, 30] as const).map((days) => {
             const request = ageRemovalRequest(source?.ageEligible, days);
             return (
@@ -959,7 +972,6 @@ function SourceSection({
               </Button>
             );
           })}
-        </span>
       </div>
       {grok ? (
         <div className="space-y-1 border-b px-3 py-2 text-xs text-muted-foreground">
@@ -976,10 +988,6 @@ function SourceSection({
       <CardContent className="flex flex-col gap-2 p-3">
         <p className="text-xs text-muted-foreground" id={`${sourceKey}-age-removal-help`}>按天数移除以最后活动时间为准，作用于整个 {label} 来源，不受搜索和状态筛选限制。使用中的记录会跳过。</p>
         <p className="text-xs text-muted-foreground" id={ageEligibilityId} role="status">{!source ? "读取会话记录后显示当前符合年龄条件的数量。" : eligibleAge7 === 0 && eligibleAge30 === 0 ? `当前没有符合 7 天或 30 天门槛的记录；近 7 天 ${recentAge7Count} 条、近 30 天 ${recentAge30Count} 条未达门槛` : eligibleAge7 === 0 ? `当前没有符合 7 天门槛的记录；近 7 天 ${recentAge7Count} 条未达门槛` : eligibleAge30 === 0 ? `当前没有符合 30 天门槛的记录；近 30 天 ${recentAge30Count} 条未达门槛` : `当前符合年龄门槛：7 天 ${eligibleAge7} 条、30 天 ${eligibleAge30} 条`}{inUseCount ? `；${inUseCount} 条使用中的记录会跳过` : ""}{unknownActivityCount ? `；${unknownActivityCount} 条缺少最后活动时间，无法按年龄判断` : ""}。</p>
-        <div className="stat-grid grid-cols-2">
-          <StatCard label={`${label} 会话记录`} value={view ? `${view.count} 条` : "—"} />
-          <StatCard label="当前结果的记录占用" value={view ? `${records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}${formatBytes(view.bytes)}` : "—"} />
-        </div>
       </CardContent>
       {source?.status === "Failed" && source.message ? (
         <Alert variant="destructive">
@@ -1058,8 +1066,8 @@ function SourceSection({
                       ) : <span className="text-sm font-medium">{group.label}</span>}
                     </span>
                     <span className="shrink-0 text-xs text-muted-foreground">
-                      {group.count} 条 · {group.records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}{formatBytes(group.bytes)}
-                      {projectMode ? ` · ${group.lastActivityMs == null ? "没有最后活动时间" : relativeObservationTime(group.lastActivityMs, nowMs)}` : ""}
+                      {group.count} 条，{group.records.some((record) => record.grok?.bytesComplete === false) ? "已测 " : ""}{formatBytes(group.bytes)}
+                      {projectMode ? `，${group.lastActivityMs == null ? "没有最后活动时间" : relativeObservationTime(group.lastActivityMs, nowMs)}` : ""}
                     </span>
                   </button>
                 </div>
@@ -1111,5 +1119,6 @@ function SourceSection({
         </div>
       ) : <EmptyState message={scanning ? `正在读取 ${label} 会话记录…` : `尚未读取 ${label} 会话记录，请刷新后查看`} />}
     </Panel>
+    </div>
   );
 }

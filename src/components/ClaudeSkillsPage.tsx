@@ -12,7 +12,7 @@ import type { ClaudeSkills } from "../hooks/useClaudeSkills";
 import type { ObservationCoverageItem } from "../observationCoverage";
 import { errorToString } from "../utils/format";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
+import { EmptyState, PageHeader, Panel, PanelHead, SkeletonRows } from "./ui";
 
 const selectClass = "h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50";
 const githubSource: SkillSource = { kind: "github", repo: "", subdirectory: "", reference: "", referenceKind: "branch" };
@@ -56,20 +56,20 @@ export function ClaudeSkillsPage({ workflow, coverageItem, onShowPlugins }: {
     catch (caught) { if (epoch === detailRequest.current) setMarkdown({ error: errorToString(caught) }); }
   }
 
-  return <section className="view-grid" aria-label="Claude Code Skills 管理" aria-busy={scanning || phase === "preparing" || phase === "executing"}>
-    <Panel>
-      <PanelHead title="Claude Code Skills" action={<div className="flex flex-wrap gap-2">
+  return <section className="view-grid hum-extension-page" aria-label="Claude Code Skills 管理" aria-busy={scanning || phase === "preparing" || phase === "executing"}>
+    <div className="hum-extension-header">
+      <PageHeader title="Claude Code Skills" description="查看当前用户的技能定义，调整调用设置，维护本应用安装的副本。" actions={<div className="flex flex-wrap gap-2">
         <Button ref={refresh} size="sm" variant="outline" disabled={busy} onClick={() => void workflow.refresh()}><ArrowClockwise aria-hidden="true" className={scanning ? "motion-safe:animate-spin" : undefined} />{scanning ? "读取中" : "刷新"}</Button>
         <Button ref={installButton} size="sm" disabled={blocked || Boolean(scan?.installBlocked)} onClick={() => { setInstalling(true); setRequestError(null); }}><Plus aria-hidden="true" />安装技能</Button>
       </div>} />
-      <CardContent className="grid gap-2 p-4">
-        <p className="text-sm">查看当前用户的技能定义，调整调用设置，维护本应用安装的副本。</p>
+      <div className="hum-extension-context">
+
         <p className="text-xs text-muted-foreground">Claude 用户目录 <code className="ml-2 break-all text-foreground">{scan?.directory || "尚未读取"}</code></p>
         <ObservationState item={coverageItem} showNote={false} variant="strip" />
         <p className="text-xs text-muted-foreground">包含禁用项、插件和旧版命令；定义存在不代表当前会话已加载。 <button type="button" disabled={busy} onClick={() => onShowPlugins()} className="cursor-pointer text-primary underline underline-offset-4 disabled:opacity-50">前往插件市场</button></p>
         <p role="status" className="text-xs text-muted-foreground">{phase === "preparing" ? "正在取得来源并核对技能，尚未执行维护…" : phase === "executing" ? "正在执行并重新核对清单…" : scanning ? "正在读取，已有内容暂为上次结果。" : "调用设置按名称影响用户默认行为，项目或更高层配置仍可覆盖；修改后请在新会话核对。"}</p>
-      </CardContent>
-    </Panel>
+      </div>
+    </div>
     {requestError ? <Alert variant="destructive"><AlertTitle>暂时无法准备操作</AlertTitle><AlertDescription className="break-words">{requestError}</AlertDescription></Alert> : null}
     {result ? <Alert role="status" variant={result.status === "Failed" || result.status === "Partial" ? "destructive" : "default"}>
       <AlertTitle>{({ Succeeded: "操作已完成", Saved: "用户调用设置已保存", Unchanged: "来源没有新内容", Partial: "操作未完整确认，请核对", Conflict: "目标已变化，请重新确认", Failed: "操作未完成" })[result.status]}</AlertTitle><AlertDescription className="break-words">{result.message}</AlertDescription>
@@ -79,7 +79,7 @@ export function ClaudeSkillsPage({ workflow, coverageItem, onShowPlugins }: {
 
     {installing ? <Panel><PanelHead title="安装独立技能" /><CardContent className="p-4">
       <h3 ref={formTitle} tabIndex={-1} className="sr-only">填写技能安装来源</h3>
-      <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); const button = event.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]'); if (button) void request({ operation: "Install", source }, button); }}>
+      <form className="hum-extension-form grid gap-3" onSubmit={(event) => { event.preventDefault(); const button = event.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]'); if (button) void request({ operation: "Install", source }, button); }}>
         <p className="text-sm text-muted-foreground">检查后确认一个技能的来源和安装位置。本地导入会复制一份，原目录保持不变。</p>
         <label className="grid gap-1 text-sm">来源类型<select className={selectClass + " w-fit"} disabled={busy} value={source.kind} onChange={(event) => setSource(event.target.value === "local" ? { kind: "local", path: "" } : githubSource)}><option value="github">GitHub 仓库</option><option value="local">本地目录</option></select></label>
         {source.kind === "local" ? <div className="grid gap-1"><label className="text-sm" htmlFor="skill-local-path">技能目录</label><div className="flex gap-2"><Input id="skill-local-path" required disabled={busy} value={source.path} placeholder="/Users/you/skills/my-skill" onChange={(event) => setSource({ ...source, path: event.target.value })} /><Button type="button" variant="outline" disabled={busy} aria-label="选择技能目录" onClick={async () => { try { const path = await invoke<string | null>("choose_codex_marketplace_directory"); if (path) setSource({ kind: "local", path }); } catch (caught) { setRequestError(errorToString(caught)); } }}><FolderOpen aria-hidden="true" /></Button></div></div>
@@ -94,8 +94,8 @@ export function ClaudeSkillsPage({ workflow, coverageItem, onShowPlugins }: {
       </form>
     </CardContent></Panel> : null}
 
-    <Panel className="overflow-hidden"><PanelHead title="技能清单" action={<span className="text-xs text-muted-foreground">{current ? `${rows.length} / ${scan?.skills.length ?? 0} 项` : "清单待核对"}</span>} />
-      <div className="flex flex-wrap items-end gap-3 p-4">
+    <Panel className="hum-extension-list overflow-hidden"><PanelHead title="技能清单" action={<span className="text-xs text-muted-foreground">{current ? `${rows.length} / ${scan?.skills.length ?? 0} 项` : "清单待核对"}</span>} />
+      <div className="hum-extension-toolbar flex flex-wrap items-end gap-3 p-4">
         <label className="grid min-w-48 flex-1 gap-1 text-xs text-muted-foreground">搜索技能<Input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名称、说明或路径" /></label>
         <label className="grid gap-1 text-xs text-muted-foreground">来源<select className={selectClass} value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="all">全部来源</option><option value="managed">本应用安装</option><option value="existing">已有独立技能</option><option value="plugin">插件技能</option><option value="legacy">旧版命令</option><option value="synced">同步技能</option></select></label>
         <label className="grid gap-1 text-xs text-muted-foreground">用户调用设置<select className={selectClass} value={enableFilter} onChange={(event) => setEnableFilter(event.target.value)}><option value="all">全部状态</option><option value="inherit">未设置用户覆盖</option>{Object.entries(skillModeLabel).map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}<option value="unavailable">由所属来源管理</option><option value="unknown">无法识别用户设置</option></select></label>
@@ -130,5 +130,5 @@ export function ClaudeSkillsPage({ workflow, coverageItem, onShowPlugins }: {
   </section>;
 }
 function Detail({ label, value }: { label: string; value: string }) {
-  return <div className="min-w-0"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 whitespace-pre-wrap break-all font-mono text-xs">{value}</dd></div>;
+  return <div className="min-w-0"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 whitespace-pre-wrap break-all text-sm">{value}</dd></div>;
 }

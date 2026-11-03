@@ -79,9 +79,9 @@ export function CodexPluginList({ workflow, onShowHooks, marketplaceName, onRest
     setRequestError(await workflow.request({ kind: "plugin", pluginId: plugin.pluginId, operation }));
   }
 
-  return <section className="min-w-0" aria-label={`${marketplaceName} 的插件`} aria-busy={busy}>
+  return <section className="hum-extension-plugin-list min-w-0" aria-label={`${marketplaceName} 的插件`} aria-busy={busy}>
     {requestError ? <p className="mb-3 text-sm text-destructive" role="alert">{requestError}</p> : null}
-    <div className="mb-4 flex flex-wrap items-end gap-3">
+    <div className="hum-extension-toolbar mb-4 flex flex-wrap items-end gap-3">
       <h3 className="mr-auto text-sm font-medium">插件目录</h3>
       <div className="grid min-w-0 flex-1 basis-52 gap-1 sm:max-w-xs">
         <label className="text-xs text-muted-foreground" htmlFor={`${id}-search`}>搜索此市场</label>
@@ -110,7 +110,7 @@ export function CodexPluginList({ workflow, onShowHooks, marketplaceName, onRest
                 {plugin.details.displayName || plugin.name}<span className="mt-1 block text-xs font-normal text-muted-foreground">{open ? "收起插件详情" : "查看插件详情"}</span>
               </button>
             </TableCell>
-            <TableCell className="whitespace-normal break-all align-top text-xs"><span className="font-mono">{plugin.version || "未知"}</span><span className="mt-1 block text-muted-foreground">{plugin.installed ? "已安装版本" : "来源版本"}</span></TableCell>
+            <TableCell className="whitespace-normal break-all align-top text-xs"><span>{plugin.version || "未知"}</span><span className="mt-1 block text-muted-foreground">{plugin.installed ? "已安装版本" : "来源版本"}</span></TableCell>
             <TableCell className="whitespace-normal align-top">
               <span className="block text-sm font-medium">{plugin.installed ? "已安装" : "未安装"}</span>
               {plugin.installed ? <span className="text-sm">{plugin.readOnlyReason && plugin.defaultEnabled === null ? "未知" : pluginDefaultLabel(plugin.defaultEnabled)}</span> : null}

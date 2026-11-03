@@ -54,7 +54,7 @@ import { PathPanel } from "./components/PathPanel";
 import { SettingsPage } from "./components/SettingsPage";
 import { Shell } from "./components/Shell";
 import { ManagerDiagnostics } from "./components/ManagerDiagnostics";
-import { Panel } from "./components/ui";
+import { PageHeader, Panel } from "./components/ui";
 import { Toaster } from "../components/ui/sonner";
 import { AppUpdateToast, appUpdateToastId } from "./components/AppUpdateToast";
 import { useAppUpdate } from "./hooks/useAppUpdate";
@@ -194,11 +194,10 @@ export function App() {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    const themeColor = theme === "dark" ? "#101722" : "#e7eef8";
-
     root.dataset.theme = theme;
     root.classList.toggle("dark", theme === "dark");
     root.style.colorScheme = theme;
+    const themeColor = window.getComputedStyle(root).getPropertyValue("--background").trim();
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeColor);
 
     try {
@@ -586,6 +585,7 @@ export function App() {
           </Tabs>
         ) : (
           <div className="view-grid">
+            <PageHeader title="包管理器" />
             <ManagerTabs
               coverageIndex={coverageById}
               managerIds={state.enabledManagers}

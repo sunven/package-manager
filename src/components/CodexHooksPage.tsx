@@ -6,7 +6,6 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import { Button } from "../../components/ui/button";
-import { CardContent } from "../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import {
   hookEventLabel, hookOperation, hookSource, hookTrustLabel,
@@ -16,7 +15,7 @@ import type { CodexExtensions } from "../hooks/useCodexExtensions";
 import type { ObservationCoverageItem } from "../observationCoverage";
 import { CodexHookEditor, type HookEditorSelection } from "./CodexHookEditor";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
+import { EmptyState, PageHeader, Panel, PanelHead, SkeletonRows } from "./ui";
 
 export function CodexHooksPage({ workflow, coverageItem, onShowPlugins }: {
   workflow: CodexExtensions;
@@ -57,17 +56,17 @@ export function CodexHooksPage({ workflow, coverageItem, onShowPlugins }: {
   }
 
   return (
-    <section className="view-grid" aria-label="Codex Hooks 管理" aria-busy={busy}>
-      <Panel>
-        <PanelHead title="Codex Hooks" action={
+    <section className="view-grid hum-extension-page" aria-label="Codex Hooks 管理" aria-busy={busy}>
+      <div className="hum-extension-header">
+        <PageHeader title="Codex Hooks" description="查看事件触发的操作，维护用户 Hook 定义，并管理已信任 Hook 的启用设置。" actions={
           <div className="flex flex-wrap gap-2"><Button ref={refreshButton} disabled={blocked || Boolean(editor)} onClick={() => void workflow.refresh()} size="sm" type="button" variant="outline">
             <RefreshCw aria-hidden="true" className={scanning ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
             {scanning ? "读取中" : "刷新"}
           </Button>
           {definitions ? <Button disabled={definitionDisabled || Boolean(confirmation) || Boolean(editor)} onClick={(e) => openEditor({ action: "create" }, e.currentTarget)} size="sm" type="button"><Plus aria-hidden="true" data-icon="inline-start" />新增 Hook</Button> : null}</div>
         } />
-        <CardContent className="grid gap-2 p-4">
-          <p className="text-sm">查看事件触发的操作，维护用户 Hook 定义，并管理已信任 Hook 的启用设置。</p>
+        <div className="hum-extension-context">
+
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
             <span className="shrink-0 text-muted-foreground">Codex 目录</span>
             <code className="min-w-0 break-all">{scan?.directory || "尚未读取"}</code>
@@ -80,8 +79,8 @@ export function CodexHooksPage({ workflow, coverageItem, onShowPlugins }: {
           <p className="text-xs text-muted-foreground" role="status">
             {preparing ? "正在核对定义变更，尚未保存…" : saving ? "正在保存并重新核对设置…" : scanning ? scan ? "正在读取，暂时显示上次结果。" : "正在读取 Hooks…" : "在其他地方修改设置后，请手动刷新；保存后请在新会话中验证。"}
           </p>
-        </CardContent>
-      </Panel>
+        </div>
+      </div>
 
       {requestError ? <p className="text-sm text-destructive" role="alert">{requestError}</p> : null}
       {result ? <Alert variant={result.status === "Failed" || result.status === "Partial" ? "destructive" : "default"} role="status">
@@ -110,7 +109,7 @@ export function CodexHooksPage({ workflow, coverageItem, onShowPlugins }: {
         <AlertDescription><ul className="list-disc space-y-1 pl-4">{scan.warnings.map((warning, index) => <li className="break-words" key={index}>{warning}</li>)}</ul></AlertDescription>
       </Alert> : null}
 
-      <Panel className="overflow-hidden">
+      <Panel className="hum-extension-list overflow-hidden">
         <PanelHead title="Hooks 清单" action={<span className="text-xs text-muted-foreground">{scan?.status === "Ready" && !error && (scan.featureEnabled === true || definitions) ? "已读取 " + rows.length + " 项" : "清单待核实"}</span>} />
         {!scan && scanning ? <SkeletonRows label="正在读取 Hooks 清单" /> : rows.length ? (
           <Table className="min-w-[740px] table-fixed">
@@ -138,7 +137,7 @@ export function CodexHooksPage({ workflow, coverageItem, onShowPlugins }: {
                   </TableCell>
                   <TableCell className="whitespace-normal break-all align-top text-xs">{hookSource(hook)}{definition ? <span className="mt-1 block text-muted-foreground">{definition.source === "json" ? "hooks.json" : "config.toml"}</span> : null}</TableCell>
                   <TableCell className="whitespace-normal align-top">
-                    <p className="text-sm font-medium">{definition?.enabled === null ? "启用选择未知" : hook.enabled ? "启用" : "禁用"} · {hookTrustLabel(hook.trustStatus)}</p>
+                    <div className="hum-extension-status"><p className="text-sm font-medium">{definition?.enabled === null ? "启用选择未知" : hook.enabled ? "启用" : "禁用"}</p><p className="text-xs text-muted-foreground">{hookTrustLabel(hook.trustStatus)}</p></div>
                     {hook.readOnlyReason ? <p className="mt-1 break-words text-xs text-muted-foreground">{hook.readOnlyReason}</p> : null}
                   </TableCell>
                   <TableCell className="text-right align-top">

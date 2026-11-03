@@ -41,11 +41,11 @@ export function ProjectScanHistoryDialog({
 }) {
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="hum-project-history max-w-2xl">
         <DialogHeader>
           <DialogTitle>扫描记录</DialogTitle>
           <DialogDescription>
-            {formatHomePath(presetPath, homeDirectory)} · 当前深度 {presetDepth}
+            {formatHomePath(presetPath, homeDirectory)}，当前深度 {presetDepth}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-2">
@@ -59,7 +59,7 @@ export function ProjectScanHistoryDialog({
             </Alert>
           ) : null}
           {records.length ? (
-            <div className="grid max-h-[60vh] gap-2 overflow-y-auto pr-1">
+            <div className="hum-project-history-list grid max-h-[60vh] gap-4 overflow-y-auto pr-1">
               {records.map((record) => (
                 <ScanRecordCard
                   baselineVisible={record.baseline
@@ -101,7 +101,7 @@ function ScanRecordCard({
   const delta = projectDelta(record);
   const projectTypeSum = record.projects.rust + record.projects.node + record.projects.maven;
   return (
-    <div className="grid gap-2 rounded-lg border bg-muted/20 p-3">
+    <div className="hum-project-history-entry grid gap-3 rounded-2xl bg-muted/20 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{formatScanTime(record.finishedAt)}</span>
@@ -114,7 +114,7 @@ function ScanRecordCard({
           ) : null}
         </div>
         <span className="text-xs text-muted-foreground">
-          项目 {record.projects.total} · 候选 {record.candidates.total}
+          项目 {record.projects.total}，候选 {record.candidates.total}
         </span>
       </div>
 
@@ -122,14 +122,14 @@ function ScanRecordCard({
         <span>
           发现项目 {record.projects.total}
           {record.projects.total
-            ? `（Rust ${record.projects.rust} · Node ${record.projects.node} · Maven ${record.projects.maven}）`
+            ? `（Rust ${record.projects.rust}，Node ${record.projects.node}，Maven ${record.projects.maven}）`
             : ""}
           {projectTypeSum > record.projects.total ? "；部分目录同时包含多种项目标记" : ""}
         </span>
         <span>
           候选 {record.candidates.total}
           {record.candidates.total
-            ? `（Rust ${record.candidates.rustTarget} · Maven ${record.candidates.mavenTarget} · Node ${record.candidates.nodeModules}）`
+            ? `（Rust ${record.candidates.rustTarget}，Maven ${record.candidates.mavenTarget}，Node ${record.candidates.nodeModules}）`
             : ""}
         </span>
         {record.discovery.skipped > 0 ? (
@@ -138,10 +138,10 @@ function ScanRecordCard({
       </div>
 
       {record.baseline ? (
-        <div className="grid gap-1 rounded-md border bg-background/60 p-2 text-xs">
+        <div className="hum-project-history-comparison grid gap-2 p-2 text-xs">
           <span className="text-muted-foreground">
-            比较基线 {formatScanTime(record.baseline.finishedAt)} · 项目{" "}
-            {record.baseline.projects.total} · 候选 {record.baseline.candidates.total}
+            比较基线 {formatScanTime(record.baseline.finishedAt)}，项目{" "}
+            {record.baseline.projects.total}，候选 {record.baseline.candidates.total}
             {baselineVisible ? "" : "（基线记录已不在列表中）"}
           </span>
           {record.changes === null ? (

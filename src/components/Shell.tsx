@@ -1,8 +1,9 @@
+import { useId, useRef, useState } from "react";
 import {
+  CaretDown,
   Chats as MessagesSquare,
   ClockCounterClockwise,
   Code as Code2,
-  Cube,
   Gear as Settings,
   House,
   Moon,
@@ -12,6 +13,7 @@ import {
   TerminalWindow,
   Trash as Trash2,
 } from "@phosphor-icons/react";
+import { Button } from "../../components/ui/button";
 
 type ViewId = "health" | "history" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings";
 
@@ -66,6 +68,11 @@ export function Shell({
   theme: "dark" | "light";
   managerCount?: number;
 }) {
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const navigationId = useId();
+  const navigationToggle = useRef<HTMLButtonElement>(null);
+  const activeLabel = [...observeViews, ...maintainViews, ...extensionViews]
+    .find((view) => view.id === activeView)?.label ?? "设置";
   const handlers: Record<ViewId, () => void> = {
     health: onShowHealth,
     history: onShowHistory,
@@ -101,7 +108,6 @@ export function Shell({
         {search}
         <div className="studio-top-actions">
           <p className="studio-online" data-scanning={scanning}>
-            <span aria-hidden="true" />
             {scanning ? "扫描中" : "按需扫描"}
           </p>
           <div aria-label="主题" className="studio-theme" role="group">
@@ -118,17 +124,48 @@ export function Shell({
       </header>
 
       <div className="studio-body">
-        <aside className="studio-sidebar">
+        <aside
+          className="studio-sidebar"
+          onKeyDown={(event) => {
+            if (navigationOpen && event.key === "Escape") {
+              setNavigationOpen(false);
+              navigationToggle.current?.focus();
+            }
+          }}
+        >
           <div className="studio-brand">
             <span aria-hidden="true" className="studio-logo">
-              <Cube weight="duotone" />
+              cu
             </span>
             <div className="studio-brand-copy">
               <span className="studio-brand-name">Clean Up</span>
               <p>本机开发环境观察台</p>
             </div>
           </div>
-          <nav aria-label="主导航" className="studio-nav">
+          <Button
+            aria-controls={navigationId}
+            aria-expanded={navigationOpen}
+            aria-label={`页面导航，当前：${activeLabel}`}
+            className="studio-nav-toggle"
+            onClick={() => setNavigationOpen((open) => !open)}
+            ref={navigationToggle}
+            type="button"
+            variant="outline"
+          >
+            <span>{activeLabel}</span>
+            <span className="studio-nav-toggle-hint">切换页面</span>
+            <CaretDown aria-hidden="true" />
+          </Button>
+          <nav
+            aria-label="主导航"
+            className="studio-nav"
+            data-expanded={navigationOpen}
+            id={navigationId}
+            onClick={() => {
+              setNavigationOpen(false);
+              if (navigationOpen) navigationToggle.current?.focus();
+            }}
+          >
             <div className="studio-nav-group">
               <p className="studio-nav-label">观察</p>
               {renderViews(observeViews)}

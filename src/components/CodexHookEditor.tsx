@@ -94,7 +94,7 @@ export function CodexHookEditor({ selection, definitions, workflow, onClose, onR
   }
 
   return <Dialog open onOpenChange={(open) => { if (!open && !processing) close(); }}>
-    <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-3xl overflow-y-auto" showCloseButton={!processing} onInteractOutside={(event) => event.preventDefault()}
+    <DialogContent className="hum-extension-editor max-h-[calc(100dvh-2rem)] max-w-3xl overflow-y-auto" showCloseButton={!processing} onInteractOutside={(event) => event.preventDefault()}
       onCloseAutoFocus={(event) => { event.preventDefault(); onRestoreFocus(); }}>
       <DialogHeader>
         <DialogTitle>{title}</DialogTitle>
@@ -113,7 +113,7 @@ export function CodexHookEditor({ selection, definitions, workflow, onClose, onR
         </AlertDescription>
       </Alert> : null}
 
-      {preview ? <div className="grid min-w-0 gap-4">
+      {preview ? <div className="hum-extension-detail grid min-w-0 gap-4">
         <div className="text-xs"><span className="text-muted-foreground">保存位置</span><code className="mt-1 block break-all">{preview.sourcePath}</code></div>
         {preview.enabled !== null ? <p className="text-sm">保存后的启用选择：<strong>{preview.enabled ? "启用" : "禁用"}</strong>；信任仍需在 Codex 审查。</p> : null}
         <div className={"grid min-w-0 gap-3" + (preview.before && preview.after ? " sm:grid-cols-2" : "")}>
@@ -137,7 +137,7 @@ export function CodexHookEditor({ selection, definitions, workflow, onClose, onR
             else if (result) setError(result.message);
           }}>{processing ? "正在保存…" : deleting ? "确认删除" : "确认保存"}</Button>
         </DialogFooter>
-      </div> : <form className="grid min-w-0 gap-4" onSubmit={(event) => { event.preventDefault(); void prepare(); }}>
+      </div> : <form className="hum-extension-form grid min-w-0 gap-4" onSubmit={(event) => { event.preventDefault(); void prepare(); }}>
         {deleting ? <pre className={rawText}>{JSON.stringify({ event: basis?.event, matcher: basis?.matcher, handler: original }, null, 2)}</pre> : <fieldset disabled={processing} className="grid min-w-0 gap-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="保存位置"><select className={control} required value={source} disabled={Boolean(definition)} onChange={(event) => setSource(event.target.value as HookSourceFormat)}>

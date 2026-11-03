@@ -7,7 +7,6 @@ import { DevelopmentHealthPage } from "./DevelopmentHealthPage";
 import { EmptyState, PageHeader, StatCard } from "./ui";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
-import { ArrowUpRight } from "@phosphor-icons/react";
 
 export function OverviewDashboard({ health, coverage, homeDirectory, scanningAll, maintenanceBusy, onRefreshAll, onOpenManager, onOpenView, onOpenCoverage }: {
   health: DevelopmentHealthSummary;
@@ -31,40 +30,39 @@ export function OverviewDashboard({ health, coverage, homeDirectory, scanningAll
           </Button>
         }
       />
+      <div className="overview-summary">
       <div className="stat-grid grid-cols-1 sm:grid-cols-3">
         <StatCard label="已扫描／已启用管理器" value={`${health.scannedManagerCount} / ${health.enabledManagerCount}`} />
         <StatCard label="包、版本与资源条目" value={health.scannedManagerCount ? String(health.totalPackages) : "—"} />
         <StatCard label="未扫描管理器" value={String(health.enabledManagerCount - health.scannedManagerCount)} />
       </div>
       <section aria-label="已启用管理器" className="manager-inventory">
-        <span className="manager-inventory-label">已启用管理器</span>
+        <h2 className="manager-inventory-label">已启用管理器</h2>
         <div className="manager-inventory-grid">
           {health.managerStatuses.map((status) => (
             <button
               className="manager-token"
               key={status.managerId}
               onClick={() => onOpenManager(status.managerId)}
-              title={`${managerLabel(status.managerId)} · ${statusLabels[status.status]}${status.status === "Not scanned" ? "" : ` · ${status.packageCount} 项`}`}
+              title={`${managerLabel(status.managerId)}，${statusLabels[status.status]}${status.status === "Not scanned" ? "" : `，${status.packageCount} 项`}`}
               type="button"
             >
               <ManagerMark id={status.managerId} />
               <span>{managerLabel(status.managerId)}</span>
-              <span aria-hidden="true" className="status-dot size-2" data-status={status.status} />
             </button>
           ))}
         </div>
       </section>
-      <Card className="gap-0 py-0">
+      </div>
         <div className="overview-board">
           <DevelopmentHealthPage health={health} homeDirectory={homeDirectory} onOpenManager={onOpenManager} />
           <StorageSection health={health} homeDirectory={homeDirectory} onOpenManager={onOpenManager} />
         </div>
-      </Card>
       <div className="overview-lower">
         <Card className="gap-0 py-0">
           <div className="overview-section-head">
             <h2>观察覆盖度</h2>
-            <Button aria-label="查看观察覆盖度" size="sm" variant="ghost" onClick={onOpenCoverage} type="button">查看详情<ArrowUpRight data-icon="inline-end" /></Button>
+            <Button aria-label="查看观察覆盖度" size="sm" variant="ghost" onClick={onOpenCoverage} type="button">查看详情</Button>
           </div>
           <CardContent className="overview-section-body">
             <dl className="fact-list">
@@ -80,7 +78,7 @@ export function OverviewDashboard({ health, coverage, homeDirectory, scanningAll
                   coverage.summary.unavailable ? `不可用 ${coverage.summary.unavailable}` : null,
                   coverage.summary.invalidated ? `已失效 ${coverage.summary.invalidated}` : null,
                   coverage.summary.scopeChanged ? `范围变化 ${coverage.summary.scopeChanged}` : null,
-                ].filter(Boolean).join(" · ")}
+                ].filter(Boolean).join("，")}
               </p>
               : null}
             <p className="text-xs text-muted-foreground">未观察的来源不会被当作空清单，也不代表没有内容。</p>
@@ -138,7 +136,7 @@ function StorageSection({ health, homeDirectory, onOpenManager }: {
                   <button className="storage-row w-full text-left" onClick={() => onOpenManager(item.managerId)} type="button">
                     <span aria-hidden="true" className="storage-swatch" style={{ opacity: opacities[index] ?? 0.3 }} />
                     <span className="storage-row-copy">
-                      <strong>{managerLabel(item.managerId)} · {item.label}</strong>
+                      <strong>{managerLabel(item.managerId)}，{item.label}</strong>
                       <code>{formatHomePath(item.path, homeDirectory)}</code>
                     </span>
                     <span className="storage-row-value">{item.incomplete ? "已测下限 ≥ " : ""}{formatBytes(item.bytes)}</span>

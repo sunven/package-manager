@@ -14,7 +14,7 @@ export function DevelopmentHealthPage({
   onOpenManager: (managerId: ManagerId) => void;
 }) {
   return (
-    <section aria-labelledby="overview-recommendations-title" className="overview-board-section">
+    <section aria-labelledby="overview-recommendations-title" className="overview-board-section hum-recommendations">
       <div className="overview-section-head">
         <h2 id="overview-recommendations-title">优先建议</h2>
         <span>{health.recommendations.length} 项</span>
@@ -42,8 +42,9 @@ function RecommendationRow({
   recommendation: HealthRecommendation;
 }) {
   return (
-    <div className="studio-rec">
+    <div className="studio-rec hum-recommendation">
       <div>
+        <h3 className="hum-recommendation-title">{recommendation.title}</h3>
         <div className="studio-rec-meta">
           <ToneBadge tone={recommendation.tone} />
           <span>{managerLabel(recommendation.managerId)}</span>
@@ -51,7 +52,6 @@ function RecommendationRow({
           {recommendation.bytes ? <span>{formatBytes(recommendation.bytes)}</span> : null}
           {recommendation.count ? <span>{recommendation.count} 项</span> : null}
         </div>
-        <p>{recommendation.title}</p>
       </div>
       {/* Navigates only. Execution stays on the manager tab, beside the cache
           path and its measured size — the figures that justify confirming. */}

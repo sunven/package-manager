@@ -22,13 +22,13 @@ export function SettingsPage({
   const enabledSet = new Set(enabledManagers);
 
   return (
-    <main className="view-grid">
+    <main className="view-grid hum-settings-page">
       <PageHeader
         title="设置"
         description="选择要显示和扫描的包管理器，不会安装或卸载它们。至少保留一个已启用管理器。"
       />
       <p className="sr-only" id="manager-settings-help">选择要显示和扫描的包管理器，不会安装或卸载它们。至少保留一个已启用管理器。</p>
-      <Panel className="overflow-hidden">
+      <Panel className="hum-settings-managers overflow-hidden">
         <PanelHead
           action={
             <span className="whitespace-nowrap text-xs text-muted-foreground">
@@ -37,7 +37,7 @@ export function SettingsPage({
           }
           title="启用的包管理器"
         />
-        <div className="grid grid-cols-1 gap-px bg-border min-[720px]:grid-cols-2 min-[1100px]:grid-cols-3">
+        <div className="hum-settings-manager-grid grid grid-cols-1 min-[720px]:grid-cols-2 min-[1100px]:grid-cols-3">
           {managerOrder.map((managerId) => {
             const enabled = enabledSet.has(managerId);
             const locked = managerId === lockedManager || (enabled && enabledManagers.length === 1);
@@ -47,9 +47,11 @@ export function SettingsPage({
 
             return (
               <label
-                className={`grid min-h-10 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-card px-4 py-3 transition-colors ${
+                className={`hum-settings-manager grid min-h-10 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-4 ${
                   locked ? "cursor-not-allowed" : "cursor-pointer hover:bg-muted/60"
                 }`}
+                data-enabled={enabled}
+                data-locked={locked}
                 key={managerId}
               >
                 <span className="grid min-w-0 gap-1">
@@ -71,19 +73,21 @@ export function SettingsPage({
           })}
         </div>
       </Panel>
-      <Panel>
-        <PanelHead title="扫描与留存" />
-        <div className="grid gap-3 p-4">
-          <dl className="fact-list fact-list--columns">
-            <div className="fact-row"><dt>扫描方式</dt><dd>按需扫描，不做后台自动刷新</dd></div>
-            <div className="fact-row"><dt>启动时</dt><dd>仅扫描首个已启用管理器</dd></div>
-            <div className="fact-row"><dt>历史快照</dt><dd>每个管理器保留最近 20 份</dd></div>
-            <div className="fact-row"><dt>维护记录</dt><dd>保留最近 500 条已关闭记录</dd></div>
-          </dl>
-          <p className="text-xs text-muted-foreground">切换启用状态后，进入对应管理器或手动刷新即可读取；历史只读，不构成撤销或维护授权。</p>
-        </div>
-      </Panel>
-      <AppUpdatePanel {...appUpdate} />
+      <div className="hum-settings-details grid min-w-0 gap-6">
+        <Panel>
+          <PanelHead title="扫描与留存" />
+          <div className="grid gap-3 p-4">
+            <dl className="fact-list fact-list--columns">
+              <div className="fact-row"><dt>扫描方式</dt><dd>按需扫描，不做后台自动刷新</dd></div>
+              <div className="fact-row"><dt>启动时</dt><dd>仅扫描首个已启用管理器</dd></div>
+              <div className="fact-row"><dt>历史快照</dt><dd>每个管理器保留最近 20 份</dd></div>
+              <div className="fact-row"><dt>维护记录</dt><dd>保留最近 500 条已关闭记录</dd></div>
+            </dl>
+            <p className="text-xs text-muted-foreground">切换启用状态后，进入对应管理器或手动刷新即可读取；历史只读，不构成撤销或维护授权。</p>
+          </div>
+        </Panel>
+        <AppUpdatePanel {...appUpdate} />
+      </div>
     </main>
   );
 }

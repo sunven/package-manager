@@ -52,7 +52,7 @@ export function GlobalSearch({ managers, snapshots, scanStates, homeDirectory, b
   }, [selected]);
   function choose(target: SearchTarget) { navigating.current = true; setOpen(false); onLocate(target); }
   return <>
-    <Button variant="outline" size="sm" onClick={show} aria-label="跨管理器搜索" type="button"><MagnifyingGlass aria-hidden="true" />搜索<span className="ml-2 text-xs text-muted-foreground">⌘K</span></Button>
+    <Button className="hum-global-search" variant="outline" size="sm" onClick={show} aria-label="跨管理器搜索" type="button"><MagnifyingGlass aria-hidden="true" />搜索<span className="ml-2 text-xs text-muted-foreground">⌘K</span></Button>
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-w-2xl gap-3" onCloseAutoFocus={(event) => { event.preventDefault(); if (!navigating.current) opener.current?.focus(); }}>
         <DialogTitle>跨管理器搜索</DialogTitle>
@@ -68,7 +68,7 @@ export function GlobalSearch({ managers, snapshots, scanStates, homeDirectory, b
             } else if (event.key === "Enter" && visible[selected]) { event.preventDefault(); choose(visible[selected]); }
           }} />
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span role="status">已读取 {scanned.length}/{managers.length} 个管理器 · {results.length} 个结果{incomplete.length ? ` · ${incomplete.length} 个管理器存在缺失或读取异常` : ""}</span>
+          <span role="status">已读取 {scanned.length}/{managers.length} 个管理器，{results.length} 个结果{incomplete.length ? `，${incomplete.length} 个管理器存在缺失或读取异常` : ""}</span>
           <Button variant="ghost" size="sm" disabled={busy} onClick={onRefresh}>扫描全部已启用管理器</Button>
         </div>
         <div id="manager-search-results" role="listbox" aria-label="搜索结果" ref={list} className="max-h-[45vh] overflow-y-auto overscroll-contain rounded-lg border">
@@ -76,10 +76,10 @@ export function GlobalSearch({ managers, snapshots, scanStates, homeDirectory, b
             key={`${result.key}:${index}`} id={`manager-search-result-${index}`} data-result-index={index} type="button" role="option" aria-selected={selected === index} tabIndex={-1}
             onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index)} onClick={() => choose(result)}
             className={`flex w-full flex-col gap-1 border-b p-3 text-left last:border-b-0 ${selected === index ? "bg-accent text-accent-foreground" : "hover:bg-muted"}`}>
-            <span className="flex flex-wrap items-baseline justify-between gap-2"><strong className="break-all text-sm">{result.name}</strong><span className="text-xs text-muted-foreground">{managerLabels[result.managerId]} · {result.kind === "path" ? "目录" : result.managerId === "Nvm" ? "Node 版本" : packageKindLabels[result.objectKind as PackageKind] ?? "包"}</span></span>
+            <span className="flex flex-wrap items-baseline justify-between gap-2"><strong className="break-all text-sm">{result.name}</strong><span className="text-xs text-muted-foreground">{managerLabels[result.managerId]}，{result.kind === "path" ? "目录" : result.managerId === "Nvm" ? "Node 版本" : packageKindLabels[result.objectKind as PackageKind] ?? "包"}</span></span>
             {result.version ? <span className="break-all text-xs">{result.version}</span> : null}
             {result.path ? <code className="break-all text-xs text-muted-foreground">{formatHomePath(result.path, homeDirectory)}</code> : null}
-            <span className="text-xs text-muted-foreground">{scanStates[result.managerId]?.scannedAt ? new Date(scanStates[result.managerId]!.scannedAt!).toLocaleString() : "观察时间未知"}{scanStates[result.managerId]?.error ? " · 最近扫描有异常" : ""}</span>
+            <span className="text-xs text-muted-foreground">{scanStates[result.managerId]?.scannedAt ? new Date(scanStates[result.managerId]!.scannedAt!).toLocaleString() : "观察时间未知"}{scanStates[result.managerId]?.error ? "，最近扫描有异常" : ""}</span>
           </button>)}
         </div>
         {results.length > limit ? <Button variant="outline" onClick={() => setLimit(limit + 50)}>继续加载（已显示 {limit}/{results.length}）</Button> : null}

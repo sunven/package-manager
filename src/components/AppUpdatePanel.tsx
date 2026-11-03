@@ -56,7 +56,7 @@ export function AppUpdatePanel({ view, onCheck, onDownload, onSkip }: AppUpdateP
   const primary = canDownload ? onDownload : onCheck;
 
   return (
-    <Panel className="overflow-hidden">
+    <Panel className="hum-settings-update overflow-hidden">
       <PanelHead
         action={
           <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
@@ -65,7 +65,7 @@ export function AppUpdatePanel({ view, onCheck, onDownload, onSkip }: AppUpdateP
         }
         title="软件更新"
       />
-      <div className="grid gap-3 px-4 py-4">
+      <div className="hum-update-body grid gap-4 px-4 py-4">
         <p
           aria-live="polite"
           className={view.phase === "failed" ? "break-words text-sm text-destructive" : "break-words text-sm text-muted-foreground"}
@@ -83,13 +83,13 @@ export function AppUpdatePanel({ view, onCheck, onDownload, onSkip }: AppUpdateP
             role="progressbar"
           >
             <div
-              className={view.progress === null ? "h-full w-1/3 animate-pulse rounded-full bg-primary" : "h-full rounded-full bg-primary transition-[width]"}
+              className={view.progress === null ? "h-full w-1/3 animate-pulse rounded-full bg-primary" : "h-full rounded-full bg-primary"}
               style={view.progress === null ? undefined : { width: `${view.progress}%` }}
             />
           </div>
         ) : null}
         {view.availableVersion && view.notes ? (
-          <div className="max-h-56 overflow-auto rounded-lg border bg-muted/40 px-3 py-2 text-sm leading-6 text-muted-foreground [&_a]:underline [&_h1]:mt-2 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:mt-2">
+          <div className="hum-update-notes max-h-56 overflow-auto rounded-lg bg-muted/40 px-4 py-4 text-sm leading-6 [&_a]:underline [&_h1]:mt-2 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_p]:mt-2">
             <ReactMarkdown>{view.notes}</ReactMarkdown>
           </div>
         ) : null}

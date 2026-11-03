@@ -11,7 +11,7 @@ import type { ClaudeCodeState } from "../hooks/useClaudeCode";
 import type { ObservationCoverageItem } from "../observationCoverage";
 import { errorToString } from "../utils/format";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
+import { EmptyState, PageHeader, Panel, PanelHead, SkeletonRows } from "./ui";
 
 const control = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 disabled:opacity-50";
 
@@ -75,14 +75,14 @@ export function ClaudeMarketplacesPage({ state, coverage, onShowHooks, focusedPl
     ? isMarketOperation(confirmation.request.operation) ? marketScan?.snapshotId : pluginScan?.snapshotId
     : null;
 
-  return <section className="grid gap-4" aria-label="Claude Code 插件市场">
-    <Panel><PanelHead title="Claude Code 插件市场" action={<Button ref={readButton} disabled={operating || choosing} onClick={() => void state.refresh("marketplaces")} variant="outline" size="sm"><ArrowsClockwise aria-hidden="true" data-icon="inline-start" />{operating ? "正在处理…" : "重新读取"}</Button>} />
-      <div className="grid gap-3 p-4 text-sm">
-        <p>展开市场，浏览插件、查看详情并管理当前用户的安装与启用选择。</p>
+  return <section className="view-grid hum-extension-page" aria-label="Claude Code 插件市场">
+    <div className="hum-extension-header"><PageHeader title="Claude Code 插件市场" description="展开市场，浏览插件、查看详情并管理当前用户的安装与启用选择。" actions={<Button ref={readButton} disabled={operating || choosing} onClick={() => void state.refresh("marketplaces")} variant="outline" size="sm"><ArrowsClockwise aria-hidden="true" data-icon="inline-start" />{operating ? "正在处理…" : "重新读取"}</Button>} />
+      <div className="hum-extension-context">
+
         <dl className="meta-list">
           <div className="meta-row">
             <dt>Claude Code 目录</dt>
-            <dd><code>{directory ?? "尚未读取"}</code>{version ? <span> · CLI {version}</span> : null}</dd>
+            <dd><code>{directory ?? "尚未读取"}</code>{version ? <span className="block">CLI {version}</span> : null}</dd>
           </div>
         </dl>
         <p className="text-xs text-muted-foreground">更新市场目录后，可单独更新已安装插件。插件变更请在 Claude 中重新加载或开启新会话验证。</p>
@@ -93,9 +93,9 @@ export function ClaudeMarketplacesPage({ state, coverage, onShowHooks, focusedPl
         {writeBlockedReason ? <Alert><AlertDescription>{writeBlockedReason}</AlertDescription></Alert> : null}
         {focusedPluginId && pluginScan && !pluginsScanning && !pluginScan.plugins.some((plugin) => plugin.id === focusedPluginId) ? <Alert><AlertDescription className="break-words">当前市场清单未找到插件 {focusedPluginId}。请重新读取；若仍未找到，请回该技能的原来源维护。</AlertDescription></Alert> : null}
       </div>
-    </Panel>
+    </div>
     <Panel><PanelHead title="市场" action={<Button disabled={marketBlocked} size="sm" onClick={() => setAdding(true)}><Plus aria-hidden="true" data-icon="inline-start" />添加市场</Button>} />
-      {adding ? <form className="grid gap-3 border-b p-4" onSubmit={(event) => {
+      {adding ? <form className="hum-extension-form grid gap-3 border-b p-4" onSubmit={(event) => {
         event.preventDefault(); if (!marketScan?.snapshotId) return;
         trigger.current = event.currentTarget.querySelector('button[type="submit"]');
         setConfirmation({ request: { snapshotId: marketScan.snapshotId, operation: "AddMarket", source: source.trim(), sourceKind,
@@ -173,15 +173,15 @@ function ClaudePluginRows({ plugins, blocked, onAction, onShowHooks, focusedPlug
     if (expanded === focusedPluginId) { focusedButton.current?.focus(); focusedButton.current?.scrollIntoView?.({ block: "nearest" }); }
   }, [expanded, focusedPluginId]);
   const visible = plugins.filter((plugin) => (filter === "all" || plugin.installed === (filter === "installed")) && `${plugin.name} ${plugin.details.description ?? ""}`.toLowerCase().includes(query.toLowerCase()));
-  return <div className="grid gap-3 py-2">
-    <div className="flex flex-wrap items-end justify-between gap-3"><h3 className="text-sm font-semibold">插件目录</h3><div className="flex flex-wrap items-end gap-3">
+  return <div className="hum-extension-plugin-list grid gap-3 py-2">
+    <div className="hum-extension-toolbar flex flex-wrap items-end justify-between gap-3"><h3 className="text-sm font-semibold">插件目录</h3><div className="flex flex-wrap items-end gap-3">
       <label className="grid gap-1 text-xs">搜索此市场<Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="名称或简介" /></label>
       <label className="grid gap-1 text-xs">安装状态<select className={control} value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">全部</option><option value="installed">已安装</option><option value="available">未安装</option></select></label>
     </div></div>
     {visible.length ? <Table className="min-w-[660px] table-fixed"><TableHeader><TableRow><TableHead className="w-[25%]">插件</TableHead><TableHead className="w-[15%]">安装版本</TableHead><TableHead className="w-[24%]">用户安装与启用</TableHead><TableHead className="w-[36%] text-right">操作</TableHead></TableRow></TableHeader><TableBody>
       {visible.map((plugin) => <Fragment key={plugin.id}><TableRow>
         <TableCell className="whitespace-normal break-all align-top"><button ref={plugin.id === focusedPluginId ? focusedButton : undefined} className="text-left font-medium text-primary underline-offset-4 hover:underline" aria-expanded={expanded === plugin.id} onClick={() => setExpanded(expanded === plugin.id ? null : plugin.id)}>{plugin.name}<span className="mt-1 block text-xs font-normal">{expanded === plugin.id ? "收起详情" : "查看详情"}</span></button></TableCell>
-        <TableCell className="whitespace-normal break-all align-top font-mono text-xs">{plugin.version ?? "未安装"}</TableCell>
+        <TableCell className="whitespace-normal break-all align-top text-sm">{plugin.version ?? "未安装"}</TableCell>
         <TableCell className="whitespace-normal align-top"><p>{plugin.installed ? "已安装" : "未在用户范围安装"}</p>{plugin.installed ? <p className="mt-1 text-xs text-muted-foreground">{plugin.userEnabled === null ? `用户未显式设置；当前配置${plugin.enabled ? "启用" : "禁用"}` : plugin.userEnabled ? "用户选择启用" : "用户选择禁用"}</p> : null}</TableCell>
         <TableCell className="whitespace-normal align-top">{plugin.readOnlyReason ? <p className="text-xs text-muted-foreground">{plugin.readOnlyReason}</p> : <div className="flex flex-wrap justify-end gap-1">
           {(plugin.installed ? [plugin.enabled ? "Disable" : "Enable", "Update", "Uninstall"] as const : ["Install"] as const).map((operation) => <Button key={operation} variant="outline" size="sm" disabled={blocked} aria-label={`${claudeOperationLabel[operation]} ${plugin.id}`} onClick={(e) => onAction(operation, plugin.id, e.currentTarget)}>{claudeOperationLabel[operation]}</Button>)}

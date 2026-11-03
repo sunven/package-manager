@@ -172,7 +172,7 @@ export function ProjectCleanupPage({
   };
 
   return (
-    <main className="view-grid">
+    <main className="view-grid hum-project-page">
       <PageHeader
         title="项目清理"
         description="从扫描根目录递归发现 Rust / Maven / Node 项目的派生构建产物；清理在确认后执行。"
@@ -196,9 +196,9 @@ export function ProjectCleanupPage({
         </Alert>
       ) : null}
 
-      <Panel>
-        <div className="flex flex-wrap items-center gap-2 p-2.5">
-          <span className="shrink-0 text-sm font-medium">扫描范围</span>
+      <Panel className="hum-project-scope">
+        <PanelHead title="扫描范围" />
+        <div className="hum-project-scope-form flex flex-wrap items-center gap-3 p-4">
           {view.settings.phase === "loading" ? (
             <Skeleton className="h-9 min-w-0 flex-1" />
           ) : (
@@ -217,7 +217,7 @@ export function ProjectCleanupPage({
                   <CaretDown aria-hidden="true" className="shrink-0 text-muted-foreground" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent className="min-w-72 max-w-[calc(100vw-2rem)]">
+              <DropdownMenuContent className="min-w-72 max-w-[calc(100dvi-2rem)]">
                 <DropdownMenuRadioGroup
                   value={view.settings.activePresetId ?? ""}
                   onValueChange={(id) => void workflow.selectPreset(id).then((outcome) => report(outcome, "无法切换目录预设"))}
@@ -225,9 +225,14 @@ export function ProjectCleanupPage({
                   {view.settings.presets.map((preset) => {
                     const latest = latestRecordForDepth(view.history.byPreset[preset.id] ?? [], preset.maxDepth);
                     return (
-                      <DropdownMenuRadioItem key={preset.id} value={preset.id}>
+                      <DropdownMenuRadioItem
+                        aria-label={`${formatHomePath(preset.path, homeDirectory)} · 深度 ${preset.maxDepth} ${presetHistoryLabel(view.history, latest)}`}
+                        key={preset.id}
+                        value={preset.id}
+                      >
                         <div className="flex min-w-0 flex-col gap-0.5 whitespace-normal">
-                          <span className="break-all">{formatHomePath(preset.path, homeDirectory)} · 深度 {preset.maxDepth}</span>
+                          <span className="break-all">{formatHomePath(preset.path, homeDirectory)}</span>
+                          <span className="text-xs text-muted-foreground">深度 {preset.maxDepth}</span>
                           <span className="text-xs text-muted-foreground">{presetHistoryLabel(view.history, latest)}</span>
                         </div>
                       </DropdownMenuRadioItem>
@@ -277,6 +282,8 @@ export function ProjectCleanupPage({
             <RefreshCw data-icon="inline-start" />
             扫描项目目录
           </Button>
+        </div>
+        <div className="hum-project-tools flex flex-wrap items-center gap-2 px-4 pb-4">
           <Button
             className="shrink-0"
             disabled={!view.settings.rootId || scanBusy || batchRunning}
@@ -299,8 +306,6 @@ export function ProjectCleanupPage({
             <FolderOpen data-icon="inline-start" />
             添加目录预设
           </Button>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
           {view.settings.activePresetId ? <Button disabled={settingsBusy || scanBusy || Boolean(view.batch)} variant="outline" size="sm" type="button" onClick={() => void workflow.removePreset(view.settings.activePresetId!).then((outcome) => report(outcome, "无法移除目录预设"))}>移除当前预设（不删除目录）</Button> : null}
           <span className="text-xs text-muted-foreground">预设只保存扫描根目录和深度，切换后需要重新扫描。</span>
         </div>
@@ -314,28 +319,26 @@ export function ProjectCleanupPage({
             otherDepthCount={otherDepthCount}
           />
         ) : null}
-        <p className="px-3 pb-3 text-xs text-muted-foreground" id="project-cleanup-depth-range">扫描深度为 0–32 的整数；0 只检查根目录，每增加 1 多检查一层子目录。</p>
+        <p className="px-4 pb-4 text-xs text-muted-foreground" id="project-cleanup-depth-range">扫描深度为 0 到 32 的整数；0 只检查根目录，每增加 1 多检查一层子目录。</p>
         {!depthValid ? <p className="px-3 pb-3 text-sm text-destructive" role="alert">请输入 0 到 32 之间的整数，再保存深度。</p> : null}
         {view.settings.rootMessage ? <Alert><AlertTitle>扫描目录不可用</AlertTitle><AlertDescription>{view.settings.rootMessage}。目录恢复后可重新选择此预设验证。</AlertDescription></Alert> : null}
       </Panel>
 
       <ProjectDataScanNotice view={view} />
 
-      <Panel className="overflow-hidden">
+      <Panel className="hum-project-results overflow-hidden">
         <PanelHead
-          action={
-            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span>{visibleCandidates.length} 项</span>
-              <span>已验证 <strong className="font-medium tabular-nums text-foreground">{formatBytes(view.totals.verifiedBytes)}</strong></span>
-              <span>待复核 {view.totals.reviewCount} 项 <strong className="font-medium tabular-nums text-foreground">{formatBytes(view.totals.reviewBytes)}</strong></span>
-              <span>已选择 {view.totals.selectedCount} 项 <strong className="font-medium tabular-nums text-foreground">{formatBytes(view.totals.selectedBytes)}</strong></span>
-              <span>本轮已清理 <strong className="font-medium tabular-nums text-foreground">{formatBytes(view.totals.cleanedBytes)}</strong></span>
-            </div>
-          }
+          action={<span className="text-xs text-muted-foreground">{visibleCandidates.length} 项</span>}
           title="扫描结果"
         />
+        <dl className="hum-project-totals grid grid-cols-2 gap-4 p-4 lg:grid-cols-4">
+          <div><dt className="text-xs text-muted-foreground">已验证</dt><dd className="font-medium tabular-nums">{formatBytes(view.totals.verifiedBytes)}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">待复核 {view.totals.reviewCount} 项</dt><dd className="font-medium tabular-nums">{formatBytes(view.totals.reviewBytes)}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">已选择 {view.totals.selectedCount} 项</dt><dd className="font-medium tabular-nums">{formatBytes(view.totals.selectedBytes)}</dd></div>
+          <div><dt className="text-xs text-muted-foreground">本轮已清理</dt><dd className="font-medium tabular-nums">{formatBytes(view.totals.cleanedBytes)}</dd></div>
+        </dl>
         <div className="flex flex-col gap-2">
-          <div className="border-b p-2">
+          <div className="hum-project-kind border-b p-4">
             <ToggleGroup
               aria-label="候选类型"
               onValueChange={(value) => {
@@ -358,7 +361,7 @@ export function ProjectCleanupPage({
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 border-b p-2">
+          <div className="hum-project-result-tools flex flex-wrap items-center gap-2 border-b p-4">
             <Input
               aria-label="搜索项目或目录路径"
               className="min-w-56 flex-1"
@@ -585,7 +588,7 @@ function ProjectScanSummary({
     } else {
       parts.push("首次可比较扫描，暂无基线");
     }
-    text = parts.join(" · ");
+    text = parts.join("，");
   }
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-3 py-2 text-xs text-muted-foreground">
@@ -616,14 +619,14 @@ function presetHistoryLabel(
   if (!latest) return "当前深度未扫描";
   const changes = latest.changes
     ? latest.changes.added.length || latest.changes.removed.length
-      ? ` · +${latest.changes.added.length}/−${latest.changes.removed.length}`
-      : " · 候选无变化"
+      ? `，+${latest.changes.added.length}/−${latest.changes.removed.length}`
+      : "，候选无变化"
     : latest.discovery.complete
       ? latest.baseline
-        ? " · 未比较"
+        ? "，未比较"
         : ""
-      : " · 发现不完整";
-  return `上次扫描 ${formatScanTime(latest.finishedAt)} · 项目 ${latest.projects.total} · 候选 ${latest.candidates.total}${changes}`;
+      : "，发现不完整";
+  return `上次扫描 ${formatScanTime(latest.finishedAt)}，项目 ${latest.projects.total}，候选 ${latest.candidates.total}${changes}`;
 }
 
 function ProjectDataScanNotice({ view }: { view: ProjectCleanupView }) {

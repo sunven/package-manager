@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Check, Minus, WarningCircle, CircleNotch } from "@phosphor-icons/react";
 import type { DisplayStatus } from "../types";
 import type { ManagerId, ManagerSnapshot } from "../types";
 import { managerLabel } from "../utils/format";
@@ -83,14 +84,20 @@ function StatusDot({
   title: string;
   dataObservationStatus: CoverageStatus;
 }) {
+  const Icon = status === "Ready" ? Check
+    : status === "Scanning" || status === "Pending" ? CircleNotch
+    : status === "Failed" || status === "PermissionDenied" || status === "Error" || status === "Partial" ? WarningCircle
+    : Minus;
   return (
     <span
       aria-label={label}
-      className="status-dot size-2.5 shrink-0"
+      className="manager-state-icon shrink-0"
       data-observation-status={dataObservationStatus}
       data-status={status}
       role="img"
       title={title}
-    />
+    >
+      <Icon aria-hidden="true" />
+    </span>
   );
 }

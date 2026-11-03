@@ -7,7 +7,6 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import { Button } from "../../components/ui/button";
-import { CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { marketplaceSourceLabel, type CodexMarketplace } from "../codexMarketplaces";
@@ -16,7 +15,7 @@ import type { ObservationCoverageItem } from "../observationCoverage";
 import { errorToString } from "../utils/format";
 import { CodexPluginFeedback, CodexPluginList } from "./CodexPluginList";
 import { ObservationState } from "./ObservationState";
-import { EmptyState, Panel, PanelHead, SkeletonRows } from "./ui";
+import { EmptyState, PageHeader, Panel, PanelHead, SkeletonRows } from "./ui";
 
 export function CodexMarketplacesPage({ workflow, coverage, onShowHooks, focusedPluginId }: {
   workflow: CodexExtensions;
@@ -76,16 +75,16 @@ export function CodexMarketplacesPage({ workflow, coverage, onShowHooks, focused
   }
 
   return (
-    <section className="view-grid" aria-label="Codex 插件市场管理" aria-busy={busy}>
-      <Panel>
-        <PanelHead title="Codex 插件市场" action={
+    <section className="view-grid hum-extension-page" aria-label="Codex 插件市场管理" aria-busy={busy}>
+      <div className="hum-extension-header">
+        <PageHeader title="Codex 插件市场" description="展开市场，浏览插件目录、查看详情并管理用户默认启用设置。" actions={
           <Button ref={readButton} disabled={blocked} onClick={() => void workflow.refresh()} size="sm" type="button" variant="outline">
             <ArrowClockwise aria-hidden="true" className={reading ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
             {reading ? "读取中" : "重新读取"}
           </Button>
         } />
-        <CardContent className="grid gap-3 p-4">
-          <p className="text-sm">展开市场，浏览插件目录、查看详情并管理用户默认启用设置。</p>
+        <div className="hum-extension-context">
+
           <dl className="meta-list">
             <div className="meta-row">
               <dt>Codex 目录</dt>
@@ -103,8 +102,8 @@ export function CodexMarketplacesPage({ workflow, coverage, onShowHooks, focused
           <p className="text-xs text-muted-foreground" role="status">
             {pending ? "正在执行并重新核对市场，请稍候…" : pluginSaving ? "正在执行并重新核对插件…" : reading ? "正在读取市场与插件目录，已有内容为上次结果。" : "重新读取查看本机市场与插件清单；同步市场会从 Git 来源同步内容。"}
           </p>
-        </CardContent>
-      </Panel>
+        </div>
+      </div>
 
       {result ? <Alert variant={result.status === "Failed" || result.status === "Partial" ? "destructive" : "default"} role="status">
         <AlertTitle>{resultTitle}</AlertTitle><AlertDescription>{result.message}</AlertDescription>
@@ -120,13 +119,13 @@ export function CodexMarketplacesPage({ workflow, coverage, onShowHooks, focused
       <CodexPluginFeedback {...plugins} />
       {requestError ? <p className="text-sm text-destructive" role="alert">{requestError}</p> : null}
 
-      <Panel className="overflow-hidden">
+      <Panel className="hum-extension-list overflow-hidden">
         <PanelHead title="市场" action={
           <Button ref={addButton} disabled={disabled || adding || Boolean(confirmation)} onClick={() => { setAdding(true); setSource(""); setRefName(""); setSparsePaths(""); setFormError(null); }} size="sm" type="button">
             <Plus aria-hidden="true" data-icon="inline-start" />添加市场源
           </Button>
         } />
-        {adding ? <form aria-label="添加市场源" className="grid gap-4 border-b p-4" onSubmit={async (event) => {
+        {adding ? <form aria-label="添加市场源" className="hum-extension-form grid gap-4 border-b p-4" onSubmit={async (event) => {
           event.preventDefault();
           if (disabled || !source.trim()) return;
           setFormError(null);
@@ -151,7 +150,7 @@ export function CodexMarketplacesPage({ workflow, coverage, onShowHooks, focused
           <div className="grid gap-2">
             <label htmlFor="marketplace-source" className="text-sm font-medium">{sourceKind === "git" ? "Git 仓库地址" : "市场根目录"}</label>
             <div className="flex flex-wrap gap-2">
-              <Input id="marketplace-source" autoFocus className="min-w-0 flex-1 basis-64 font-mono" disabled={blocked} readOnly={sourceKind === "local"} value={source} onChange={(event) => setSource(event.target.value)} placeholder={sourceKind === "git" ? "owner/repo 或 Git URL" : "选择本地市场目录"} aria-describedby="marketplace-source-help" required />
+              <Input id="marketplace-source" autoFocus className="min-w-0 flex-1 basis-64" disabled={blocked} readOnly={sourceKind === "local"} value={source} onChange={(event) => setSource(event.target.value)} placeholder={sourceKind === "git" ? "owner/repo 或 Git URL" : "选择本地市场目录"} aria-describedby="marketplace-source-help" required />
               {sourceKind === "local" ? <Button disabled={blocked} type="button" variant="outline" onClick={async () => {
                 setChoosing(true); setFormError(null);
                 try { const path = await invoke<string | null>("choose_codex_marketplace_directory"); if (path) setSource(path); }
@@ -249,5 +248,5 @@ export function CodexMarketplacesPage({ workflow, coverage, onShowHooks, focused
 }
 
 function MarketDetail({ label, value }: { label: string; value: string | null }) {
-  return <div className="min-w-0"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 whitespace-pre-wrap break-all font-mono text-xs">{value || "未知"}</dd></div>;
+  return <div className="min-w-0"><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 whitespace-pre-wrap break-all text-sm">{value || "未知"}</dd></div>;
 }

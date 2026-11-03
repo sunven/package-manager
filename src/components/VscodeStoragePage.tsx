@@ -137,18 +137,19 @@ export function VscodeStoragePage({
   }
 
   return (
-    <main className="view-grid" aria-busy={scanning}>
+    <main className="view-grid hum-vscode-page" aria-busy={scanning}>
       <PageHeader
         title="VS Code 占用"
         description="统计 VS Code 工作区存储（workspaceStorage）中的编辑器状态和扩展数据，不包含项目源码占用。"
         actions={
-          <Button disabled={scanning} onClick={() => void refresh()} size="sm" type="button" variant="outline">
-            <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
+          <Button disabled={scanning} onClick={() => void refresh()} size="sm" type="button">
+            <RefreshCw className={scanning ? "motion-safe:animate-spin" : undefined} data-icon="inline-start" />
             {scanning ? "扫描中" : "刷新"}
           </Button>
         }
       />
-      <Panel>
+      <div className="hum-vscode-summary">
+      <Panel className="hum-vscode-scope">
         <PanelHead title="扫描范围" />
         <CardContent className="flex flex-col gap-2 p-4">
           <p className="break-all text-xs text-muted-foreground">
@@ -170,6 +171,13 @@ export function VscodeStoragePage({
           </p>
         </CardContent>
       </Panel>
+      <div className="stat-grid hum-vscode-metrics grid-cols-2">
+        <StatCard label="工作区存储" value={scan ? `${scan.workspaces.length} 个` : "—"} />
+        <StatCard label="存储占用" value={formatFootprint(summary?.bytes ?? null, summary?.complete ?? false)} />
+        <StatCard label="路径不存在" value={summary ? `${summary.missingCount} 个` : "—"} />
+        <StatCard label="未识别工作区" value={summary ? `${summary.unknownCount} 个` : "—"} />
+      </div>
+      </div>
 
       {error ? (
         <Alert variant="destructive">
@@ -233,13 +241,6 @@ export function VscodeStoragePage({
         </>
       ) : null}
 
-      <div className="stat-grid grid-cols-2 lg:grid-cols-4">
-        <StatCard label="工作区存储" value={scan ? `${scan.workspaces.length} 个` : "—"} />
-        <StatCard label="存储占用" value={formatFootprint(summary?.bytes ?? null, summary?.complete ?? false)} />
-        <StatCard label="路径不存在" value={summary ? `${summary.missingCount} 个` : "—"} />
-        <StatCard label="未识别工作区" value={summary ? `${summary.unknownCount} 个` : "—"} />
-      </div>
-
       {scan?.status === "Partial" || (summary && scan?.status === "Ready" && !summary.complete) ? (
         <Alert>
           <AlertTitle>占用统计不完整</AlertTitle>
@@ -249,12 +250,12 @@ export function VscodeStoragePage({
         </Alert>
       ) : null}
 
-      <Panel className="overflow-hidden">
+      <Panel className="hum-vscode-records overflow-hidden">
         <PanelHead
           title="工作区记录"
           action={<Badge variant="secondary">{workspaces.length} / {scan?.workspaces.length ?? 0}</Badge>}
         />
-        <CardContent className="flex flex-col gap-2 p-4">
+        <CardContent className="hum-vscode-filters flex flex-col gap-3 p-4">
           <Input
             aria-label="搜索工作区"
             className="max-w-lg"
@@ -266,7 +267,7 @@ export function VscodeStoragePage({
           <p className="text-xs text-muted-foreground">按占用从大到小排列，包括路径不存在或未识别的记录。这些记录不代表当前打开的窗口或完整打开历史。</p>
         </CardContent>
         {scan?.workspaces.length ? (
-          <div className="flex flex-wrap items-center gap-2 border-y px-4 py-2" role="toolbar" aria-label="工作区存储移除操作">
+          <div className="hum-vscode-actions flex flex-wrap items-center gap-2 border-y p-4" role="toolbar" aria-label="工作区存储移除操作">
             <Button
               disabled={controlsDisabled || selectableVisible.length === 0 || allVisibleSelected}
               onClick={() => selection.selectAll(workspaces)}
@@ -471,7 +472,7 @@ export function VscodeStoragePage({
                   role="progressbar"
                 >
                   <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-150"
+                    className="h-full rounded-full bg-primary"
                     style={{ width: `${vscodeRemovalProgressPercent(removalProgress)}%` }}
                   />
                 </div>

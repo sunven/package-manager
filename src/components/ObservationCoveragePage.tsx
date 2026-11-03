@@ -51,7 +51,7 @@ export function ObservationCoveragePage({
   }
 
   return (
-    <main aria-label="观察覆盖度" className="view-grid">
+    <main aria-label="观察覆盖度" className="view-grid hum-observation-coverage">
       <PageHeader
         title="观察覆盖度"
         description="这里陈述哪些来源已观察、何时观察、读取是否完整。未观察不代表没有内容。"
@@ -71,7 +71,7 @@ export function ObservationCoveragePage({
             summary.invalidated ? `已失效 ${summary.invalidated}` : null,
             summary.scopeChanged ? `范围变化 ${summary.scopeChanged}` : null,
             summary.inProgress ? `观察中 ${summary.inProgress}` : null,
-          ].filter(Boolean).join(" · ")}
+          ].filter(Boolean).join("，")}
         </p>
         : null}
 
@@ -125,14 +125,14 @@ function CoverageGroup({
   const enabled = group.items.filter((item) => item.status !== "disabled");
   const disabled = group.items.filter((item) => item.status === "disabled");
   return (
-    <Card className="gap-0 py-0">
-      <CardHeader className="gap-2 border-b py-3">
+    <Card className="hum-coverage-group gap-0 py-0">
+      <CardHeader className="hum-coverage-group-head gap-3 py-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <Button aria-expanded={expanded} aria-label={`${expanded ? "收起" : "展开"}${group.label}`} className="size-7 p-0" onClick={onToggle} size="sm" type="button" variant="ghost">
+            <Button aria-expanded={expanded} aria-label={`${expanded ? "收起" : "展开"}${group.label}`} className="p-0" onClick={onToggle} size="icon-sm" type="button" variant="ghost">
               {expanded ? <CaretDown aria-hidden="true" /> : <CaretRight aria-hidden="true" />}
             </Button>
-            <CardTitle aria-level={3} role="heading">{group.label}</CardTitle>
+            <CardTitle aria-level={2} role="heading">{group.label}</CardTitle>
             {group.id === "managers" ? <span className="text-xs text-muted-foreground">已观察 {group.observedCount} / 已启用 {group.enabledCount}</span> : null}
             {group.disabledCount ? <span className="text-xs text-muted-foreground">{group.disabledCount} 已停用</span> : null}
             {group.attentionCount ? <Badge variant="secondary">需注意 {group.attentionCount}</Badge> : null}

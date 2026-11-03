@@ -15,8 +15,8 @@ export function ClaudeCodePage({ workflow, coverage, tab, onTabChange }: {
 }) {
   const [focusedPluginId, setFocusedPluginId] = useState<string | undefined>();
   const { state, skills, locked } = workflow;
-  return <div className="view-grid">
-    <Tabs value={tab} onValueChange={onTabChange} role="main" aria-label="Claude Code 管理">
+  return <div className="view-grid hum-extension-shell">
+    <Tabs className="hum-extension-tabs" value={tab} onValueChange={onTabChange} role="main" aria-label="Claude Code 管理">
     <TabsList aria-label="Claude Code 管理视图">
       <TabsTrigger value="marketplaces" disabled={locked}>插件市场</TabsTrigger>
       <TabsTrigger value="hooks" disabled={locked}>Hooks</TabsTrigger>
