@@ -4,6 +4,7 @@ import type { ObservationCoverage } from "../observationCoverage";
 import { formatBytes, formatHomePath, managerLabel } from "../utils/format";
 import { statusLabels } from "../constants";
 import { DevelopmentHealthPage } from "./DevelopmentHealthPage";
+import { ManagerMark } from "./ManagerMark";
 import { EmptyState, PageHeader, StatCard } from "./ui";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
@@ -153,27 +154,3 @@ function StorageSection({ health, homeDirectory, onOpenManager }: {
     </section>
   );
 }
-
-export function ManagerMark({ id }: { id: ManagerId }) {
-  return (
-    <span aria-hidden="true" className="studio-mark" data-manager={id}>
-      {markGlyph[id]}
-    </span>
-  );
-}
-
-const markGlyph: Record<ManagerId, string> = {
-  Npm: "n",
-  Pnpm: "pn",
-  Yarn: "y",
-  Nvm: "nv",
-  Homebrew: "b",
-  Maven: "m",
-  Pip: "py",
-  Cargo: "c",
-  Docker: "d",
-  Bun: "bu",
-  Uv: "uv",
-  Fvm: "fv",
-  AndroidSdk: "as",
-};

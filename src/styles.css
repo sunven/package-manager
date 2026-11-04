@@ -241,7 +241,9 @@
 .manager-token { display: flex; min-width: 0; min-height: 44px; align-items: center; gap: var(--space-xs); padding: var(--space-xs); border: 0; border-radius: 12px; background: var(--secondary); color: var(--foreground); font: inherit; font-size: var(--text-sm); text-align: left; }
 .manager-token:hover { background: var(--accent); }
 .manager-token > span:not(.studio-mark) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.studio-mark { display: grid; width: 28px; height: 28px; flex: none; place-items: center; border-radius: 8px; background: var(--card); color: var(--muted-foreground); font-family: var(--font-body); font-size: var(--text-xs); font-weight: 600; line-height: 1; }
+.studio-mark { display: grid; width: 28px; height: 28px; flex: none; place-items: center; border-radius: 8px; background: var(--hum-fringe); }
+.studio-mark img { display: block; width: 22px; height: 22px; object-fit: contain; }
+.studio-mark:is([data-manager="Npm"], [data-manager="Nvm"]) img { width: 24px; }
 .overview-board { display: grid; min-width: 0; gap: var(--space-lg); grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .overview-board-section { display: flex; min-width: 0; flex-direction: column; border-radius: var(--radius-card); background: var(--card); color: var(--foreground); box-shadow: var(--shadow-card); }
 .overview-section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-xs) var(--space-md); padding: var(--space-lg) var(--space-lg) var(--space-sm); }
@@ -269,7 +271,6 @@
 .studio-manager-tab-copy { display: grid; min-width: 0; flex: 1; text-align: left; }
 .studio-manager-tab-copy strong { overflow: hidden; font-size: var(--text-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .studio-manager-tab-copy small { overflow: hidden; font-size: var(--text-xs); color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
-.studio-manager-tab[data-state="active"] .studio-mark, .studio-manager-tab[data-active] .studio-mark { background: var(--primary); color: var(--primary-foreground); }
 .studio-manager-tab[data-state="active"] small, .studio-manager-tab[data-active] small { color: inherit; }
 .studio-manager-content { min-width: 0; container-type: inline-size; container-name: manager-content; }
 .studio-manager-columns { display: grid; min-width: 0; align-items: start; gap: var(--space-lg); }

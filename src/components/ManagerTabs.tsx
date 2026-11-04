@@ -6,7 +6,7 @@ import { managerLabel } from "../utils/format";
 import { requireCoverageItem, type CoverageStatus, type ObservationCoverageIndex } from "../observationCoverage";
 import { managerObservationId } from "../observationItems";
 import { managerTabPresentation } from "../managerObservationPresentation";
-import { ManagerMark } from "./OverviewDashboard";
+import { ManagerMark } from "./ManagerMark";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 
 export function ManagerTabs({
