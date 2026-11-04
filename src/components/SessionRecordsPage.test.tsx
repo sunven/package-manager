@@ -101,6 +101,26 @@ function renderWithCoverage(
 }
 
 describe("SessionRecordsPage", () => {
+  it("shows unknown usage and blocks removal while retaining the observed records", () => {
+    const html = renderWithCoverage({
+      ...scan,
+      codex: {
+        ...codex,
+        status: "Partial",
+        message: "无法判断哪些会话记录正在使用：检测超时",
+        removalBlockedReason: "无法判断哪些会话记录正在使用：检测超时",
+        records: [{ ...codex.records[0], inUse: null }],
+      },
+    });
+
+    expect(html).toContain("修一下登录");
+    expect(html).toContain("占用状态无法判断，暂不移除");
+    expect(html).toContain("检测超时");
+    expect(checkboxTag(html, "选择 修一下登录")).toContain("data-disabled");
+    expect(html).not.toContain('aria-label="将 修一下登录 移入废纸篓"');
+    expect(html).toContain("无法判断");
+  });
+
   it("shows the trash note, the month summary, and an in-use record", () => {
     const html = renderToStaticMarkup(
       <SessionRecordsPage

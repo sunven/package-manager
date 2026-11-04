@@ -56,6 +56,29 @@ const removal: SessionRemovalResult = {
 };
 
 describe("Session records adapter", () => {
+  it("does not begin any removal when usage detection is unavailable", async () => {
+    const unknown = { ...record("unknown"), inUse: null };
+    mockedInvoke.mockResolvedValueOnce(source("unknown", {
+      status: "Partial",
+      records: [unknown],
+      message: "占用检测失败",
+      removalBlockedReason: "占用检测失败",
+    }));
+    const { result } = renderHook(() => useSessionRecords(false));
+    await act(async () => { await result.current.refresh("codex"); });
+
+    act(() => result.current.request({ kind: "one", source: "codex", record: unknown }));
+    expect(result.current.operation).toBeNull();
+    act(() => result.current.request({ kind: "selected", source: "codex", label: "Codex", records: [unknown] }));
+    expect(result.current.operation).toBeNull();
+    act(() => result.current.request({ kind: "age", source: "codex", label: "Codex", days: 7, count: 1 }));
+    expect(result.current.operation).toBeNull();
+    // Even an earlier confirmed idle record cannot bypass the failed source check.
+    act(() => result.current.request({ kind: "one", source: "codex", record: record("unknown") }));
+    expect(result.current.operation).toBeNull();
+    expect(mockedInvoke).toHaveBeenCalledTimes(1);
+  });
+
   it("reads one source and maps its failure without a global error", async () => {
     mockedInvoke.mockResolvedValueOnce(source("codex-new"));
     const { result } = renderHook(() => useSessionRecords(false));

@@ -376,7 +376,7 @@ fn read_record_with_state(
         last_activity_ms: text_field(&summary, "last_active_at").and_then(activity_time),
         working_directory: cwd.clone(),
         bytes: tree.bytes,
-        in_use: false,
+        in_use: None,
         grok: Some(RecordDetails {
             session_id: session_id.into(),
             bytes_complete: tree.bytes_complete,
@@ -749,11 +749,11 @@ pub(crate) fn scan_default(state: &SessionScanState) -> SessionSourceScan {
         Ok(open) => {
             for record in &mut scan.records {
                 let path = root.join(&record.id);
-                record.in_use = open.iter().any(|entry| entry.starts_with(&path));
+                record.in_use = Some(open.iter().any(|entry| entry.starts_with(&path)));
             }
         }
         Err(message) => {
-            scan.removal_blocked_reason.get_or_insert(message);
+            scan.mark_usage_unknown(message);
         }
     }
     scan.age_eligible = age_eligible_counts(&scan.records, now_ms());

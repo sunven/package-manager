@@ -203,6 +203,40 @@ async function setup(overrides: Options = {}) {
 }
 
 describe("session selection boundaries", () => {
+  it("separates unknown usage from idle records and restores controls after a successful refresh", async () => {
+    const { updateScan } = await setup({
+      scan: {
+        ...scan,
+        codex: {
+          ...scan.codex,
+          status: "Partial",
+          message: "占用检测失败",
+          removalBlockedReason: "占用检测失败",
+          ageEligible: { days7: 0, days30: 0 },
+          records: [{ ...scan.codex.records[0], inUse: null }],
+        },
+      },
+    });
+    const checkbox = screen.getByRole("checkbox", { name: "选择 Alpha project" });
+    expect(checkbox.hasAttribute("disabled")).toBe(true);
+    expect(checkbox.getAttribute("aria-describedby")).toBeTruthy();
+    expect(screen.getByText("占用状态无法判断，暂不移除")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "将 Alpha project 移入废纸篓" })).toBeNull();
+    expect((screen.getByRole("button", { name: "移除 7 天前的记录" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("radio", { name: "未使用中" }));
+    await waitFor(() => expect(screen.queryByRole("checkbox", { name: "选择 Alpha project" })).toBeNull());
+    fireEvent.click(screen.getByRole("radio", { name: "无法判断" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "选择 Alpha project" })).toBeTruthy());
+
+    await updateScan(scan);
+    fireEvent.click(screen.getByRole("radio", { name: "全部" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "选择 Alpha project" }).hasAttribute("disabled")).toBe(false));
+    expect(screen.queryByText("占用状态无法判断，暂不移除")).toBeNull();
+    expect(screen.getByRole("button", { name: "将 Alpha project 移入废纸篓" })).toBeTruthy();
+    expect(mockedInvoke.mock.calls.some(([command]) => command.startsWith("remove_session"))).toBe(false);
+  });
+
   it("collapses OpenCode months and reviews age targets from the entire source despite search", async () => {
     const nowMs = new Date(2026, 9, 21, 12).getTime();
     await setup({ initialSource: "opencode", openCodeScan, nowMs });

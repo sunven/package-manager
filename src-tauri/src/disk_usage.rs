@@ -104,6 +104,7 @@ struct UsageStats {
     bytes: u64,
     files: u64,
     directories: u64,
+    // Entries whose metadata or directory contents could not be read.
     skipped: u64,
     first_error: Option<String>,
 }
@@ -145,7 +146,7 @@ fn walk_dir(path: &Path, stats: &mut UsageStats, seen: &mut HashSet<(u64, u64)>)
         };
 
         if metadata.file_type().is_symlink() {
-            stats.skipped += 1;
+            // Links are intentionally not followed, so they are not failed reads.
             continue;
         }
 
@@ -163,8 +164,6 @@ fn add_file(stats: &mut UsageStats, seen: &mut HashSet<(u64, u64)>, metadata: &f
     if seen.insert(key) {
         stats.files += 1;
         stats.bytes += metadata.blocks().saturating_mul(512);
-    } else {
-        stats.skipped += 1;
     }
 }
 
@@ -223,8 +222,39 @@ mod tests {
 
         assert_eq!(usage.status, DiskUsageStatus::Ready);
         assert_eq!(usage.files, 1);
-        assert_eq!(usage.skipped, 1);
+        assert_eq!(usage.skipped, 0);
+        assert!(usage.message.is_none());
         assert_eq!(usage.bytes, Some(metadata.blocks().saturating_mul(512)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_usage_does_not_follow_symlinks_or_mark_them_as_unreadable() {
+        use std::os::unix::fs::symlink;
+
+        let root = TempDirGuard::new("disk-usage-symlinks");
+        let external = TempDirGuard::new("disk-usage-external");
+        let file = root.path().join("data");
+        fs::write(&file, b"uv installed data").expect("write file");
+        let external_file = external.path().join("data");
+        fs::write(&external_file, vec![1; 16_384]).expect("write external file");
+        symlink(&external_file, root.path().join("external-file")).expect("link external file");
+        symlink(external.path(), root.path().join("external-directory"))
+            .expect("link external directory");
+        symlink(root.path(), root.path().join("cycle")).expect("create cycle");
+        symlink("missing", root.path().join("broken")).expect("create dangling link");
+
+        let usage = disk_usage(root.path());
+
+        assert_eq!(usage.status, DiskUsageStatus::Ready);
+        assert_eq!(usage.files, 1);
+        assert_eq!(usage.directories, 1);
+        assert_eq!(usage.skipped, 0);
+        assert!(usage.message.is_none());
+        assert_eq!(
+            usage.bytes,
+            Some(fs::metadata(file).unwrap().blocks() * 512)
+        );
     }
 
     struct TempDirGuard(PathBuf);

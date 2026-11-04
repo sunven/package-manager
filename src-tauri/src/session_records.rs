@@ -39,6 +39,23 @@ pub(crate) struct SessionSourceScan {
     pub age_eligible: AgeEligibleCounts,
 }
 
+impl SessionSourceScan {
+    pub(crate) fn mark_usage_unknown(&mut self, message: String) {
+        for record in &mut self.records {
+            record.in_use = None;
+        }
+        if self.status == SessionScanStatus::Ready {
+            self.status = SessionScanStatus::Partial;
+        }
+        self.message = Some(match self.message.take() {
+            Some(existing) if existing != message => format!("{existing}；{message}"),
+            _ => message.clone(),
+        });
+        self.removal_blocked_reason.get_or_insert(message);
+        self.age_eligible = AgeEligibleCounts::default();
+    }
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub(crate) enum SessionScanStatus {
     Ready,
@@ -55,7 +72,8 @@ pub(crate) struct SessionRecord {
     pub last_activity_ms: Option<i64>,
     pub working_directory: Option<String>,
     pub bytes: u64,
-    pub in_use: bool,
+    /// None means the open-file check could not determine usage.
+    pub in_use: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grok: Option<crate::grok_sessions::RecordDetails>,
 }
@@ -116,18 +134,29 @@ fn scan_source(
     format: RecordFormat,
     state: &SessionScanState,
 ) -> SessionSourceScan {
+    scan_source_with_open_files(directory, format, state, &|root| {
+        state.open_files().under(root)
+    })
+}
+
+fn scan_source_with_open_files(
+    directory: Result<PathBuf, String>,
+    format: RecordFormat,
+    state: &SessionScanState,
+    open_files: &dyn Fn(&Path) -> Result<HashSet<PathBuf>, String>,
+) -> SessionSourceScan {
     let directory = match directory {
         Ok(directory) => directory,
         Err(message) => return failed_source(String::new(), message),
     };
     let open_paths = match fs::symlink_metadata(&directory) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            match state.open_files().under(&directory) {
+            match open_files(&directory) {
                 Ok(paths) => paths,
                 Err(message) => {
                     return match list_records_with_state(&directory, &|_| false, format, state) {
                         Ok(mut scan) => {
-                            scan.message = Some(message);
+                            scan.mark_usage_unknown(message);
                             scan
                         }
                         Err(error) => {
@@ -254,6 +283,7 @@ pub(crate) enum SessionRemovalStatus {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub(crate) enum SessionRemovalReason {
     InUse,
+    UsageUnknown,
     NoLongerRecord,
     ActivityChanged,
     ActivityUnknown,
@@ -463,11 +493,15 @@ fn remove_older_record(
     state: &SessionScanState,
     result: &mut SessionRemovalResult,
 ) {
-    if record.in_use {
+    if record.in_use != Some(false) {
         result.record(
             &record.id,
             SessionRemovalStatus::Skipped,
-            Some(SessionRemovalReason::InUse),
+            Some(if record.in_use == Some(true) {
+                SessionRemovalReason::InUse
+            } else {
+                SessionRemovalReason::UsageUnknown
+            }),
             None,
         );
         return;
@@ -819,7 +853,7 @@ fn list_records_with_state(
             last_activity_ms: parsed.last_activity_ms,
             working_directory: parsed.working_directory,
             bytes: metadata.len(),
-            in_use: is_open(&path),
+            in_use: Some(is_open(&path)),
             grok: None,
         });
     }
@@ -852,7 +886,7 @@ pub(crate) fn age_eligible_counts(
         records
             .iter()
             .filter(|record| {
-                !record.in_use
+                record.in_use == Some(false)
                     && record
                         .last_activity_ms
                         .is_some_and(|last_activity| last_activity < cutoff)
@@ -1335,6 +1369,66 @@ mod tests {
     }
 
     #[test]
+    fn failed_usage_detection_preserves_records_without_claiming_they_are_idle() {
+        for format in [RecordFormat::Codex, RecordFormat::Claude] {
+            let fixture = Fixture::new();
+            fs::write(
+                fixture.sessions().join("chat.jsonl"),
+                session_line("2000-01-01T00:00:00Z", "session_meta", "{}"),
+            )
+            .unwrap();
+            let scan = scan_source_with_open_files(
+                Ok(fixture.sessions()),
+                format,
+                &SessionScanState::default(),
+                &|_| Err("无法判断哪些会话记录正在使用：检测超时".into()),
+            );
+
+            assert_eq!(scan.records.len(), 1);
+            let json = serde_json::to_value(&scan).unwrap();
+            assert_eq!(json["records"][0]["inUse"], serde_json::Value::Null);
+            assert_eq!(scan.status, SessionScanStatus::Partial);
+            assert!(scan.message.as_deref().unwrap().contains("检测超时"));
+            assert!(scan.removal_blocked_reason.is_some());
+            assert_eq!(scan.age_eligible, AgeEligibleCounts::default());
+        }
+    }
+
+    #[test]
+    fn usage_detection_recovers_after_a_failed_scan() {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions();
+        let busy = sessions.join("busy.jsonl");
+        for file in [&busy, &sessions.join("idle.jsonl")] {
+            fs::write(file, session_line("2000-01-01T00:00:00Z", "session_meta", "{}"))
+                .unwrap();
+        }
+        let state = SessionScanState::default();
+        let failed = scan_source_with_open_files(
+            Ok(sessions.clone()),
+            RecordFormat::Codex,
+            &state,
+            &|_| Err("占用检测失败".into()),
+        );
+        assert!(failed.records.iter().all(|record| record.in_use.is_none()));
+
+        let recovered = scan_source_with_open_files(
+            Ok(sessions),
+            RecordFormat::Codex,
+            &state,
+            &|_| Ok(HashSet::from([busy.clone()])),
+        );
+
+        assert_eq!(recovered.status, SessionScanStatus::Ready);
+        assert!(recovered.message.is_none());
+        assert!(recovered.removal_blocked_reason.is_none());
+        assert_eq!(recovered.records[0].in_use, Some(true));
+        assert_eq!(recovered.records[1].in_use, Some(false));
+        assert_eq!(recovered.age_eligible.days7, 1);
+        assert_eq!(recovered.age_eligible.days30, 1);
+    }
+
+    #[test]
     fn lists_regular_jsonl_fields_and_skips_other_entries() {
         let fixture = Fixture::new();
         let sessions = fixture.sessions();
@@ -1387,7 +1481,7 @@ mod tests {
             Some("/work/package-manager")
         );
         assert_eq!(named.bytes, fs::metadata(&chat).unwrap().len());
-        assert!(named.in_use);
+        assert_eq!(named.in_use, Some(true));
         assert_eq!(
             named.last_activity_ms,
             parse_rfc3339_millis("2026-09-24T03:00:00.500Z")
@@ -1400,7 +1494,7 @@ mod tests {
         assert_eq!(plain.title, "plain.jsonl");
         assert_eq!(plain.working_directory, None);
         assert_eq!(plain.last_activity_ms, None);
-        assert!(!plain.in_use);
+        assert_eq!(plain.in_use, Some(false));
         assert!(scan
             .records
             .iter()
@@ -1502,7 +1596,7 @@ mod tests {
             .find(|record| record.title == "日志排查")
             .unwrap();
         assert_eq!(named.working_directory.as_deref(), Some("/work/app"));
-        assert!(named.in_use);
+        assert_eq!(named.in_use, Some(true));
         assert_eq!(
             named.last_activity_ms,
             parse_rfc3339_millis("2026-09-24T03:00:00Z")
@@ -1929,16 +2023,20 @@ mod tests {
             last_activity_ms,
             working_directory: None,
             bytes: 0,
-            in_use,
+            in_use: Some(in_use),
             grok: None,
         };
-        let records = vec![
+        let mut records = vec![
             record("old", Some(DAY_MS), false),
             record("mid", Some(20 * DAY_MS), false),
             record("fresh", Some(39 * DAY_MS), false),
             record("busy", Some(DAY_MS), true),
             record("unknown", None, false),
         ];
+        records.push(SessionRecord {
+            in_use: None,
+            ..record("unknown-usage", Some(DAY_MS), false)
+        });
 
         let counts = age_eligible_counts(&records, now);
         assert_eq!(counts.days7, 2);

@@ -6,7 +6,8 @@ export type SessionRecord = {
   lastActivityMs: number | null;
   workingDirectory: string | null;
   bytes: number;
-  inUse: boolean;
+  /** null means the file usage check failed. */
+  inUse: boolean | null;
   grok?: {
     sessionId: string;
     bytesComplete: boolean;
@@ -160,7 +161,7 @@ export type SessionRemovalResult = {
   message: string | null;
 };
 
-export type SessionRemovalReason = "InUse" | "NoLongerRecord" | "ActivityChanged" | "ActivityUnknown" | "TrashFailed" | "RuntimeBlocked";
+export type SessionRemovalReason = "InUse" | "UsageUnknown" | "NoLongerRecord" | "ActivityChanged" | "ActivityUnknown" | "TrashFailed" | "RuntimeBlocked";
 export type SessionRemovalItem = {
   id: string;
   status: "Moved" | "Skipped" | "Failed" | "NotAttempted";
@@ -187,6 +188,7 @@ export function removalProgressBreakdown(progress: SessionRemovalProgress) {
 
 export const removalReasonLabels: Record<SessionRemovalReason, string> = {
   InUse: "使用中，留在原处",
+  UsageUnknown: "占用状态无法判断，留在原处",
   NoLongerRecord: "已不再是可移除的会话记录",
   ActivityChanged: "最后活动时间已更新，不再早于门槛",
   ActivityUnknown: "无法确认最后活动时间，留在原处",
@@ -214,14 +216,14 @@ export function bulkRemovalConfirmText(sourceLabel: string, days: number, count:
 }
 
 export function removableSessionRecords(records: SessionRecord[]) {
-  return records.filter((record) => !record.inUse);
+  return records.filter((record) => record.inUse === false);
 }
 
 export function ageEligibleCounts(records: SessionRecord[], nowMs: number): AgeEligibleCounts {
   const count = (days: number) => {
     const cutoff = nowMs - days * 86_400_000;
     return records.filter(
-      (record) => !record.inUse && record.lastActivityMs !== null && record.lastActivityMs < cutoff,
+      (record) => record.inUse === false && record.lastActivityMs !== null && record.lastActivityMs < cutoff,
     ).length;
   };
   return { days7: count(7), days30: count(30) };
@@ -266,13 +268,13 @@ export type SessionSectionView = {
   totalCount: number;
 };
 
-export type SessionUsageFilter = "all" | "inUse" | "notInUse";
+export type SessionUsageFilter = "all" | "inUse" | "notInUse" | "unknown";
 export type SessionFilter = { query: string; usage: SessionUsageFilter };
 
 export function filterSessionRecords(records: SessionRecord[], filter: SessionFilter) {
   const query = filter.query.trim().toLocaleLowerCase();
   return records.filter((record) =>
-    (filter.usage === "all" || (filter.usage === "inUse" ? record.inUse : !record.inUse)) &&
+    (filter.usage === "all" || record.inUse === (filter.usage === "inUse" ? true : filter.usage === "notInUse" ? false : null)) &&
     (!query || [record.title, record.workingDirectory ?? ""].some((value) => value.toLocaleLowerCase().includes(query))),
   );
 }

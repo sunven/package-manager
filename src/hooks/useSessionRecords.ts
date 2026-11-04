@@ -237,6 +237,9 @@ export function useSessionRecords(active: boolean) {
   }
   function request(target: PendingRemoval) {
     if (opening.current || mutation.current) return;
+    if (scans[target.source]?.removalBlockedReason) return;
+    if (target.kind === "one" && target.record.inUse !== false) return;
+    if (target.kind === "selected" && target.records.some((record) => record.inUse !== false)) return;
     if (isDirectoryScoped(target.source)) {
       const source = scans[target.source];
       if (!source || scanning[target.source] || source.status === "Failed" || source.removalBlockedReason) return;

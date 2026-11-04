@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  ageEligibleCounts,
   ageRemovalRequest,
   bulkRemovalConfirmText,
   filterOpenCodeSessions,
+  filterSessionRecords,
   formatSessionRecordId,
   groupOpenCodeSessions,
   groupSessionRecords,
@@ -263,3 +265,28 @@ function source(records: SessionRecord[]): SessionSourceScan {
     ageEligible: { days7: 0, days30: 0 },
   };
 }
+
+describe("unknown session usage", () => {
+  const records = [
+    record({ id: "busy", lastActivityMs: 1, bytes: 1, inUse: true }),
+    record({ id: "idle", lastActivityMs: 1, bytes: 1, inUse: false }),
+    record({ id: "unknown-usage", lastActivityMs: 1, bytes: 1, inUse: null }),
+  ];
+
+  it("keeps unknown usage out of both known usage filters", () => {
+    expect(filterSessionRecords(records, { query: "", usage: "all" }).map(({ id }) => id))
+      .toEqual(["busy", "idle", "unknown-usage"]);
+    expect(filterSessionRecords(records, { query: "", usage: "inUse" }).map(({ id }) => id))
+      .toEqual(["busy"]);
+    expect(filterSessionRecords(records, { query: "", usage: "notInUse" }).map(({ id }) => id))
+      .toEqual(["idle"]);
+    expect(filterSessionRecords(records, { query: "", usage: "unknown" }).map(({ id }) => id))
+      .toEqual(["unknown-usage"]);
+  });
+
+  it("excludes unknown usage from removal selections and age eligibility", () => {
+    expect(removableSessionRecords(records).map(({ id }) => id)).toEqual(["idle"]);
+    expect(selectedRemovalRequest(records, ["unknown-usage"])).toBeNull();
+    expect(ageEligibleCounts(records, 40 * 86_400_000)).toEqual({ days7: 1, days30: 1 });
+  });
+});

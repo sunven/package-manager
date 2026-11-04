@@ -483,7 +483,7 @@ fn list_records(
             last_activity_ms: details.last_activity_ms,
             working_directory: details.working_directory,
             bytes: record_bytes(&paths, state),
-            in_use: paths.is_open(open_paths),
+            in_use: Some(paths.is_open(open_paths)),
             grok: None,
         });
     }
@@ -512,20 +512,27 @@ pub(crate) fn scan_default(edition: QoderEdition, state: &SessionScanState) -> S
         Ok(root) => root,
         Err(message) => return failed_scan(String::new(), message),
     };
+    scan_root_with_open_files(&root, edition, state, &|root| state.open_files().under(root))
+}
+
+fn scan_root_with_open_files(
+    root: &Path,
+    edition: QoderEdition,
+    state: &SessionScanState,
+    open_files: &dyn Fn(&Path) -> Result<HashSet<PathBuf>, String>,
+) -> SessionSourceScan {
     let (open_paths, lsof_error) = match fs::symlink_metadata(&root) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-            match state.open_files().under(&root) {
+            match open_files(root) {
                 Ok(paths) => (paths, None),
                 Err(message) => (HashSet::new(), Some(message)),
             }
         }
         _ => (HashSet::new(), None),
     };
-    let mut scan = list_records(&root, edition.label(), &open_paths, state);
+    let mut scan = list_records(root, edition.label(), &open_paths, state);
     if let Some(message) = lsof_error {
-        if scan.message.is_none() {
-            scan.message = Some(message);
-        }
+        scan.mark_usage_unknown(message);
     }
     scan
 }
@@ -853,6 +860,27 @@ mod tests {
     const ORPHAN: &str = "99999999-8888-7777-6666-555555555555";
 
     #[test]
+    fn failed_usage_detection_preserves_both_editions_without_idle_records() {
+        for edition in [QoderEdition::International, QoderEdition::Cn] {
+            let fixture = Fixture::new();
+            fixture.session("-Users-test-proj", STEM);
+            let scan = scan_root_with_open_files(
+                &fixture.root(),
+                edition,
+                &SessionScanState::default(),
+                &|_| Err("占用检测失败".into()),
+            );
+
+            assert_eq!(scan.status, SessionScanStatus::Partial);
+            assert_eq!(scan.records.len(), 1);
+            assert_eq!(scan.records[0].title, "自定义标题");
+            assert_eq!(scan.records[0].in_use, None);
+            assert_eq!(scan.age_eligible, AgeEligibleCounts::default());
+            assert_eq!(scan.removal_blocked_reason.as_deref(), Some("占用检测失败"));
+        }
+    }
+
+    #[test]
     fn scan_reads_titles_directories_activity_and_sidecar_bytes() {
         let fixture = Fixture::new();
         let transcript = fixture.session("-Users-test-proj", STEM);
@@ -890,7 +918,7 @@ mod tests {
             parse_rfc3339_millis("2025-01-01T00:00:02.000Z")
         );
         assert!(record.bytes > fs::metadata(&transcript).unwrap().len());
-        assert!(record.in_use);
+        assert_eq!(record.in_use, Some(true));
         let orphan = scan
             .records
             .iter()
@@ -901,7 +929,7 @@ mod tests {
             orphan.last_activity_ms,
             parse_rfc3339_millis("2025-01-02T00:00:00.000Z")
         );
-        assert!(!orphan.in_use);
+        assert_eq!(orphan.in_use, Some(false));
         assert_eq!(scan.age_eligible.days7, 1);
         assert_eq!(scan.age_eligible.days30, 1);
     }

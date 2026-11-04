@@ -67,7 +67,7 @@ function openableSource(key: SessionSourceId) {
   return key === "grok" || key === "qoder" || key === "qoder-cn";
 }
 
-const selectableSession = (record: SessionRecord) => !record.inUse;
+const selectableSession = (record: SessionRecord) => record.inUse === false;
 const selectableOpenCode = () => true;
 const GROUP_PAGE_SIZE = 100;
 
@@ -752,13 +752,15 @@ const SessionRow = memo(function SessionRow({
   onRequestRemoval: (record: SessionRecord) => void;
   onSetRecordSelected: (id: string, selected: boolean) => void;
 }) {
+  const usageBlocked = record.inUse !== false;
+  const usageDescriptionId = `${sourceKey}-usage-${encodeURIComponent(record.id)}`;
   return (
     <li className={`grid items-center gap-3 py-3 sm:grid-cols-[auto_minmax(0,1.4fr)_minmax(0,1fr)_auto] ${projectMode ? "pl-10 pr-4" : "px-4"}`}>
       <Checkbox
         aria-label={`选择 ${record.title}`}
-        aria-describedby={record.inUse ? `${sourceKey}-in-use-${encodeURIComponent(record.id)}` : undefined}
+        aria-describedby={usageBlocked ? usageDescriptionId : undefined}
         checked={selected}
-        disabled={mutationBlocked || record.inUse}
+        disabled={mutationBlocked || usageBlocked}
         onCheckedChange={(checked) => onSetRecordSelected(record.id, checked === true)}
       />
       <span className="min-w-0">
@@ -784,7 +786,7 @@ const SessionRow = memo(function SessionRow({
           onClick={async () => { onOpenError(null); onOpenError(await onOpen(record)); }}
           size="sm" type="button" variant="outline"
         ><ArrowSquareOut aria-hidden="true" />{opening ? "打开中" : "继续会话"}</Button> : null}
-        {record.inUse ? <span className="text-xs text-muted-foreground" id={`${sourceKey}-in-use-${encodeURIComponent(record.id)}`}>使用中，暂不移除</span> : (
+        {usageBlocked ? <span className="text-xs text-muted-foreground" id={usageDescriptionId}>{record.inUse === true ? "使用中，暂不移除" : "占用状态无法判断，暂不移除"}</span> : (
           <Button
             aria-label={`将 ${record.title || record.id} 移入废纸篓`}
             disabled={mutationBlocked}
@@ -880,8 +882,8 @@ function SourceSection({
   }, [filter.query, filter.usage, sort]);
   const grok = sourceKey === "grok";
   const qoder = sourceKey === "qoder" || sourceKey === "qoder-cn";
-  const blockedReason = grok ? source?.status === "Failed" ? "请先成功读取 Grok Build 会话记录。" : source?.removalBlockedReason : null;
-  const mutationBlocked = removing || (grok && (scanning || Boolean(blockedReason)));
+  const blockedReason = source?.removalBlockedReason ?? (grok && source?.status === "Failed" ? "请先成功读取 Grok Build 会话记录。" : null);
+  const mutationBlocked = removing || Boolean(blockedReason) || (grok && scanning);
   const records = useMemo(() => view?.groups.flatMap((group) => group.records) ?? [], [view]);
   const removable = useMemo(() => removableSessionRecords(records), [records]);
   const selected = useMemo(() => selectedRemovalRequest(records, selectedIds), [records, selectedIds]);
@@ -889,24 +891,26 @@ function SourceSection({
   const selectedSet = useMemo(() => new Set(selected?.ids ?? []), [selected]);
   const eligibleAge7 = source?.ageEligible.days7 ?? 0;
   const eligibleAge30 = source?.ageEligible.days30 ?? 0;
-  const { inUseCount, unknownActivityCount, recentAge7Count, recentAge30Count } = useMemo(() => {
+  const { inUseCount, unknownUsageCount, unknownActivityCount, recentAge7Count, recentAge30Count } = useMemo(() => {
     let inUse = 0;
+    let unknownUsage = 0;
     let unknownActivity = 0;
     let recent7 = 0;
     let recent30 = 0;
     const sevenDaysAgo = nowMs - 7 * 24 * 60 * 60 * 1000;
     const thirtyDaysAgo = nowMs - 30 * 24 * 60 * 60 * 1000;
     for (const record of source?.records ?? []) {
-      if (record.inUse) inUse += 1;
+      if (record.inUse === true) inUse += 1;
+      if (record.inUse === null) unknownUsage += 1;
       if (record.lastActivityMs === null) {
         unknownActivity += 1;
         continue;
       }
-      if (record.inUse) continue;
+      if (record.inUse !== false) continue;
       if (record.lastActivityMs >= sevenDaysAgo) recent7 += 1;
       if (record.lastActivityMs >= thirtyDaysAgo) recent30 += 1;
     }
-    return { inUseCount: inUse, unknownActivityCount: unknownActivity, recentAge7Count: recent7, recentAge30Count: recent30 };
+    return { inUseCount: inUse, unknownUsageCount: unknownUsage, unknownActivityCount: unknownActivity, recentAge7Count: recent7, recentAge30Count: recent30 };
   }, [source?.records, nowMs]);
   const ageEligibilityId = `${sourceKey}-age-removal-eligibility`;
   return (
@@ -920,7 +924,7 @@ function SourceSection({
       <div className="hum-session-filters flex flex-wrap items-center gap-3 border-b p-4">
         <Input disabled={removing} type="search" aria-label={`搜索 ${label} 会话记录`} placeholder="搜索标题或工作目录" value={filter.query} onChange={(event) => onFilterChange({ query: event.target.value })} className="min-w-40 flex-1" />
         <ToggleGroup disabled={removing} type="single" value={filter.usage} onValueChange={(usage) => { if (usage) onFilterChange({ usage: usage as SessionUsageFilter }); }} aria-label={`${label} 使用状态`}>
-          <ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="inUse">使用中</ToggleGroupItem><ToggleGroupItem value="notInUse">未使用中</ToggleGroupItem>
+          <ToggleGroupItem value="all">全部</ToggleGroupItem><ToggleGroupItem value="inUse">使用中</ToggleGroupItem><ToggleGroupItem value="notInUse">未使用中</ToggleGroupItem><ToggleGroupItem value="unknown">无法判断</ToggleGroupItem>
         </ToggleGroup>
         <span className="text-xs text-muted-foreground" role="status">{view ? `匹配 ${view.count} / 已读取 ${view.totalCount} 条` : "尚未读取会话记录"}</span>
       </div>
@@ -986,8 +990,8 @@ function SourceSection({
       ) : null}
       {openError ? <Alert variant="destructive"><AlertTitle>无法继续 {label} 会话</AlertTitle><AlertDescription>{openError}</AlertDescription></Alert> : null}
       <CardContent className="flex flex-col gap-2 p-3">
-        <p className="text-xs text-muted-foreground" id={`${sourceKey}-age-removal-help`}>按天数移除以最后活动时间为准，作用于整个 {label} 来源，不受搜索和状态筛选限制。使用中的记录会跳过。</p>
-        <p className="text-xs text-muted-foreground" id={ageEligibilityId} role="status">{!source ? "读取会话记录后显示当前符合年龄条件的数量。" : eligibleAge7 === 0 && eligibleAge30 === 0 ? `当前没有符合 7 天或 30 天门槛的记录；近 7 天 ${recentAge7Count} 条、近 30 天 ${recentAge30Count} 条未达门槛` : eligibleAge7 === 0 ? `当前没有符合 7 天门槛的记录；近 7 天 ${recentAge7Count} 条未达门槛` : eligibleAge30 === 0 ? `当前没有符合 30 天门槛的记录；近 30 天 ${recentAge30Count} 条未达门槛` : `当前符合年龄门槛：7 天 ${eligibleAge7} 条、30 天 ${eligibleAge30} 条`}{inUseCount ? `；${inUseCount} 条使用中的记录会跳过` : ""}{unknownActivityCount ? `；${unknownActivityCount} 条缺少最后活动时间，无法按年龄判断` : ""}。</p>
+        <p className="text-xs text-muted-foreground" id={`${sourceKey}-age-removal-help`}>按天数移除以最后活动时间为准，作用于整个 {label} 来源，不受搜索和状态筛选限制。使用中或占用状态无法判断的记录会跳过。</p>
+        <p className="text-xs text-muted-foreground" id={ageEligibilityId} role="status">{!source ? "读取会话记录后显示当前符合年龄条件的数量。" : unknownUsageCount > 0 && eligibleAge7 === 0 && eligibleAge30 === 0 ? "暂未确认符合年龄门槛的可移除记录" : eligibleAge7 === 0 && eligibleAge30 === 0 ? `当前没有符合 7 天或 30 天门槛的记录；近 7 天 ${recentAge7Count} 条、近 30 天 ${recentAge30Count} 条未达门槛` : eligibleAge7 === 0 ? `当前没有符合 7 天门槛的记录；近 7 天 ${recentAge7Count} 条未达门槛` : eligibleAge30 === 0 ? `当前没有符合 30 天门槛的记录；近 30 天 ${recentAge30Count} 条未达门槛` : `当前符合年龄门槛：7 天 ${eligibleAge7} 条、30 天 ${eligibleAge30} 条`}{inUseCount ? `；${inUseCount} 条使用中的记录会跳过` : ""}{unknownUsageCount ? `；${unknownUsageCount} 条记录的占用状态无法判断，暂不移除` : ""}{unknownActivityCount ? `；${unknownActivityCount} 条缺少最后活动时间，无法按年龄判断` : ""}。</p>
       </CardContent>
       {source?.status === "Failed" && source.message ? (
         <Alert variant="destructive">
@@ -1090,7 +1094,7 @@ function SourceSection({
                           record={record}
                           removing={removing}
                           scanning={scanning}
-                          selected={!record.inUse && selectedSet.has(record.id)}
+                          selected={record.inUse === false && selectedSet.has(record.id)}
                           sourceFailed={source?.status === "Failed"}
                           sourceKey={sourceKey}
                         />
