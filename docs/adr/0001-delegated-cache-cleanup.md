@@ -1,5 +1,7 @@
 # 清理动作一律委托给管理器自己的 CLI
 
+Maven 本地仓库的整体禁止决定已由 [ADR-0036](./0036-maven-unreferenced-artifacts-use-scoped-trash.md) 部分替代：用户指定范围内的未引用构件可以经来源与路径核对后移入废纸篓；通用缓存清理表仍不提供 Maven 清理方案。本文原有“本地仓库全是缓存、没有官方子命令”的表述已由官方资料修正：仓库还包含本地安装资产，Dependency Plugin 支持定向 purge，但不提供全机未引用判断。
+
 本工具需要为多个包管理器提供缓存清理能力，但其中 nvm、Maven、Cargo 三者**没有任何官方子命令**可以清理自己的缓存（nvm 是 shell function 无法 spawn；`~/.m2/repository` 本身就是缓存且无清理命令；`cargo clean` 清的是项目 target 而非 `CARGO_HOME`，`cargo cache` 是第三方插件）。我们决定：**清理只做委托清理**——本工具从一张 Rust 静态表中挑选 allowlisted 子命令，交由管理器自己的 CLI 执行删除，本工具不亲自删除文件。因此 nvm、Maven、Cargo 的管理器缓存**不提供清理方案**，只保留占用展示与命令复制。
 
 ## Considered Options

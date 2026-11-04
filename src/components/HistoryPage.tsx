@@ -283,7 +283,7 @@ function Results({ detail }: { detail: MaintenanceDetail }) {
 function ManagerResults({ detail }: { detail: ManagerDetail }) {
   if (!detail.steps) return <p className="text-sm text-muted-foreground">此记录没有逐步骤数据。</p>;
   return <div className="grid gap-1 text-sm">{detail.steps.map((step, index) => <div className="border-t py-2 text-xs" key={`${index}:${step.label}`}>
-    <p className="font-medium">{step.label} · {step.state === "succeeded" ? "已完成" : step.state === "failed" ? "失败" : "跳过"}</p>
+    <p className="break-all font-medium">{step.label} · {step.state === "succeeded" ? "已完成" : step.state === "failed" ? "失败" : step.state === "notAttempted" ? "未执行" : "跳过"}</p>
     {step.failureMessage ? <p className="break-words text-muted-foreground">{step.failureMessage}</p> : null}
   </div>)}</div>;
 }

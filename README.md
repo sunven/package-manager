@@ -4,7 +4,7 @@
 
 当前目标是 **observe first, then act**：默认只扫描和展示信息，可以复制命令、复制路径、打开目录；其中 8 个管理器支持确认后执行 allowlisted 的缓存清理。
 
-清理的安全性是结构性的：默认委托给拥有派生数据的 CLI；npm 的 `_npx` 和扫描会话授权的 Node `node_modules` 使用带路径身份检查的护栏删除。Rust 项目 `target` 通过固定参数的 `cargo clean` 清理，Maven 项目 `target` 通过固定参数的 `mvn clean` 清理。会话记录不可重建，因此独立处理并移入废纸篓。详见 [ADR-0001](./docs/adr/0001-delegated-cache-cleanup.md)、[ADR-0003](./docs/adr/0003-build-cleanup-uses-scan-session-candidates.md) 和 [ADR-0016](./docs/adr/0016-maven-build-directories-use-delegated-cleanup.md)。
+清理默认委托给拥有派生数据的 CLI；npm 的 `_npx` 和扫描会话授权的 Node `node_modules` 使用带路径身份检查的护栏删除。Rust 项目 `target` 通过固定参数的 `cargo clean` 清理，Maven 项目 `target` 通过固定参数的 `mvn clean` 清理。会话记录、可移除的 VS Code 工作区存储与经过指定项目引用检查的 Maven 未引用构件独立处理并移入废纸篓。详见 [ADR-0001](./docs/adr/0001-delegated-cache-cleanup.md)、[ADR-0003](./docs/adr/0003-build-cleanup-uses-scan-session-candidates.md)、[ADR-0016](./docs/adr/0016-maven-build-directories-use-delegated-cleanup.md) 和 [ADR-0036](./docs/adr/0036-maven-unreferenced-artifacts-use-scoped-trash.md)。
 
 术语定义见 [CONTEXT.md](./CONTEXT.md)，架构决策见 [docs/adr/](./docs/adr/)。
 
@@ -26,6 +26,7 @@
 - nvm 支持从 `NVM_DIR` 或 `~/.nvm` 读取已安装 Node 版本、nvm 根目录和 Node versions 目录。
 - Homebrew 支持 formula/cask 清单、outdated、leaves、cleanup dry-run、prefix/cache/cellar 路径。
 - Maven 支持本地仓库路径、artifact/version 统计、重复版本、snapshot 信号和 repository 级空间统计。
+- Maven 管理器提供“未引用构件”引用检查：选择项目目录或已有项目清理目录，检查所选项目 POM、所有 profiles、父 POM、模块、传递依赖、BOM、插件与扩展，支持父属性继承与 JAR 内嵌 POM。按构件保护所有版本；来源明确为远程且未发现引用的版本可逐项确认后移入废纸篓，清空前可恢复。默认要求完整传递引用；可主动选择“仅检查本地已有 POM”，查看缺失模型并按这个范围确认清理。此方式无法证明缺失模型的传递依赖未使用候选；坐标无法解析或已有构件的模型读取失败仍禁止清理。其他项目和运行时动态加载也不属于未引用证明，详见 [ADR-0036](./docs/adr/0036-maven-unreferenced-artifacts-use-scoped-trash.md)。
 - pip 支持当前 Python interpreter 的 installed/outdated package、editable/direct-url/user-site 信号、cache/site-packages 路径。
 - Cargo 支持 `cargo install --list` 的已安装二进制 crate、Cargo bin、registry cache/source、git cache/checkouts 路径。
 - 从用户选择的根目录递归发现与 `Cargo.toml` 同级的 `target`，并行测量占用、筛选排序、确认后批量执行 `cargo clean --offline`。
@@ -66,9 +67,9 @@
 
 - 主要面向 macOS 自用。
 - 不做后台自动刷新。启动时只扫描首个已启用管理器，其他管理器首次进入时扫描，之后手动刷新；手动全量扫描仅覆盖已启用管理器。
-- 不做 per-package size，只展示 manager/path 级别总大小。
+- 常规包清单不做 per-package size，只展示 manager/path 级别总大小；Maven 引用检查另外测量候选版本目录的占用。
 - 只有 npm 和 pnpm 支持确认后卸载全局包；Android SDK 支持确认后卸载单个 SDK 组件；其他管理器不做 uninstall。
-- 缓存清理覆盖 8 个管理器。**nvm、Maven、Cargo、FVM、Android SDK 的管理器缓存没有清理能力，这是有意的架构决定**，不是遗漏：nvm、Maven、Cargo 都没有官方子命令能清自己的缓存，做它们就意味着本工具自己 `rm -rf` 推导出来的路径；FVM 的 `fvm remove` 删除的是用户安装的 SDK（按卸载对待，需单独安全论证），`fvm destroy` 则超出本工具的能力范围；Android SDK 的组件属于用户安装的资产，按卸载单独处理，不做缓存清理。Rust 项目构建产物是独立功能，不计入 Cargo 管理器缓存或健康汇总。
+- 通用缓存清理覆盖 8 个管理器；nvm、Maven、Cargo、FVM、Android SDK 在通用清理表中没有清理方案（[ADR-0001](./docs/adr/0001-delegated-cache-cleanup.md)）。Maven 本地仓库另有指定项目范围的未引用构件检查与废纸篓维护，不提供整个仓库的一键清空；它同时包含下载构件与本地安装资产。FVM 的 `fvm remove` 和 Android SDK 组件按卸载处理。Rust 项目构建产物是独立功能，不计入 Cargo 管理器缓存或健康汇总。
 - Rust 构建产物 v1 只认 `Cargo.toml` 同级、非符号链接且根级包含 `CACHEDIR.TAG` 或 `.rustc_info.json` 的 `target`；不解析自定义或共享 `target-dir`。
 - Maven 构建产物 v1 只认 `pom.xml` 同级、非符号链接且根级包含 Maven 产物目录（如 `maven-status`、`classes`、`test-classes`）的 `target`；不解析 pom 自定义的 `<directory>`，也不偏好项目内 `mvnw`。
 - Node 依赖目录只认常规文件 `package.json` 同级、非符号链接的 `node_modules`；扫描不深入依赖目录，清理不自动重新安装。
@@ -421,7 +422,7 @@ Cargo 扫描只运行 `cargo --version` 和 `cargo install --list`。`CARGO_HOME
 
 - 绕过 `_npx` 或扫描会话依赖目录的护栏，删除任意文件或目录。
 - 移除「路径存在」「远程工作区」「路径无法访问」的 VS Code 工作区存储记录，或在 VS Code 运行时执行移除。
-- 为 nvm、Maven、Cargo 的管理器缓存提供清理（ADR-0001）。
+- 为 nvm、Cargo 提供管理器缓存清理，或一键清空 Maven 本地仓库（ADR-0001；Maven 指定范围例外见 ADR-0036）。
 - 跨管理器的批量清理，或从健康页直接执行。
 - `docker image prune -a`、`docker system prune`、删除容器、删除卷。
 - 给 uv 传 `--force`（那会绕过 uv 自己的 in-use 检查）。

@@ -207,7 +207,7 @@ function pushManagerRecommendations(
         tone: "review",
         managerId,
         title: "Maven 本地仓库含快照版",
-        detail: "这是仓库中的构件类型，不代表项目正在使用；本工具不清理 Maven 本地仓库。",
+        detail: "这是仓库中的构件类型，不代表项目正在使用；可在 Maven 引用检查中核对所选项目的引用。",
         count: manager.maven.snapshotCount,
       });
     }
@@ -217,7 +217,7 @@ function pushManagerRecommendations(
         tone: "review",
         managerId,
         title: "Maven 本地仓库有多版本构件",
-        detail: "不同项目可能依赖不同版本；本工具仅展示，不提供仓库清理。",
+        detail: "不同项目可能依赖不同版本；Maven 引用检查会保留被引用构件的所有版本。",
         count: manager.maven.duplicateArtifactCount,
       });
     }

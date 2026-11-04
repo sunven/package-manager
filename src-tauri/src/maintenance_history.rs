@@ -53,6 +53,7 @@ pub(crate) enum MaintenanceDomain {
 #[serde(rename_all = "camelCase")]
 pub(crate) enum MaintenanceOperation {
     CleanupCache,
+    CleanMavenArtifacts,
     UninstallGlobalPackage,
     UninstallSdkComponent,
     CleanBatch,

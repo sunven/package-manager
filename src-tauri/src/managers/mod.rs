@@ -23,6 +23,7 @@ use std::path::Path;
 use std::time::Instant;
 
 pub(crate) use cleanup::run_cache_cleanup_with_runner;
+pub(crate) use maven::repository_for_maintenance as maven_repository_for_maintenance;
 pub(crate) use node::{run_npm_maintenance_with_runner, run_pnpm_maintenance_with_runner};
 pub(crate) use android_sdk::run_android_sdk_uninstall_with_runner;
 

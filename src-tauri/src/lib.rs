@@ -23,6 +23,7 @@ mod maintenance_history;
 mod maintenance_operation;
 mod manager_history;
 mod managers;
+mod maven_unused;
 mod observation_ledger;
 mod observed_file;
 mod opencode_deletion;
@@ -56,6 +57,54 @@ use crate::types::{
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+
+#[tauri::command]
+async fn scan_maven_unused_dependencies(
+    roots: Vec<String>,
+    reference_mode: Option<maven_unused::ReferenceMode>,
+    state: tauri::State<'_, maven_unused::MavenUnusedState>,
+) -> Result<maven_unused::Scan, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        state.scan(
+            roots.into_iter().map(std::path::PathBuf::from).collect(),
+            reference_mode.unwrap_or_default(),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn remove_maven_unused_dependencies(
+    scan_id: String,
+    ids: Vec<String>,
+    state: tauri::State<'_, maven_unused::MavenUnusedState>,
+    history: tauri::State<'_, maintenance_history::MaintenanceHistoryState>,
+) -> Result<maintenance_operation::Receipt<maven_unused::Outcome>, String> {
+    let state = state.inner().clone();
+    let history = history.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || state.remove(&scan_id, &ids, &history))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn choose_maven_project_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .blocking_pick_folder()
+            .map(|path| {
+                path.into_path()
+                    .map(|path| path.display().to_string())
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
 
 #[tauri::command]
 async fn scan_codex_skills(
@@ -1039,6 +1088,7 @@ pub fn run() {
     app_environment::initialize();
 
     tauri::Builder::default()
+        .manage(maven_unused::MavenUnusedState::default())
         .manage(codex_hooks::HooksState::default())
         .manage(codex_skills::SkillsState::default())
         .manage(claude_marketplaces::MarketplacesState::default())
@@ -1087,6 +1137,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            scan_maven_unused_dependencies,
+            remove_maven_unused_dependencies,
+            choose_maven_project_directory,
             scan_claude_skills,
             prepare_claude_skill,
             commit_claude_skill,

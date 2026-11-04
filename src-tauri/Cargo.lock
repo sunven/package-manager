@@ -2632,6 +2632,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "toml_edit 0.25.11+spec-1.1.0",
+ "zip",
 ]
 
 [[package]]
@@ -5862,6 +5863,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1156b39d142a34b999c2310a50455e0cb3760bf7efad0122f796d813bee26ccb"
 dependencies = [
  "crc32fast",
+ "flate2",
  "getrandom 0.4.2",
  "indexmap 2.14.0",
  "memchr",

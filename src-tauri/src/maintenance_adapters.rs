@@ -20,6 +20,104 @@ use crate::types::{
 use crate::vscode_removal::{VscodeStorageRemovalItem, VscodeStorageRemovalResult};
 use serde::{Deserialize, Serialize};
 
+pub(crate) fn remove_maven_artifacts(
+    history: &MaintenanceHistoryState,
+    scope: String,
+    selected: &[crate::maven_unused::Candidate],
+    execute: impl FnOnce(
+        &mut dyn FnMut(&crate::maven_unused::RemovalItem),
+    ) -> Result<crate::maven_unused::Outcome, String>,
+) -> Result<Receipt<crate::maven_unused::Outcome>, String> {
+    let ids: Vec<_> = selected
+        .iter()
+        .map(|candidate| candidate.id.clone())
+        .collect();
+    run(
+        history,
+        OperationHeader {
+            domain: MaintenanceDomain::Manager,
+            operation: MaintenanceOperation::CleanMavenArtifacts,
+            detail: MaintenanceDetail::Manager(ManagerDetail {
+                manager_id: ManagerId::Maven,
+                target: Some(scope),
+                steps: Some(
+                    selected
+                        .iter()
+                        .map(|candidate| ManagerStep {
+                            label: format!(
+                                "{}:{} · {} · {} B",
+                                candidate.coordinate,
+                                candidate.version,
+                                candidate.path,
+                                candidate.bytes
+                            ),
+                            state: "notAttempted".into(),
+                            failure_message: None,
+                        })
+                        .collect(),
+                ),
+            }),
+            before_snapshot_id: None,
+        },
+        execute,
+        |history, id, item| {
+            let index = ids
+                .iter()
+                .position(|candidate_id| candidate_id == &item.id)
+                .ok_or("构件结果不属于确认范围")?;
+            history.update(id, |record| {
+                let MaintenanceDetail::Manager(detail) = &mut record.detail else {
+                    return Err("维护记录类型不匹配".into());
+                };
+                let step = detail
+                    .steps
+                    .as_mut()
+                    .and_then(|steps| steps.get_mut(index))
+                    .ok_or("维护记录目标不存在")?;
+                step.state = match item.status {
+                    "Moved" => "succeeded",
+                    "Skipped" => "skipped",
+                    _ => "failed",
+                }
+                .into();
+                step.failure_message = optional_text(item.message.clone());
+                Ok(())
+            })
+        },
+        |history, id, end| {
+            let (execution, message) = match end {
+                OperationEnd::Aborted(error) => (ExecutionSummary::NotExecuted, error.to_string()),
+                OperationEnd::Completed(outcome) => (
+                    execution_from_counts(
+                        outcome.items.len(),
+                        outcome.moved,
+                        outcome.failed,
+                        outcome.skipped,
+                        0,
+                    ),
+                    format!(
+                        "已移入废纸篓 {} 个；跳过 {} 个；失败 {} 个。清空废纸篓前可恢复。",
+                        outcome.moved, outcome.skipped, outcome.failed
+                    ),
+                ),
+            };
+            history.update(id, |record| {
+                record.finished_at = Some(now());
+                record.execution = execution;
+                record.message = text(message);
+                if let Some(verification) = &mut record.verification {
+                    verification.status = VerificationStatus::Skipped;
+                    verification.message = Some(
+                        "执行前已重新检查 POM 引用与目录身份；该检查不提供全机或运行时使用证明。"
+                            .into(),
+                    );
+                }
+                Ok(())
+            })
+        },
+    )
+}
+
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionRecordSnapshotInput {

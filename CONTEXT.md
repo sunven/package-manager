@@ -101,8 +101,16 @@ pnpm 特有的内容寻址包存储。物理文件被 hardlink 到各项目，�
 _Avoid_: 缓存（store 与 cache 在 pnpm 中是不同对象）
 
 **本地仓库 (Local Repository)**:
-Maven 的 `~/.m2/repository`。它在语义上是缓存，但没有任何官方子命令可以清理它。
+Maven 保存构件的本机目录，默认是 `~/.m2/repository`，也可以由配置指定。它同时包含从远程下载的构件与本地安装的构件，后者可能没有远程副本。
 _Avoid_: Maven 缓存
+
+**Maven 未引用构件 (Maven Unreferenced Artifact)**:
+在用户指定项目范围的 POM 引用检查中没有发现引用的本地仓库构件。它不代表全机未使用，也不保证未被运行时动态加载。用户主动选择只检查本地已有 POM 时，缺失模型的传递依赖不在这个证明范围内。
+_Avoid_: 无用依赖、全局未使用依赖、垃圾构件
+
+**Maven 引用检查 (Maven Reference Check)**:
+对指定 Maven 项目与本地仓库构件的 POM 声明进行只读检查，并呈现观察范围、引用保护和无法判定的部分。
+_Avoid_: Maven 构建、依赖使用追踪、全机依赖分析
 
 **目录占用 (Directory Footprint)**:
 一个被观察目录的文件系统测量占用。hardlink 或 reflink 共享的数据可能仍由其他路径持有，因此目录占用不承诺清理后的物理可回收空间。

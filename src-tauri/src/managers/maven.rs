@@ -17,6 +17,60 @@ pub(super) fn scan_maven() -> ManagerSnapshot {
     scan_maven_with_runner_and_home(&run_command, home_dir().as_deref())
 }
 
+/// Resolve the same source as the manager observation, rejecting fallback after
+/// a settings parse failure before a maintenance operation can use the path.
+pub(crate) fn repository_for_maintenance() -> Result<PathBuf, String> {
+    let run = run_command("mvn", &["--version"], Duration::from_secs(5))
+        .map_err(|failure| failure.message)?;
+    if run.exit_code != Some(0) {
+        return Err("无法确认 Maven 本地仓库位置".into());
+    }
+    let home = home_dir();
+    let maven_home = parse_maven_home(&run.stdout);
+    validate_maintenance_settings(maven_home.as_deref(), home.as_deref())?;
+    let resolution = resolve_maven_local_repository(maven_home.as_deref(), home.as_deref());
+    if let Some(message) = resolution.message {
+        return Err(message);
+    }
+    checked_maintenance_repository(&resolution.path, home.as_deref())
+}
+
+fn validate_maintenance_settings(
+    maven_home: Option<&str>,
+    home: Option<&Path>,
+) -> Result<(), String> {
+    for settings in home
+        .map(|home| home.join(".m2/settings.xml"))
+        .into_iter()
+        .chain(maven_home.map(|home| Path::new(home).join("conf/settings.xml")))
+    {
+        read_maven_local_repository_setting(&settings)?;
+    }
+    Ok(())
+}
+
+fn checked_maintenance_repository(path: &Path, home: Option<&Path>) -> Result<PathBuf, String> {
+    if !path.is_absolute() || path.to_string_lossy().contains("${") {
+        return Err("本地仓库位置无法确认，请检查 Maven settings.xml".into());
+    }
+    let repository = path
+        .canonicalize()
+        .map_err(|error| format!("无法读取 Maven 本地仓库 {}：{error}", path.display()))?;
+    let canonical_home = home
+        .map(Path::canonicalize)
+        .transpose()
+        .map_err(|_| "无法确认用户目录，不能执行 Maven 构件清理".to_string())?;
+    if !repository.is_dir()
+        || repository.parent().is_none()
+        || canonical_home
+            .as_deref()
+            .is_some_and(|home| home.starts_with(&repository))
+    {
+        return Err("本地仓库不能是用户目录、其上级目录或文件，请检查 Maven settings.xml".into());
+    }
+    Ok(repository)
+}
+
 fn scan_maven_with_runner_and_home<F>(runner: &F, home: Option<&Path>) -> ManagerSnapshot
 where
     F: Fn(&str, &[&str], Duration) -> Result<CommandRun, CommandFailure>,
@@ -194,7 +248,7 @@ fn parse_maven_local_repository_setting(contents: &str) -> Result<Option<String>
     let document = roxmltree::Document::parse(contents).map_err(|err| err.to_string())?;
     let root = document.root_element();
     if root.tag_name().name() != "settings" {
-        return Ok(None);
+        return Err("Maven settings.xml 的根元素必须是 settings".into());
     }
 
     Ok(root
@@ -416,9 +470,52 @@ fn maven_version_summary(versions: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::checked_maintenance_repository;
+    use super::validate_maintenance_settings;
     use super::{parse_maven_local_repository_setting, scan_maven_repository, MavenScanLimits};
     use crate::managers::test_support::{temp_dir, write_file};
     use crate::types::PackageSignal;
+    #[cfg(unix)]
+    use std::{fs, path::Path};
+
+    #[cfg(unix)]
+    #[test]
+    fn maintenance_repository_rejects_resolved_home_and_ancestors() {
+        let temp = temp_dir("maven-maintenance-path");
+        let home = temp.path().join("home");
+        let repository = home.join(".m2/repository");
+        fs::create_dir_all(&repository).unwrap();
+        assert_eq!(
+            checked_maintenance_repository(&repository, Some(&home)).unwrap(),
+            repository.canonicalize().unwrap()
+        );
+        assert!(checked_maintenance_repository(&repository.join("../.."), Some(&home)).is_err());
+        assert!(checked_maintenance_repository(temp.path(), Some(&home)).is_err());
+        assert!(checked_maintenance_repository(Path::new("/"), Some(&home)).is_err());
+        let alias = temp.path().join("alias");
+        std::os::unix::fs::symlink(&home, &alias).unwrap();
+        assert!(checked_maintenance_repository(&alias, Some(&home)).is_err());
+    }
+
+    #[test]
+    fn maintenance_requires_both_settings_files_to_be_readable_even_if_overridden() {
+        let temp = temp_dir("maven-maintenance-settings");
+        let home = temp.path().join("home");
+        let maven_home = temp.path().join("maven");
+        let user = home.join(".m2/settings.xml");
+        let global = maven_home.join("conf/settings.xml");
+        let valid = b"<settings><localRepository>/repository</localRepository></settings>";
+        write_file(&user, valid);
+        write_file(&global, b"<settings>");
+        assert!(validate_maintenance_settings(maven_home.to_str(), Some(&home)).is_err());
+        write_file(&global, valid);
+        write_file(&user, b"<settings>");
+        assert!(validate_maintenance_settings(maven_home.to_str(), Some(&home)).is_err());
+        write_file(&user, valid);
+        assert!(validate_maintenance_settings(maven_home.to_str(), Some(&home)).is_ok());
+        assert!(parse_maven_local_repository_setting("<project/>").is_err());
+    }
 
     #[test]
     fn scan_returns_the_repository_it_actually_reads_as_its_source() {

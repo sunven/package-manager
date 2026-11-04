@@ -10,6 +10,7 @@ export type MaintenanceDomain = "manager" | "projectCleanup" | "vscodeStorage" |
 
 export type MaintenanceOperation =
   | "cleanupCache"
+  | "cleanMavenArtifacts"
   | "uninstallGlobalPackage"
   | "uninstallSdkComponent"
   | "cleanBatch"
@@ -38,7 +39,7 @@ export interface Verification {
 
 export interface ManagerStep {
   label: string;
-  state: "succeeded" | "failed" | "skipped";
+  state: "succeeded" | "failed" | "skipped" | "notAttempted";
   failureMessage: string | null;
 }
 
@@ -236,6 +237,7 @@ export const maintenanceDomainLabels: Record<MaintenanceDomain, string> = {
 
 export const maintenanceOperationLabels: Record<MaintenanceOperation, string> = {
   cleanupCache: "缓存清理",
+  cleanMavenArtifacts: "Maven 未引用构件清理",
   uninstallGlobalPackage: "全局包卸载",
   uninstallSdkComponent: "SDK 组件卸载",
   cleanBatch: "项目清理批次",
@@ -308,6 +310,7 @@ export function maintenanceRecordState(record: Pick<MaintenanceRecordSummary, "e
 }
 
 export function maintenanceRecoveryBoundary(record: Pick<MaintenanceRecordSummary, "operation" | "domain">) {
+  if (record.operation === "cleanMavenArtifacts") return "构件版本目录移入废纸篓，清空前可恢复；空间在清空后释放。其他项目或动态加载仍可能需要这些构件。";
   if (record.operation === "uninstallSdkComponent") return "SDK 组件由 Android SDK 自带 CLI 永久删除，不进入废纸篓，无法由本工具恢复。";
   if (record.operation === "deletePermanently") return "OpenCode 服务永久删除会话及其子会话，无法由本工具恢复。";
   if (record.operation === "removeToTrash" || record.operation === "removeWorkspaceStorage") {

@@ -58,6 +58,8 @@ import { PageHeader, Panel } from "./components/ui";
 import { Toaster } from "../components/ui/sonner";
 import { AppUpdateToast, appUpdateToastId } from "./components/AppUpdateToast";
 import { useAppUpdate } from "./hooks/useAppUpdate";
+import { useMavenUnused } from "./hooks/useMavenUnused";
+import { MavenUnusedPanel } from "./components/MavenUnusedPanel";
 
 type Theme = "dark" | "light";
 
@@ -80,6 +82,7 @@ export function App() {
   const state = usePackageManagers();
   const appUpdate = useAppUpdate();
   const projectCleanup = useProjectCleanup();
+  const mavenUnused = useMavenUnused();
   const [activeView, setActiveView] = useState<"health" | "history" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
   const [overviewTab, setOverviewTab] = useState("overview");
   const [historyRequest, setHistoryRequest] = useState<HistoryRequest | null>(null);
@@ -183,6 +186,7 @@ export function App() {
     ...(observationScopes.error ? [`观察范围无法读取：${observationScopes.error}`] : []),
   ], [observationLedger.warnings, observationScopes.error]);
   const coverageBusy = state.maintenanceBusy
+    || mavenUnused.busy
     || state.scanningAll
     || codex.locked
     || claude.locked
@@ -595,7 +599,7 @@ export function App() {
               selectedManager={selectedManager}
             >
             <ManagerObservationHeader
-              busy={state.maintenanceBusy}
+              busy={state.maintenanceBusy || mavenUnused.busy}
               item={requireCoverageItem(coverageById, managerObservationId(selectedManager))}
               onRefresh={() => void actions.refresh()}
               scanMeta={state.scanMeta}
@@ -628,6 +632,13 @@ export function App() {
                   selectedPackageIndex={state.selectedPackageIndex}
                   selectedPipFilter={state.selectedPipFilter}
                 />
+                {selectedManager === "Maven" ? <MavenUnusedPanel
+                  workflow={mavenUnused}
+                  homeDirectory={state.homeDirectory}
+                  presets={projectCleanup.view.settings.presets}
+                  disabled={scanning || state.maintenanceBusy || currentManager?.status === "Missing"}
+                  onRemoved={() => { void actions.refresh("Maven"); }}
+                /> : null}
               </Panel>
 
               <aside className="studio-manager-details grid gap-2">
