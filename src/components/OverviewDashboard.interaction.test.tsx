@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OverviewDashboard } from "./OverviewDashboard";
 import { buildDevelopmentHealthSummary } from "../developmentHealth";
@@ -47,6 +47,29 @@ describe("overview entry points", () => {
     expect(screen.queryByText("可回收总量")).toBeNull();
   });
 
+  it.each([null, 0])("only reports measured storage for a numeric reading (%s)", (bytes) => {
+    const npm = managerFixture("Npm", { paths: [{
+      kind: "Cache", label: "缓存", path: "/cache",
+      size: { status: bytes === null ? "Pending" : "Ready", bytes, human: null, files: 0, directories: 0, skipped: 0, message: null },
+    }] });
+    render(
+      <OverviewDashboard
+        health={buildDevelopmentHealthSummary(["Npm"], { Npm: npm })}
+        coverage={coverageFixture(["Npm"])}
+        homeDirectory={null}
+        scanningAll={false}
+        maintenanceBusy={false}
+        onRefreshAll={vi.fn()}
+        onOpenManager={vi.fn()}
+        onOpenView={vi.fn()}
+        onOpenCoverage={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("包、版本与资源条目").nextElementSibling?.textContent).toBe("0");
+    const storage = within(screen.getByRole("region", { name: "存储测量" }));
+    expect(storage.getByText(bytes === null ? "尚未测量" : "已测合计 0 B")).toBeTruthy();
+  });
+
   it("renders unscanned coverage and exposes navigation without maintenance execution", () => {
     const refresh = vi.fn();
     const view = vi.fn();
@@ -66,7 +89,9 @@ describe("overview entry points", () => {
     );
     expect(screen.getByRole("main", { name: "开发环境总览" })).toBeTruthy();
     expect(screen.getByText("0 / 2")).toBeTruthy();
-    expect(screen.getByText("尚无目录占用测量，请扫描管理器后查看")).toBeTruthy();
+    expect(within(screen.getByLabelText("扫描统计")).getByText("—")).toBeTruthy();
+    expect(screen.getByText("尚未测量")).toBeTruthy();
+    expect(screen.getByText("暂无目录占用数据")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "扫描已启用管理器" }));
     expect(refresh).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByRole("button", { name: "查看观察覆盖度" }));

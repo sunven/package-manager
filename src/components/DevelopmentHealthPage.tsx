@@ -17,7 +17,7 @@ export function DevelopmentHealthPage({
     <section aria-labelledby="overview-recommendations-title" className="overview-board-section hum-recommendations">
       <div className="overview-section-head">
         <h2 id="overview-recommendations-title">优先建议</h2>
-        <span>{health.recommendations.length} 项</span>
+        {health.scannedManagerCount > 0 && <span>{health.recommendations.length} 项</span>}
       </div>
       {health.recommendations.length ? (
         <div className="studio-recs">
@@ -27,7 +27,7 @@ export function DevelopmentHealthPage({
         </div>
       ) : (
         <div className="overview-section-body">
-          <EmptyState message={health.scannedManagerCount ? "已扫描的管理器暂无优先建议" : "扫描管理器后查看维护建议"} />
+          <EmptyState message={health.scannedManagerCount ? "已扫描的管理器暂无优先建议" : "扫描结果将用于生成维护建议"} />
         </div>
       )}
     </section>

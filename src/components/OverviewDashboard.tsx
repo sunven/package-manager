@@ -5,7 +5,7 @@ import { formatBytes, formatHomePath, managerLabel } from "../utils/format";
 import { statusLabels } from "../constants";
 import { DevelopmentHealthPage } from "./DevelopmentHealthPage";
 import { ManagerMark } from "./ManagerMark";
-import { EmptyState, PageHeader, StatCard } from "./ui";
+import { EmptyState, PageHeader } from "./ui";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 
@@ -20,11 +20,13 @@ export function OverviewDashboard({ health, coverage, homeDirectory, scanningAll
   onOpenView: (view: "cleanup" | "vscode" | "sessions" | "history" | "environment") => void;
   onOpenCoverage: () => void;
 }) {
+  const hasPackageCount = health.readyManagerCount > 0 || health.totalPackages > 0;
+
   return (
     <main className="view-grid overview-dashboard" aria-label="开发环境总览">
       <PageHeader
         title="开发环境总览"
-        description="按需检查本机环境；未扫描不代表没有内容，维护前先查看范围和依据。"
+        description="维护前先查看范围和依据"
         actions={
           <Button disabled={scanningAll || maintenanceBusy} onClick={onRefreshAll} type="button">
             {scanningAll ? "正在扫描已启用管理器" : "扫描已启用管理器"}
@@ -32,28 +34,31 @@ export function OverviewDashboard({ health, coverage, homeDirectory, scanningAll
         }
       />
       <div className="overview-summary">
-      <div className="stat-grid grid-cols-1 sm:grid-cols-3">
-        <StatCard label="已扫描／已启用管理器" value={`${health.scannedManagerCount} / ${health.enabledManagerCount}`} />
-        <StatCard label="包、版本与资源条目" value={health.scannedManagerCount ? String(health.totalPackages) : "—"} />
-        <StatCard label="未扫描管理器" value={String(health.enabledManagerCount - health.scannedManagerCount)} />
-      </div>
-      <section aria-label="已启用管理器" className="manager-inventory">
-        <h2 className="manager-inventory-label">已启用管理器</h2>
-        <div className="manager-inventory-grid">
-          {health.managerStatuses.map((status) => (
-            <button
-              className="manager-token"
-              key={status.managerId}
-              onClick={() => onOpenManager(status.managerId)}
-              title={`${managerLabel(status.managerId)}，${statusLabels[status.status]}${status.status === "Not scanned" ? "" : `，${status.packageCount} 项`}`}
-              type="button"
-            >
-              <ManagerMark id={status.managerId} />
-              <span>{managerLabel(status.managerId)}</span>
-            </button>
-          ))}
-        </div>
-      </section>
+        <dl aria-label="扫描统计" className="overview-totals">
+          <div className="overview-scan-count">
+            <dt>已扫描 / 已启用管理器</dt>
+            <dd>{health.scannedManagerCount} / {health.enabledManagerCount}</dd>
+          </div>
+          <div className="fact-row"><dt>包、版本与资源条目</dt><dd>{hasPackageCount ? health.totalPackages : "—"}</dd></div>
+          <div className="fact-row"><dt>未扫描管理器</dt><dd>{health.enabledManagerCount - health.scannedManagerCount}</dd></div>
+        </dl>
+        <section aria-label="已启用管理器" className="manager-inventory">
+          <h2 className="manager-inventory-label">已启用管理器</h2>
+          <div className="manager-inventory-grid">
+            {health.managerStatuses.map((status) => (
+              <button
+                className="manager-token"
+                key={status.managerId}
+                onClick={() => onOpenManager(status.managerId)}
+                title={`${managerLabel(status.managerId)}，${statusLabels[status.status]}${status.status === "Not scanned" ? "" : `，${status.packageCount} 项`}`}
+                type="button"
+              >
+                <ManagerMark id={status.managerId} />
+                <span>{managerLabel(status.managerId)}</span>
+              </button>
+            ))}
+          </div>
+        </section>
       </div>
         <div className="overview-board">
           <DevelopmentHealthPage health={health} homeDirectory={homeDirectory} onOpenManager={onOpenManager} />
@@ -118,7 +123,7 @@ function StorageSection({ health, homeDirectory, onOpenManager }: {
     <section className="overview-board-section" aria-labelledby="overview-storage-title">
       <div className="overview-section-head">
         <h2 id="overview-storage-title">存储测量</h2>
-        <span>{health.scannedManagerCount ? `已测合计 ${formatBytes(health.totalBytes)}` : "尚未测量"}</span>
+        <span>{health.totalBytes !== null ? `已测合计 ${formatBytes(health.totalBytes)}` : "尚未测量"}</span>
       </div>
       <div className="overview-section-body">
         {items.length ? (
@@ -148,7 +153,7 @@ function StorageSection({ health, homeDirectory, onOpenManager }: {
             <p className="text-xs text-muted-foreground">按已测值排列；共享文件可能被不同目录持有，目录占用不等于可回收空间。</p>
           </>
         ) : (
-          <EmptyState message="尚无目录占用测量，请扫描管理器后查看" />
+          <EmptyState message={health.totalBytes === null ? "暂无目录占用数据" : "已测合计为零，暂无目录可列出"} />
         )}
       </div>
     </section>

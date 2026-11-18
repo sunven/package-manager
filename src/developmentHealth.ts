@@ -9,7 +9,7 @@ export interface DevelopmentHealthSummary {
   scannedManagerCount: number;
   readyManagerCount: number;
   totalPackages: number;
-  totalBytes: number;
+  totalBytes: number | null;
   scanIssueCount: number;
   riskSignalCount: number;
   reviewSignalCount: number;
@@ -78,7 +78,7 @@ export function buildDevelopmentHealthSummary(
   const topStorage: HealthStorageItem[] = [];
   const signalCounts = new Map<PackageSignal, number>();
   const recommendations: HealthRecommendation[] = [];
-  let totalBytes = 0;
+  let totalBytes: number | null = null;
   let totalPackages = 0;
   let scanIssueCount = 0;
 
@@ -90,9 +90,9 @@ export function buildDevelopmentHealthSummary(
     }
 
     for (const path of manager.paths) {
-      const bytes = path.size.bytes ?? 0;
-      if (path.size.status === "Ready" && countedSizePath(path.kind)) {
-        totalBytes += bytes;
+      const bytes = path.size.bytes;
+      if (path.size.status === "Ready" && bytes !== null && countedSizePath(path.kind)) {
+        totalBytes = (totalBytes ?? 0) + bytes;
         if (bytes > 0) {
           topStorage.push({
             managerId,
