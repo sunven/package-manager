@@ -16,6 +16,7 @@ mod codex_skills;
 mod command;
 mod command_location_association;
 mod disk_usage;
+mod disk_scan;
 mod environment_inspection;
 mod grok_sessions;
 mod maintenance_adapters;
@@ -944,8 +945,13 @@ async fn record_observation(event: observation_ledger::ObservationEvent, state: 
 }
 
 #[tauri::command]
-async fn load_observation_scopes(enabled_managers: Vec<ManagerId>) -> Result<std::collections::BTreeMap<String, Option<observation_ledger::ObservationScope>>, String> {
-    tauri::async_runtime::spawn_blocking(move || observation_ledger::scopes(&enabled_managers)).await.map_err(|e| e.to_string())
+async fn load_observation_scopes(enabled_managers: Vec<ManagerId>, disk_scan: tauri::State<'_, disk_scan::DiskScanState>) -> Result<std::collections::BTreeMap<String, Option<observation_ledger::ObservationScope>>, String> {
+    let path = disk_scan.settings().last_path;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut scopes = observation_ledger::scopes(&enabled_managers);
+        scopes.insert("disk-scan".into(), path.map(|path| observation_ledger::ObservationScope { key: format!("disk:{path}"), label: path }));
+        scopes
+    }).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1120,6 +1126,7 @@ pub fn run() {
                     .collect::<Vec<_>>()
             });
             app.manage(project_cleanup_state);
+            app.manage(disk_scan::DiskScanState::load(app.path().app_config_dir()?.join("disk-scan.json")));
             let data_directory = app.path().app_data_dir()?;
             let history_directory = data_directory.join("manager-history");
             app.manage(manager_history::HistoryState::new(history_directory.clone()));
@@ -1137,6 +1144,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            disk_scan::get_disk_scan_settings,
+            disk_scan::choose_disk_scan_directory,
+            disk_scan::start_disk_scan,
+            disk_scan::stop_disk_scan,
+            disk_scan::read_disk_scan_directory,
             scan_maven_unused_dependencies,
             remove_maven_unused_dependencies,
             choose_maven_project_directory,

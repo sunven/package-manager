@@ -2,6 +2,7 @@ export type ObservationGroupId =
   | "managers"
   | "environment"
   | "project"
+  | "disk"
   | "vscode"
   | "sessions"
   | "codex"
@@ -23,6 +24,7 @@ export type ObservationItemId =
   | "manager:androidsdk"
   | "environment"
   | "project-scan"
+  | "disk-scan"
   | "vscode-storage"
   | "session:codex"
   | "session:claude"
@@ -49,6 +51,7 @@ export const OBSERVATION_GROUPS: { id: ObservationGroupId; label: string }[] = [
   { id: "managers", label: "管理器" },
   { id: "environment", label: "环境诊断" },
   { id: "project", label: "项目派生数据" },
+  { id: "disk", label: "磁盘扫描" },
   { id: "vscode", label: "VS Code 工作区存储" },
   { id: "sessions", label: "会话记录" },
   { id: "codex", label: "Codex" },
@@ -71,6 +74,7 @@ export const OBSERVATION_ITEMS: ObservationItem[] = [
   { id: "manager:androidsdk", group: "managers", label: "Android SDK" },
   { id: "environment", group: "environment", label: "环境诊断" },
   { id: "project-scan", group: "project", label: "项目派生数据扫描" },
+  { id: "disk-scan", group: "disk", label: "磁盘扫描" },
   { id: "vscode-storage", group: "vscode", label: "VS Code 工作区存储" },
   { id: "session:codex", group: "sessions", label: "Codex 会话记录" },
   { id: "session:claude", group: "sessions", label: "Claude 会话记录" },

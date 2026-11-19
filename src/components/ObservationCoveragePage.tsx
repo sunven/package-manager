@@ -17,6 +17,7 @@ const defaultExpanded: Record<ObservationGroupId, boolean> = {
   managers: true,
   environment: true,
   project: true,
+  disk: true,
   vscode: true,
   sessions: true,
   codex: false,

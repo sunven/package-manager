@@ -113,7 +113,7 @@ function currentScope(
   facts: ObservationFacts,
   scopes: ObservationScopes,
 ): ObservationScope | null {
-  return scopes[id] ?? facts.currentScope ?? null;
+  return id === "disk-scan" ? facts.currentScope ?? scopes[id] ?? null : scopes[id] ?? facts.currentScope ?? null;
 }
 
 function effectiveStatus(
@@ -233,7 +233,7 @@ export function buildObservationCoverage(input: ObservationCoverageInput): Obser
       actions: {
         view: true,
         refresh: REFRESHABLE.has(item.id) && !disabled,
-        adjustScope: Boolean(manager) || item.id === "project-scan",
+        adjustScope: Boolean(manager) || item.id === "project-scan" || item.id === "disk-scan",
       },
     };
   });

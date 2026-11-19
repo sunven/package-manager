@@ -10,6 +10,9 @@ import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState }
 import { buildDevelopmentHealthSummary } from "./developmentHealth";
 import { usePackageManagers } from "./hooks/usePackageManagers";
 import { useProjectCleanup } from "./hooks/useProjectCleanup";
+import { useDiskScan } from "./hooks/useDiskScan";
+import { DiskScanPage } from "./components/DiskScanPage";
+import { diskScanObservationFacts } from "./diskScan";
 import { useSessionRecords } from "./hooks/useSessionRecords";
 import { useOpenCodeSessions } from "./hooks/useOpenCodeSessions";
 import { useCodexWorkflow } from "./hooks/useCodexWorkflow";
@@ -82,8 +85,9 @@ export function App() {
   const state = usePackageManagers();
   const appUpdate = useAppUpdate();
   const projectCleanup = useProjectCleanup();
+  const diskScan = useDiskScan();
   const mavenUnused = useMavenUnused();
-  const [activeView, setActiveView] = useState<"health" | "history" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
+  const [activeView, setActiveView] = useState<"health" | "history" | "managers" | "cleanup" | "disk" | "vscode" | "sessions" | "plugins" | "claude" | "settings">("health");
   const [overviewTab, setOverviewTab] = useState("overview");
   const [historyRequest, setHistoryRequest] = useState<HistoryRequest | null>(null);
   const observations = useObservationTools(activeView === "health" && overviewTab === "environment" ? "environment" : null, state.enabledManagers, state.historyRevision);
@@ -121,6 +125,7 @@ export function App() {
       observations.environmentError,
     );
     facts["project-scan"] = projectObservationFacts(projectCleanup.view);
+    facts["disk-scan"] = diskScanObservationFacts(diskScan.view);
     facts["vscode-storage"] = vscodeObservationFacts(
       vscodeStorage.scan,
       vscodeStorage.scanning,
@@ -165,6 +170,7 @@ export function App() {
     state.managerSnapshots, state.scanStates,
     observations.environment, observations.environmentBusy, observations.environmentError,
     projectCleanup.view,
+    diskScan.view,
     vscodeStorage.scan, vscodeStorage.scanning, vscodeStorage.error,
     sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.scanningSources.grok, sessionRecords.scanningSources.qoder, sessionRecords.scanningSources["qoder-cn"], sessionRecords.error,
     openCodeSessions.scan, openCodeSessions.scanning, openCodeSessions.error,
@@ -287,6 +293,9 @@ export function App() {
       case "project-scan":
         setActiveView("cleanup");
         return;
+      case "disk-scan":
+        setActiveView("disk");
+        return;
       case "vscode-storage":
         setActiveView("vscode");
         return;
@@ -338,6 +347,7 @@ export function App() {
     actions.closePackageActions();
     if (item.group === "managers") setActiveView("settings");
     if (item.id === "project-scan") setActiveView("cleanup");
+    if (item.id === "disk-scan") setActiveView("disk");
   }
 
   async function refreshCoverageItem(item: ObservationCoverageItem) {
@@ -389,6 +399,10 @@ export function App() {
         actions.closePackageActions();
         setActiveView("cleanup");
       }}
+      onShowDiskScan={() => {
+        actions.closePackageActions();
+        setActiveView("disk");
+      }}
       onShowVscodeStorage={() => {
         actions.closePackageActions();
         setActiveView("vscode");
@@ -419,7 +433,7 @@ export function App() {
         setActiveView("settings");
       }}
       onToggleTheme={() => setTheme((currentTheme) => currentTheme === "dark" ? "light" : "dark")}
-      scanning={scanningManagers.size > 0}
+      scanning={scanningManagers.size > 0 || diskScan.view.summary?.phase === "running"}
       theme={theme}
     >
       {state.historyWarning ? <Alert className="app-notice mb-3"><AlertTitle>历史保存提示</AlertTitle><AlertDescription className="break-words">{state.historyWarning}</AlertDescription></Alert> : null}
@@ -501,6 +515,8 @@ export function App() {
             coverageItem={requireCoverageItem(coverageById, "vscode-storage")}
             onShowHistory={showHistoryRecord}
           />
+        ) : activeView === "disk" ? (
+          <DiskScanPage view={diskScan.view} workflow={diskScan.workflow} />
         ) : activeView === "cleanup" ? (
           <ProjectCleanupPage
             coverageItem={requireCoverageItem(coverageById, "project-scan")}

@@ -6,6 +6,7 @@ import {
   Code as Code2,
   Gear as Settings,
   House,
+  HardDrives,
   Moon,
   Package,
   Robot,
@@ -15,11 +16,12 @@ import {
 } from "@phosphor-icons/react";
 import { Button } from "../../components/ui/button";
 
-type ViewId = "health" | "history" | "managers" | "cleanup" | "vscode" | "sessions" | "plugins" | "claude" | "settings";
+type ViewId = "health" | "history" | "managers" | "cleanup" | "disk" | "vscode" | "sessions" | "plugins" | "claude" | "settings";
 
 const observeViews: { id: ViewId; label: string; icon: typeof House }[] = [
   { id: "health", label: "总览", icon: House },
   { id: "history", label: "历史", icon: ClockCounterClockwise },
+  { id: "disk", label: "磁盘扫描", icon: HardDrives },
 ];
 
 const maintainViews: { id: ViewId; label: string; icon: typeof House }[] = [
@@ -41,6 +43,7 @@ export function Shell({
   onShowHealth,
   onShowHistory,
   onShowProjectCleanup,
+  onShowDiskScan,
   onShowVscodeStorage,
   onShowSessionRecords,
   onShowCodexPlugins,
@@ -57,6 +60,7 @@ export function Shell({
   onShowHealth: () => void;
   onShowHistory: () => void;
   onShowProjectCleanup: () => void;
+  onShowDiskScan: () => void;
   onShowVscodeStorage: () => void;
   onShowSessionRecords: () => void;
   onShowCodexPlugins: () => void;
@@ -78,6 +82,7 @@ export function Shell({
     history: onShowHistory,
     managers: onShowManagers,
     cleanup: onShowProjectCleanup,
+    disk: onShowDiskScan,
     vscode: onShowVscodeStorage,
     sessions: onShowSessionRecords,
     plugins: onShowCodexPlugins,
