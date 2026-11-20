@@ -1,6 +1,6 @@
 use crate::command::run_command;
 use crate::session_records::{
-    age_eligible_counts, now_ms, open_files_under, parse_rfc3339_millis, SessionRecord,
+    age_eligible_counts, now_ms, parse_rfc3339_millis, path_in_use, SessionRecord,
     SessionRemovalItem, SessionRemovalProgress, SessionRemovalReason, SessionRemovalResult,
     SessionRemovalStatus, SessionScanStatus, SessionSourceKind, SessionSourceScan,
 };
@@ -586,16 +586,12 @@ pub(crate) fn remove_default(
     on_item: &mut dyn FnMut(&SessionRemovalItem),
 ) -> Result<SessionRemovalResult, String> {
     let root = expected_root(edition, expected)?;
-    let open_paths = match open_files_under(&root) {
-        Ok(paths) => paths,
-        Err(message) => return Ok(SessionRemovalResult::aborted(message)),
-    };
     Ok(remove_records(
         &root,
         edition.label(),
         ids,
         cutoff_ms,
-        &open_paths,
+        &path_in_use,
         &mut crate::session_records::move_paths_to_trash,
         report,
         on_item,
@@ -620,16 +616,13 @@ fn remove_record(
     root: &Path,
     id: &str,
     cutoff_ms: Option<i64>,
-    open_paths: &HashSet<PathBuf>,
+    is_open: &dyn Fn(&Path) -> Result<bool, String>,
     trash: &mut dyn FnMut(&[PathBuf]) -> Result<(), String>,
 ) -> ItemOutcome {
     let paths = match record_paths(root, id) {
         Ok(paths) => paths,
         Err(message) => return skipped(SessionRemovalReason::NoLongerRecord, Some(message)),
     };
-    if paths.is_open(open_paths) {
-        return skipped(SessionRemovalReason::InUse, None);
-    }
     if let Some(cutoff) = cutoff_ms {
         let state = SessionScanState::default();
         match paths.activity_ms(&state) {
@@ -644,6 +637,16 @@ fn remove_record(
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
+    for path in &targets {
+        match is_open(path) {
+            Ok(false) => {}
+            Ok(true) => return skipped(SessionRemovalReason::InUse, None),
+            Err(message) => return skipped(SessionRemovalReason::UsageUnknown, Some(message)),
+        }
+    }
+    if let Err(message) = record_paths(root, id) {
+        return skipped(SessionRemovalReason::NoLongerRecord, Some(message));
+    }
     let trash_result = trash(&targets);
     let remaining = targets
         .iter()
@@ -671,7 +674,7 @@ fn remove_records(
     label: &str,
     ids: Option<&[String]>,
     cutoff_ms: Option<i64>,
-    open_paths: &HashSet<PathBuf>,
+    is_open: &dyn Fn(&Path) -> Result<bool, String>,
     trash: &mut dyn FnMut(&[PathBuf]) -> Result<(), String>,
     report: &mut dyn FnMut(SessionRemovalProgress),
     on_item: &mut dyn FnMut(&SessionRemovalItem),
@@ -703,7 +706,7 @@ fn remove_records(
     report(SessionRemovalProgress::Started { total });
     let mut result = SessionRemovalResult::default();
     for (index, id) in candidates.iter().enumerate() {
-        let outcome = remove_record(root, id, cutoff_ms, open_paths, trash);
+        let outcome = remove_record(root, id, cutoff_ms, is_open, trash);
         result.record(id, outcome.status, outcome.reason, outcome.message);
         on_item(result.items.last().expect("each candidate produces an outcome"));
         report(SessionRemovalProgress::Advanced {
@@ -1004,7 +1007,7 @@ mod tests {
             "Qoder",
             Some(&ids),
             None,
-            &open,
+            &|path| Ok(open.iter().any(|open| open.starts_with(path))),
             &mut trash,
             &mut |_| {},
             &mut |_| {},
@@ -1035,7 +1038,7 @@ mod tests {
             "Qoder",
             None,
             Some(cutoff),
-            &HashSet::new(),
+            &|_| Ok(false),
             &mut |paths| -> Result<(), String> {
                 for path in paths {
                     if path.is_dir() {
@@ -1063,6 +1066,54 @@ mod tests {
             .join("-Users-test-proj")
             .join(ORPHAN)
             .exists());
+    }
+
+    #[test]
+    fn removal_rechecks_sidecar_usage_for_each_record_and_preserves_unknowns() {
+        for unknown in [false, true] {
+            let fixture = Fixture::new();
+            let first = fixture.session("project", STEM);
+            let second = fixture.session("project", ORPHAN);
+            let sidecar = fixture.root().join("project").join(ORPHAN);
+            fs::create_dir_all(&sidecar).unwrap();
+            let removed_first = std::cell::Cell::new(false);
+            let result = remove_records(
+                &fixture.root(),
+                "Qoder",
+                Some(&[format!("project/{STEM}"), format!("project/{ORPHAN}")]),
+                None,
+                &|path| {
+                    if path == sidecar && removed_first.get() {
+                        if unknown {
+                            Err("占用查询失败".into())
+                        } else {
+                            Ok(true)
+                        }
+                    } else {
+                        Ok(false)
+                    }
+                },
+                &mut |paths| {
+                    assert_eq!(paths, &[first.clone()]);
+                    fs::rename(&first, fixture.dir.path().join("removed")).unwrap();
+                    removed_first.set(true);
+                    Ok(())
+                },
+                &mut |_| {},
+                &mut |_| {},
+            );
+            assert_eq!((result.moved, result.skipped), (1, 1));
+            assert_eq!(
+                result.items[1].reason,
+                Some(if unknown {
+                    SessionRemovalReason::UsageUnknown
+                } else {
+                    SessionRemovalReason::InUse
+                })
+            );
+            assert!(second.is_file());
+            assert!(sidecar.is_dir());
+        }
     }
 
     #[test]

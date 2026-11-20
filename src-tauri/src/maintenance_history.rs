@@ -542,16 +542,13 @@ impl MaintenanceHistoryState {
         fs::create_dir_all(&parent).map_err(|error| format!("无法创建维护历史目录：{error}"))?;
         let mut temporary = tempfile::NamedTempFile::new_in(&parent)
             .map_err(|error| format!("无法保存维护历史：{error}"))?;
-        serde_json::to_writer(
-            &mut temporary,
-            &Document {
-                version: 2,
-                items: records.to_vec(),
-            },
-        )
+        let encoded = serde_json::to_vec(&Document {
+            version: 2,
+            items: records.to_vec(),
+        })
         .map_err(|error| format!("无法编码维护历史：{error}"))?;
         temporary
-            .flush()
+            .write_all(&encoded)
             .and_then(|_| temporary.as_file().sync_all())
             .map_err(|error| format!("无法保存维护历史：{error}"))?;
         temporary

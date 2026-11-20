@@ -171,11 +171,14 @@ impl<S: Clone + Default> TextCache<S> {
             None => return None,
         };
         self.parsed.fetch_add(1, Ordering::Relaxed);
-        let next_fingerprint = FileFingerprint::read(path).unwrap_or(fingerprint);
+        if FileFingerprint::read(path) != Some(fingerprint) {
+            self.entries.lock().ok()?.remove(&key);
+            return None;
+        }
         self.store(
             key,
             CachedText {
-                fingerprint: next_fingerprint,
+                fingerprint,
                 consumed,
                 state: state.clone(),
             },
@@ -498,6 +501,32 @@ mod tests {
             .read(TranscriptKind::Codex, &path, &mut line_parser)
             .unwrap();
         assert_eq!(state, 1);
+    }
+
+    #[test]
+    fn append_during_parsing_is_not_cached_as_already_read() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        fs::write(&path, b"old").unwrap();
+        let cache = TextCache::<Vec<String>>::default();
+        let first = cache.read(TranscriptKind::Codex, &path, &mut |state, line| {
+            state.push(line.to_string());
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap()
+                .write_all(b"\nrecent\n")
+                .unwrap();
+        });
+        assert!(
+            first.is_none(),
+            "a changing transcript must not supply an old activity time"
+        );
+        let second = cache.read(TranscriptKind::Codex, &path, &mut |state, line| {
+            state.push(line.to_string());
+        });
+        assert_eq!(second.unwrap(), ["old", "recent"]);
     }
 
     #[test]

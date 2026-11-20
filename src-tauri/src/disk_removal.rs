@@ -7,7 +7,7 @@ use crate::maintenance_history::{
 use crate::maintenance_operation::{self, OperationEnd, OperationHeader, Receipt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Identity {
+pub(crate) struct Identity {
     device: u64,
     inode: u64,
     kind: u32,
@@ -15,7 +15,7 @@ pub(super) struct Identity {
 }
 
 impl Identity {
-    pub(super) fn read(metadata: &Metadata) -> Option<Self> {
+    pub(crate) fn read(metadata: &Metadata) -> Option<Self> {
         #[cfg(unix)]
         {
             Some(Self {

@@ -1,6 +1,7 @@
 //! Scan-session-backed cleanup for project-owned derived data.
 
 use crate::command::{command_failure, envelope_owned};
+use crate::disk_scan::removal::Identity;
 use crate::disk_usage::format_bytes;
 use crate::types::{CommandEnvelope, CommandFailure, CommandRun, FailureKind};
 use serde::{Deserialize, Serialize};
@@ -200,6 +201,7 @@ pub(crate) struct CandidateRecord {
     message: Option<String>,
     measurement: DirectoryMeasurement,
     cleanup_attempted: bool,
+    identities: Option<Vec<(PathBuf, Identity)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -650,6 +652,7 @@ impl Registry {
                 message: discovered.message,
                 measurement: pending_measurement(),
                 cleanup_attempted: false,
+                identities: discovered.identities,
             };
             response_candidates.push(record.response());
             candidates.insert(candidate_id, record);
@@ -899,6 +902,7 @@ struct DiscoveredCandidate {
     directory_path: PathBuf,
     status: ProjectDataCandidateStatus,
     message: Option<String>,
+    identities: Option<Vec<(PathBuf, Identity)>>,
 }
 
 pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
@@ -919,19 +923,19 @@ pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
         }
         if is_rust {
             discovery.projects.rust = discovery.projects.rust.saturating_add(1);
-            if let Some(candidate) = inspect_rust_candidate(&directory) {
+            if let Some(candidate) = inspect_rust_candidate(root, &directory) {
                 discovery.candidates.push(candidate);
             }
         }
         if is_maven {
             discovery.projects.maven = discovery.projects.maven.saturating_add(1);
-            if let Some(candidate) = inspect_maven_candidate(&directory) {
+            if let Some(candidate) = inspect_maven_candidate(root, &directory) {
                 discovery.candidates.push(candidate);
             }
         }
         if is_node {
             discovery.projects.node = discovery.projects.node.saturating_add(1);
-            if let Some(candidate) = inspect_node_candidate(&directory) {
+            if let Some(candidate) = inspect_node_candidate(root, &directory) {
                 discovery.candidates.push(candidate);
             }
         }
@@ -1025,7 +1029,7 @@ fn is_node_project(directory: &Path) -> bool {
     is_regular_file(&directory.join("package.json"))
 }
 
-fn inspect_rust_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
+fn inspect_rust_candidate(root: &Path, project_path: &Path) -> Option<DiscoveredCandidate> {
     let directory_path = project_path.join("target");
     let metadata = match fs::symlink_metadata(&directory_path) {
         Ok(metadata) => metadata,
@@ -1034,6 +1038,7 @@ fn inspect_rust_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
             return Some(DiscoveredCandidate {
                 kind: ProjectDataKind::RustTarget,
                 project_path: project_path.to_path_buf(),
+                identities: None,
                 directory_path,
                 status: ProjectDataCandidateStatus::Unrecognized,
                 message: Some(format!("Could not inspect target: {err}")),
@@ -1063,13 +1068,14 @@ fn inspect_rust_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
     Some(DiscoveredCandidate {
         kind: ProjectDataKind::RustTarget,
         project_path: project_path.to_path_buf(),
+        identities: observe_project_chain(root, &directory_path),
         directory_path,
         status,
         message,
     })
 }
 
-fn inspect_maven_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
+fn inspect_maven_candidate(root: &Path, project_path: &Path) -> Option<DiscoveredCandidate> {
     let directory_path = project_path.join("target");
     let metadata = match fs::symlink_metadata(&directory_path) {
         Ok(metadata) => metadata,
@@ -1078,6 +1084,7 @@ fn inspect_maven_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
             return Some(DiscoveredCandidate {
                 kind: ProjectDataKind::MavenTarget,
                 project_path: project_path.to_path_buf(),
+                identities: None,
                 directory_path,
                 status: ProjectDataCandidateStatus::Unrecognized,
                 message: Some(format!("Could not inspect target: {err}")),
@@ -1107,13 +1114,14 @@ fn inspect_maven_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
     Some(DiscoveredCandidate {
         kind: ProjectDataKind::MavenTarget,
         project_path: project_path.to_path_buf(),
+        identities: observe_project_chain(root, &directory_path),
         directory_path,
         status,
         message,
     })
 }
 
-fn inspect_node_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
+fn inspect_node_candidate(root: &Path, project_path: &Path) -> Option<DiscoveredCandidate> {
     let directory_path = project_path.join("node_modules");
     let metadata = match fs::symlink_metadata(&directory_path) {
         Ok(metadata) => metadata,
@@ -1122,6 +1130,7 @@ fn inspect_node_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
             return Some(DiscoveredCandidate {
                 kind: ProjectDataKind::NodeModules,
                 project_path: project_path.to_path_buf(),
+                identities: None,
                 directory_path,
                 status: ProjectDataCandidateStatus::Unrecognized,
                 message: Some(format!("Could not inspect node_modules: {err}")),
@@ -1146,6 +1155,7 @@ fn inspect_node_candidate(project_path: &Path) -> Option<DiscoveredCandidate> {
     Some(DiscoveredCandidate {
         kind: ProjectDataKind::NodeModules,
         project_path: project_path.to_path_buf(),
+        identities: observe_project_chain(root, &directory_path),
         directory_path,
         status,
         message,
@@ -1809,6 +1819,43 @@ enum Validation {
     Missing,
 }
 
+fn observe_project_chain(root: &Path, directory: &Path) -> Option<Vec<(PathBuf, Identity)>> {
+    if !directory.starts_with(root) {
+        return None;
+    }
+    directory
+        .ancestors()
+        .map(|path| {
+            let metadata = fs::symlink_metadata(path).ok()?;
+            // System aliases above the scan root (such as /var) may remain unchanged.
+            if path.starts_with(root) && (is_link(&metadata) || !metadata.is_dir()) {
+                return None;
+            }
+            Some((path.to_path_buf(), Identity::read(&metadata)?))
+        })
+        .collect()
+}
+
+fn verify_project_chain(candidate: &CandidateRecord) -> Result<(), String> {
+    let identities = candidate
+        .identities
+        .as_ref()
+        .filter(|identities| !identities.is_empty())
+        .ok_or("Could not verify the scanned directory identity; scan again")?;
+    for (path, identity) in identities {
+        let current = fs::symlink_metadata(path)
+            .ok()
+            .and_then(|metadata| Identity::read(&metadata));
+        if current.as_ref() != Some(identity) {
+            return Err(
+                "The project data directory or an ancestor changed after scanning; scan again"
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}
+
 fn validate_for_cleanup(root: &Path, candidate: &CandidateRecord) -> Result<Validation, String> {
     let root = canonical_directory(root)?;
     let metadata = match fs::symlink_metadata(&candidate.directory_path) {
@@ -1825,6 +1872,7 @@ fn validate_for_cleanup(root: &Path, candidate: &CandidateRecord) -> Result<Vali
             "The project data path changed and is no longer a regular directory".to_string(),
         );
     }
+    verify_project_chain(candidate)?;
     let expected_name = match candidate.kind {
         ProjectDataKind::RustTarget | ProjectDataKind::MavenTarget => "target",
         ProjectDataKind::NodeModules => "node_modules",
@@ -1879,6 +1927,7 @@ fn validate_for_cleanup(root: &Path, candidate: &CandidateRecord) -> Result<Vali
             }));
         }
     }
+    verify_project_chain(candidate)?;
     Ok(Validation::Ready)
 }
 
@@ -2359,6 +2408,7 @@ mod tests {
             id: "candidate-1".to_string(),
             kind: ProjectDataKind::RustTarget,
             project_path: project.clone(),
+            identities: observe_project_chain(&root, &target),
             directory_path: target.clone(),
             status: ProjectDataCandidateStatus::Ready,
             message: None,
@@ -2527,6 +2577,7 @@ mod tests {
             id: "candidate-1".to_string(),
             kind: ProjectDataKind::RustTarget,
             project_path: project,
+            identities: observe_project_chain(&root, &target),
             directory_path: target.clone(),
             status: ProjectDataCandidateStatus::Ready,
             message: None,
@@ -2564,6 +2615,7 @@ mod tests {
             id: "candidate-1".to_string(),
             kind: ProjectDataKind::RustTarget,
             project_path: project,
+            identities: observe_project_chain(&root, &target),
             directory_path: target,
             status: ProjectDataCandidateStatus::Ready,
             message: None,
@@ -2593,6 +2645,7 @@ mod tests {
             id: "candidate-1".to_string(),
             kind: ProjectDataKind::RustTarget,
             project_path: project.clone(),
+            identities: observe_project_chain(&root, &target),
             directory_path: target.clone(),
             status: ProjectDataCandidateStatus::Ready,
             message: None,
@@ -2610,6 +2663,82 @@ mod tests {
 
         assert_eq!(result.status, ProjectCleanupStatus::Rejected);
         assert_eq!(result.cleaned_bytes, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_rejects_changed_targets_projects_and_ancestors() {
+        for changed in ["target", "project", "ancestor", "root", "project-link"] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("root");
+            let project = root.join("group/project");
+            create_node_project(&project);
+            let candidate = node_candidate(&project);
+            let path = match changed {
+                "target" => project.join("node_modules"),
+                "ancestor" => root.join("group"),
+                "root" => root.clone(),
+                _ => project.clone(),
+            };
+            let original = fixture.path().join("original");
+            fs::rename(&path, &original).unwrap();
+            if changed == "project-link" {
+                let other = root.join("unselected");
+                create_node_project(&other);
+                std::os::unix::fs::symlink(other, &project).unwrap();
+            } else {
+                create_node_project(&project);
+                if changed != "target" {
+                    // Preserve the target inode so only its replaced ancestor reveals the change.
+                    fs::remove_dir_all(&candidate.directory_path).unwrap();
+                    fs::rename(
+                        original.join(candidate.directory_path.strip_prefix(&path).unwrap()),
+                        &candidate.directory_path,
+                    )
+                    .unwrap();
+                }
+            }
+            let result = run_project_cleanup_with_runner_and_deleter(
+                &root,
+                &candidate,
+                &|_, _, _| panic!("must not run a command"),
+                &|_| panic!("must not delete the replacement: {changed}"),
+            );
+            assert_eq!(result.status, ProjectCleanupStatus::Rejected, "{changed}");
+            assert!(project.join("node_modules/package.js").exists());
+        }
+    }
+
+    #[test]
+    fn installing_a_scan_keeps_the_identity_observed_during_discovery() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(fixture.path()).unwrap();
+        let project = root.join("project");
+        create_node_project(&project);
+        let mut registry = Registry::load(root.join("settings.json"));
+        let root_id = registry
+            .authorize_root(root.clone())
+            .unwrap()
+            .root_id
+            .unwrap();
+        let (scan_root, depth, scan_id) = registry.prepare_scan(&root_id, 8).unwrap();
+        let discovery = discover_project_data(&scan_root, depth);
+        fs::rename(&project, root.join("original")).unwrap();
+        create_node_project(&project);
+        let scan = registry
+            .install_scan(
+                &root_id,
+                scan_id,
+                scan_root,
+                depth,
+                discovery,
+                available_tools(),
+            )
+            .unwrap();
+        let candidate = registry
+            .candidate(&scan.scan_id, &scan.candidates[0].candidate_id)
+            .unwrap();
+        assert!(validate_for_cleanup(&root, &candidate).is_err());
     }
 
     fn create_project(path: &Path, marker: Option<&str>) {
@@ -2654,6 +2783,7 @@ mod tests {
             id: "candidate-maven".to_string(),
             kind: ProjectDataKind::MavenTarget,
             project_path: project.to_path_buf(),
+            identities: observe_project_chain(project, &directory_path),
             directory_path: directory_path.clone(),
             status: ProjectDataCandidateStatus::Ready,
             message: None,
@@ -2668,6 +2798,7 @@ mod tests {
             id: "candidate-node".to_string(),
             kind: ProjectDataKind::NodeModules,
             project_path: project.to_path_buf(),
+            identities: observe_project_chain(project, &directory_path),
             directory_path: directory_path.clone(),
             status: ProjectDataCandidateStatus::Ready,
             message: None,

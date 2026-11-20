@@ -1,3 +1,4 @@
+use crate::command::run_command;
 use crate::session_scan_cache::{
     log_cache_stats, timed, SessionScanState, TranscriptKind, TranscriptState,
 };
@@ -9,7 +10,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const TITLE_LIMIT: usize = 140;
 const DAY_MS: i64 = 86_400_000;
@@ -350,16 +351,10 @@ pub(crate) fn remove_default(
             return Err("Qoder 移除需要已确认的来源范围".into())
         }
     };
-    let open_paths = match open_files_under(&directory) {
-        Ok(paths) => paths,
-        Err(message) => {
-            return Ok(SessionRemovalResult::aborted(message));
-        }
-    };
     Ok(remove_one(
         &directory,
         id,
-        &|path| open_paths.contains(path),
+        &path_in_use,
         &mut move_path_to_trash,
     ))
 }
@@ -382,12 +377,6 @@ pub(crate) fn remove_older_default_with_reporter(
             return Err("Qoder 移除需要已确认的来源范围".into())
         }
     };
-    let open_paths = match open_files_under(&directory) {
-        Ok(paths) => paths,
-        Err(message) => {
-            return Ok(SessionRemovalResult::aborted(message));
-        }
-    };
     let now_ms = now_ms();
     let format = match source {
         SessionSourceKind::Codex => RecordFormat::Codex,
@@ -401,7 +390,7 @@ pub(crate) fn remove_older_default_with_reporter(
         &directory,
         days,
         now_ms,
-        &|path| open_paths.contains(path),
+        &path_in_use,
         format,
         &mut move_path_to_trash,
         report,
@@ -423,7 +412,7 @@ pub(crate) fn remove_older_than(
         directory,
         days,
         now_ms,
-        is_open,
+        &|path| Ok(is_open(path)),
         format,
         trash,
         report,
@@ -435,7 +424,7 @@ pub(crate) fn remove_older_than_with_reporter(
     directory: &Path,
     days: u64,
     now_ms: i64,
-    is_open: &dyn Fn(&Path) -> bool,
+    is_open: &dyn Fn(&Path) -> Result<bool, String>,
     format: RecordFormat,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
     report: &mut dyn FnMut(SessionRemovalProgress),
@@ -443,7 +432,7 @@ pub(crate) fn remove_older_than_with_reporter(
 ) -> SessionRemovalResult {
     let cutoff = cutoff_ms(i64::try_from(days).unwrap_or(0), now_ms);
     let state = SessionScanState::default();
-    let scan = match list_records_with_state(directory, is_open, format, &state) {
+    let scan = match list_records_with_state(directory, &|_| false, format, &state) {
         Ok(scan) => scan,
         Err(message) => {
             return SessionRemovalResult::aborted(message);
@@ -487,25 +476,12 @@ fn remove_older_record(
     directory: &Path,
     record: &SessionRecord,
     cutoff: i64,
-    is_open: &dyn Fn(&Path) -> bool,
+    is_open: &dyn Fn(&Path) -> Result<bool, String>,
     format: RecordFormat,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
     state: &SessionScanState,
     result: &mut SessionRemovalResult,
 ) {
-    if record.in_use != Some(false) {
-        result.record(
-            &record.id,
-            SessionRemovalStatus::Skipped,
-            Some(if record.in_use == Some(true) {
-                SessionRemovalReason::InUse
-            } else {
-                SessionRemovalReason::UsageUnknown
-            }),
-            None,
-        );
-        return;
-    }
     let path = match session_record_file(directory, &record.id) {
         Ok(path) => path,
         Err(message) => {
@@ -518,15 +494,6 @@ fn remove_older_record(
             return;
         }
     };
-    if is_open(&path) {
-        result.record(
-            &record.id,
-            SessionRemovalStatus::Skipped,
-            Some(SessionRemovalReason::InUse),
-            None,
-        );
-        return;
-    }
     let parsed = match format {
         RecordFormat::Codex => parse_session_file(&path, state),
         RecordFormat::Claude => parse_claude_file(&path, state),
@@ -546,6 +513,31 @@ fn remove_older_record(
             SessionRemovalStatus::Skipped,
             Some(SessionRemovalReason::ActivityChanged),
             None,
+        );
+        return;
+    }
+    match is_open(&path) {
+        Ok(false) => {}
+        usage => {
+            let (reason, message) = match usage {
+                Err(message) => (SessionRemovalReason::UsageUnknown, Some(message)),
+                _ => (SessionRemovalReason::InUse, None),
+            };
+            result.record(
+                &record.id,
+                SessionRemovalStatus::Skipped,
+                Some(reason),
+                message,
+            );
+            return;
+        }
+    }
+    if let Err(message) = session_record_file(directory, &record.id) {
+        result.record(
+            &record.id,
+            SessionRemovalStatus::Skipped,
+            Some(SessionRemovalReason::NoLongerRecord),
+            Some(message),
         );
         return;
     }
@@ -587,16 +579,10 @@ pub(crate) fn remove_selected_default_with_reporter(
             return Err("Qoder 移除需要已确认的来源范围".into())
         }
     };
-    let open_paths = match open_files_under(&directory) {
-        Ok(paths) => paths,
-        Err(message) => {
-            return Ok(SessionRemovalResult::aborted(message));
-        }
-    };
     Ok(remove_selected_with_reporter(
         &directory,
         ids,
-        &|path| open_paths.contains(path),
+        &path_in_use,
         &mut move_path_to_trash,
         report,
         on_item,
@@ -611,13 +597,20 @@ pub(crate) fn remove_selected(
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
     report: &mut dyn FnMut(SessionRemovalProgress),
 ) -> SessionRemovalResult {
-    remove_selected_with_reporter(directory, ids, is_open, trash, report, &mut |_| {})
+    remove_selected_with_reporter(
+        directory,
+        ids,
+        &|path| Ok(is_open(path)),
+        trash,
+        report,
+        &mut |_| {},
+    )
 }
 
 pub(crate) fn remove_selected_with_reporter(
     directory: &Path,
     ids: &[String],
-    is_open: &dyn Fn(&Path) -> bool,
+    is_open: &dyn Fn(&Path) -> Result<bool, String>,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
     report: &mut dyn FnMut(SessionRemovalProgress),
     on_item: &mut dyn FnMut(&SessionRemovalItem),
@@ -652,7 +645,7 @@ pub(crate) fn remove_selected_with_reporter(
 pub(crate) fn remove_one(
     directory: &Path,
     id: &str,
-    is_open: &dyn Fn(&Path) -> bool,
+    is_open: &dyn Fn(&Path) -> Result<bool, String>,
     trash: &mut dyn FnMut(&Path) -> Result<(), String>,
 ) -> SessionRemovalResult {
     let mut result = SessionRemovalResult::default();
@@ -668,12 +661,31 @@ pub(crate) fn remove_one(
             return result;
         }
     };
-    if is_open(&path) {
+    match is_open(&path) {
+        Ok(false) => {}
+        usage => {
+            let (reason, message) = match usage {
+                Err(message) => (SessionRemovalReason::UsageUnknown, message),
+                _ => (
+                    SessionRemovalReason::InUse,
+                    "这条会话记录正在使用，留在原处".into(),
+                ),
+            };
+            result.record(
+                id,
+                SessionRemovalStatus::Skipped,
+                Some(reason),
+                Some(message),
+            );
+            return result;
+        }
+    }
+    if let Err(message) = session_record_file(directory, id) {
         result.record(
             id,
             SessionRemovalStatus::Skipped,
-            Some(SessionRemovalReason::InUse),
-            Some("这条会话记录正在使用，留在原处".into()),
+            Some(SessionRemovalReason::NoLongerRecord),
+            Some(message),
         );
         return result;
     }
@@ -712,8 +724,21 @@ fn session_record_file(directory: &Path, id: &str) -> Result<PathBuf, String> {
     if !normalize_lexical(&path).starts_with(&normalize_lexical(directory)) {
         return Err(stayed.to_string());
     }
+    let mut parent = directory.to_path_buf();
+    for component in relative.parent().into_iter().flat_map(Path::components) {
+        parent.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&parent).map_err(|_| stayed.to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(stayed.to_string());
+        }
+    }
     let metadata = fs::symlink_metadata(&path).map_err(|_| stayed.to_string())?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(stayed.to_string());
+    }
+    let root = fs::canonicalize(directory).map_err(|_| stayed.to_string())?;
+    let resolved = fs::canonicalize(&path).map_err(|_| stayed.to_string())?;
+    if !resolved.starts_with(root) {
         return Err(stayed.to_string());
     }
     Ok(path)
@@ -1134,25 +1159,28 @@ fn truncate_chars(text: &str, limit: usize) -> String {
     truncated
 }
 
-pub(crate) fn open_files_under(root: &Path) -> Result<HashSet<PathBuf>, String> {
-    let output = Command::new("lsof")
-        .args(["-Fn", "-n", "-P", "+D"])
-        .arg(root)
-        .output()
-        .map_err(|error| format!("无法判断哪些会话记录正在使用：{error}"))?;
-    if !output.status.success() && output.status.code() != Some(1) {
-        return Err("无法判断哪些会话记录正在使用".to_string());
+pub(crate) fn path_in_use(path: &Path) -> Result<bool, String> {
+    let unknown = "无法判断这条会话记录是否正在使用";
+    let metadata = fs::symlink_metadata(path).map_err(|error| format!("{unknown}：{error}"))?;
+    if metadata.file_type().is_symlink() || (!metadata.is_file() && !metadata.is_dir()) {
+        return Err(unknown.into());
     }
-    Ok(parse_lsof_paths(&String::from_utf8_lossy(&output.stdout)))
-}
-
-fn parse_lsof_paths(output: &str) -> HashSet<PathBuf> {
-    output
-        .lines()
-        .filter_map(|line| line.strip_prefix('n'))
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .collect()
+    let target = path.to_str().ok_or(unknown)?;
+    let selection = if metadata.is_dir() { "+D" } else { "--" };
+    let run = run_command(
+        "/usr/sbin/lsof",
+        &["-nP", "-Fp", selection, target],
+        Duration::from_secs(10),
+    )
+    .map_err(|failure| format!("{unknown}：{}", failure.message))?;
+    if !run.stderr.trim().is_empty() {
+        return Err(format!("{unknown}：{}", run.stderr.trim()));
+    }
+    match (run.exit_code, run.stdout.trim().is_empty()) {
+        (Some(0) | Some(1), false) => Ok(true),
+        (Some(1), true) => Ok(false),
+        _ => Err(unknown.into()),
+    }
 }
 
 pub(crate) fn parse_rfc3339_millis(value: &str) -> Option<i64> {
@@ -1535,13 +1563,6 @@ mod tests {
     }
 
     #[test]
-    fn lsof_names_become_paths() {
-        let paths = parse_lsof_paths("p10\nn/tmp/a.jsonl\nfcwd\nn/tmp/b.jsonl\n");
-        assert!(paths.contains(&PathBuf::from("/tmp/a.jsonl")));
-        assert!(paths.contains(&PathBuf::from("/tmp/b.jsonl")));
-    }
-
-    #[test]
     fn resolved_home_uses_codex_home_or_default() {
         let home = Path::new("/Users/example");
         assert_eq!(
@@ -1668,7 +1689,7 @@ mod tests {
         let codex = remove_one(
             &sessions,
             "2026/09/24/chat.jsonl",
-            &|_| false,
+            &|_| Ok(false),
             &mut trash_aside(&trash_dir),
         );
         assert_eq!(codex.moved, 1);
@@ -1681,7 +1702,7 @@ mod tests {
         let claude_result = remove_one(
             &projects,
             "chat.jsonl",
-            &|_| false,
+            &|_| Ok(false),
             &mut trash_aside(&trash_dir),
         );
         assert_eq!(claude_result.moved, 1);
@@ -1704,10 +1725,10 @@ mod tests {
             Ok(())
         };
 
-        let symlink_result = remove_one(&sessions, "alias.jsonl", &|_| false, &mut refuse);
-        let escape = remove_one(&sessions, "../secret.jsonl", &|_| false, &mut refuse);
-        let in_use = remove_one(&sessions, "chat.jsonl", &|_| true, &mut refuse);
-        let trash_error = remove_one(&sessions, "chat.jsonl", &|_| false, &mut |_| {
+        let symlink_result = remove_one(&sessions, "alias.jsonl", &|_| Ok(false), &mut refuse);
+        let escape = remove_one(&sessions, "../secret.jsonl", &|_| Ok(false), &mut refuse);
+        let in_use = remove_one(&sessions, "chat.jsonl", &|_| Ok(true), &mut refuse);
+        let trash_error = remove_one(&sessions, "chat.jsonl", &|_| Ok(false), &mut |_| {
             Err("废纸篓拒绝".to_string())
         });
 
@@ -1730,6 +1751,148 @@ mod tests {
         assert_eq!(trash_error.failed, 1);
         assert_eq!(trash_error.moved, 0);
         assert!(chat.exists());
+    }
+
+    #[test]
+    fn removal_rejects_intermediate_links_inside_and_outside_the_source() {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions();
+        for destination in [sessions.join("other"), fixture.0.join("outside")] {
+            fs::create_dir_all(&destination).unwrap();
+            fs::write(destination.join("record.jsonl"), "{}\n").unwrap();
+            symlink(&destination, sessions.join("linked")).unwrap();
+            let result = remove_one(
+                &sessions,
+                "linked/record.jsonl",
+                &|_| Ok(false),
+                &mut |_| panic!("must not follow an intermediate link"),
+            );
+            assert_eq!(
+                result.items[0].reason,
+                Some(SessionRemovalReason::NoLongerRecord)
+            );
+            fs::remove_file(sessions.join("linked")).unwrap();
+        }
+    }
+
+    #[test]
+    fn removal_revalidates_intermediate_directories_after_the_usage_probe() {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions();
+        let project = sessions.join("project");
+        let other = sessions.join("other");
+        for directory in [&project, &other] {
+            fs::create_dir_all(directory).unwrap();
+            fs::write(directory.join("record.jsonl"), "{}\n").unwrap();
+        }
+        let result = remove_one(
+            &sessions,
+            "project/record.jsonl",
+            &|_| {
+                fs::rename(&project, sessions.join("original")).unwrap();
+                symlink(&other, &project).unwrap();
+                Ok(false)
+            },
+            &mut |_| panic!("must not follow a replacement link"),
+        );
+        assert_eq!(
+            result.items[0].reason,
+            Some(SessionRemovalReason::NoLongerRecord)
+        );
+        assert!(other.join("record.jsonl").is_file());
+    }
+
+    #[test]
+    fn selected_removal_rechecks_usage_and_preserves_unknown_records() {
+        let fixture = Fixture::new();
+        let sessions = fixture.sessions();
+        let ids = ["a.jsonl", "b.jsonl", "c.jsonl"].map(String::from);
+        for id in &ids {
+            fs::write(sessions.join(id), "{}\n").unwrap();
+        }
+        let removed = std::cell::Cell::new(0);
+        let result = remove_selected_with_reporter(
+            &sessions,
+            &ids,
+            &|path| {
+                if path.ends_with("c.jsonl") {
+                    Err("占用查询失败".into())
+                } else {
+                    Ok(removed.get() > 0)
+                }
+            },
+            &mut |path| {
+                removed.set(removed.get() + 1);
+                trash_aside(&fixture.0.join("trash"))(path)
+            },
+            &mut |_| {},
+            &mut |_| {},
+        );
+        assert_eq!((result.moved, result.skipped, result.failed), (1, 2, 0));
+        assert_eq!(result.items[1].reason, Some(SessionRemovalReason::InUse));
+        assert_eq!(
+            result.items[2].reason,
+            Some(SessionRemovalReason::UsageUnknown)
+        );
+        assert!(sessions.join("b.jsonl").is_file());
+        assert!(sessions.join("c.jsonl").is_file());
+    }
+
+    #[test]
+    fn age_removal_checks_current_usage_after_discovery_for_both_formats() {
+        for format in [RecordFormat::Codex, RecordFormat::Claude] {
+            let fixture = Fixture::new();
+            let sessions = fixture.sessions();
+            write_codex(&sessions.join("busy.jsonl"), "1970-01-01T00:00:00Z");
+            write_codex(&sessions.join("unknown.jsonl"), "1970-01-01T00:00:00Z");
+            let started = std::cell::Cell::new(false);
+            let result = remove_older_than_with_reporter(
+                &sessions,
+                7,
+                40 * DAY_MS,
+                &|path| {
+                    assert!(started.get(), "probe usage at removal time");
+                    if path.ends_with("busy.jsonl") {
+                        Ok(true)
+                    } else {
+                        Err("占用查询失败".into())
+                    }
+                },
+                format,
+                &mut |_| panic!("must leave both records in place"),
+                &mut |event| {
+                    if matches!(event, SessionRemovalProgress::Started { .. }) {
+                        started.set(true);
+                    }
+                },
+                &mut |_| {},
+            );
+            assert_eq!((result.moved, result.skipped), (0, 2));
+            assert!(result
+                .items
+                .iter()
+                .any(|item| item.reason == Some(SessionRemovalReason::InUse)));
+            assert!(result
+                .items
+                .iter()
+                .any(|item| item.reason == Some(SessionRemovalReason::UsageUnknown)));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn targeted_usage_probe_detects_open_files_and_sidecar_contents() {
+        let fixture = tempfile::tempdir().unwrap();
+        let path = fixture.path().join("record with\nnewline.jsonl");
+        fs::write(&path, "{}\n").unwrap();
+        assert!(!path_in_use(&path).unwrap());
+        assert!(!path_in_use(fixture.path()).unwrap());
+        let file = fs::File::open(&path).unwrap();
+        assert!(path_in_use(&path).unwrap());
+        assert!(path_in_use(fixture.path()).unwrap());
+        drop(file);
+        assert!(!path_in_use(&path).unwrap());
+        assert!(path_in_use(&fixture.path().join("missing")).is_err());
     }
 
     #[test]
