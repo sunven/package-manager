@@ -6,7 +6,7 @@ export function diskSummary(overrides: Partial<DiskScanSummary> = {}): DiskScanS
 }
 
 export function diskEntry(overrides: Partial<DiskScanEntry> = {}): DiskScanEntry {
-  return { id: 0, name: "test", path: "/test", kind: "directory", bytes: 4096, status: "complete", message: null, ...overrides };
+  return { id: 0, name: "test", path: "/test", kind: "directory", bytes: 4096, status: "complete", message: null, removalReason: null, ...overrides };
 }
 
 export function diskDirectory(overrides: Partial<DiskScanDirectory> = {}): DiskScanDirectory {

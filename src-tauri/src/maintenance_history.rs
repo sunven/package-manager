@@ -45,6 +45,7 @@ pub(crate) fn optional_text(value: Option<String>) -> Option<String> {
 pub(crate) enum MaintenanceDomain {
     Manager,
     ProjectCleanup,
+    DiskEntry,
     VscodeStorage,
     SessionRecord,
 }
@@ -59,6 +60,7 @@ pub(crate) enum MaintenanceOperation {
     CleanBatch,
     RemoveWorkspaceStorage,
     RemoveToTrash,
+    RemoveDiskEntries,
     DeletePermanently,
 }
 
@@ -126,6 +128,7 @@ pub(crate) struct MaintenanceRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub(crate) enum MaintenanceDetail {
+    DiskTrash(crate::disk_scan::removal::Detail),
     Manager(ManagerDetail),
     ProjectCleanup(ProjectCleanupDetail),
     VscodeStorage(VscodeStorageDetail),
@@ -775,6 +778,23 @@ fn summary(record: &MaintenanceRecord) -> MaintenanceRecordSummary {
                     not_attempted: total.saturating_sub(succeeded + failed + skipped),
                 },
             )
+        }
+        MaintenanceDetail::DiskTrash(detail) => {
+            let total = detail.targets.len();
+            (SummarySubject {
+                manager_id: None,
+                target: None,
+                root_path: Some(detail.root_path.clone()),
+                source: None,
+                mode: None,
+                target_count: total,
+            }, SummaryCounts {
+                total,
+                succeeded: detail.results.iter().filter(|item| item.status == "moved").count(),
+                failed: detail.results.iter().filter(|item| item.status == "failed").count(),
+                skipped: detail.results.iter().filter(|item| item.status == "skipped").count(),
+                not_attempted: total.saturating_sub(detail.results.len()),
+            })
         }
         MaintenanceDetail::ProjectCleanup(detail) => {
             let total = detail.scope.candidates.len();

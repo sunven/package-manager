@@ -1,3 +1,5 @@
+import { ContextMenu } from "radix-ui";
+import { DiskRemovalButton } from "./DiskRemovalPanel";
 import { memo, useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import * as echarts from "echarts/core";
 import { TooltipComponent, type TooltipComponentOption } from "echarts/components";
@@ -69,11 +71,12 @@ function chartOption(chart: DiskScanChart, dark: boolean, fontFamily: string): C
   };
 }
 
-const TreemapCanvas = memo(function TreemapCanvas({ chart, onActivate }: { chart: DiskScanChart; onActivate: (id: string) => void }) {
+const TreemapCanvas = memo(function TreemapCanvas({ chart, onActivate, onContext }: { chart: DiskScanChart; onActivate: (id: string) => void; onContext: (id: string) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const instance = useRef<echarts.EChartsType | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const activate = useEffectEvent(onActivate);
+  const context = useEffectEvent(onContext);
   const draw = useEffectEvent(() => {
     if (!instance.current || !host.current) return;
     instance.current.setOption(chartOption(chart, document.documentElement.dataset.theme === "dark", getComputedStyle(host.current).fontFamily), { notMerge: true });
@@ -86,6 +89,10 @@ const TreemapCanvas = memo(function TreemapCanvas({ chart, onActivate }: { chart
     canvas.on("click", (event) => {
       const id = (event.data as { id?: string } | undefined)?.id;
       if (id !== undefined) activate(id);
+    });
+    canvas.on("contextmenu", (event) => {
+      const id = (event.data as { id?: string } | undefined)?.id;
+      if (id !== undefined) context(id);
     });
     const resize = new ResizeObserver(() => canvas.resize());
     resize.observe(host.current);
@@ -100,19 +107,22 @@ const TreemapCanvas = memo(function TreemapCanvas({ chart, onActivate }: { chart
     aria-label={`当前目录 ${chart.total.toLocaleString("zh-CN")} 个已发现条目的占用矩形树图。面积表示同层相对大小，可切换列表使用键盘浏览。`} />;
 });
 
-export default function DiskScanTreemap({ chart, pending, workflow, onCopy }: {
-  chart: DiskScanChart; pending: boolean; workflow: DiskScanWorkflow; onCopy: (path: string) => Promise<void>;
+export default function DiskScanTreemap({ chart, pending, workflow, onCopy, disabled }: {
+  chart: DiskScanChart; pending: boolean; disabled?: boolean; workflow: DiskScanWorkflow; onCopy: (path: string) => Promise<void>;
 }) {
+  const [contextId, setContextId] = useState<string | null>(null);
+  const contextEntry = chart.entries.find((entry) => String(entry.id) === contextId);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const hovering = useRef(false);
   const focusing = useRef(false);
   const selected = chart.entries.find((entry) => entry.id === selectedId);
   const activate = useCallback((id: string) => {
+    if (disabled) return;
     if (id === OTHER_ID) { workflow.showGroup("other"); return; }
     const entry = chart.entries.find((candidate) => String(candidate.id) === id);
     if (entry?.kind === "directory") workflow.enter(entry.id);
     else if (entry) setSelectedId(entry.id);
-  }, [chart, workflow]);
+  }, [chart, workflow, disabled]);
   return <section className="disk-scan-chart" aria-label="矩形树图结果"
     onPointerEnter={(event) => { if (event.pointerType !== "touch") { hovering.current = true; workflow.setChartPaused(true); } }}
     onPointerLeave={() => { hovering.current = false; workflow.setChartPaused(focusing.current); }}
@@ -131,22 +141,29 @@ export default function DiskScanTreemap({ chart, pending, workflow, onCopy }: {
       <p>面积比较同层条目的占用大小</p>
       <span role="status">{pending ? "有新结果待显示" : diskScanPhaseLabels[chart.phase]}</span>
     </div>
-    {chart.entries.length ? <TreemapCanvas chart={chart} onActivate={activate} /> : <EmptyState message={
+    {chart.entries.length ? <ContextMenu.Root onOpenChange={(open) => { if (!open) setContextId(null); }}>
+      <ContextMenu.Trigger asChild disabled={disabled}><div onContextMenuCapture={() => setContextId(null)}><TreemapCanvas chart={chart} onActivate={activate} onContext={setContextId} /></div></ContextMenu.Trigger>
+      <ContextMenu.Portal><ContextMenu.Content className="disk-removal-context" collisionPadding={12}>
+        <ContextMenu.Item disabled={!contextEntry || !workflow.canRemove(contextEntry)} onSelect={() => { if (contextEntry) void workflow.prepareRemoval([contextEntry.id]); }}>移到废纸篓</ContextMenu.Item>
+        <ContextMenu.Item onSelect={() => workflow.setMode("list")}>到列表选择</ContextMenu.Item>
+      </ContextMenu.Content></ContextMenu.Portal>
+    </ContextMenu.Root> : <EmptyState message={
       chart.total === 0 && chart.directory.status === "complete" ? "此目录为空。" : chart.phase === "running"
         ? "尚未统计出可绘制的占用，扫描结果会逐步显示。" : "当前没有可绘制的正占用；零占用、未统计出占用及未计入条目可在列表中查看。"
     } />}
     <div className="disk-scan-chart-footer">
       <span>当前层 {chart.total.toLocaleString("zh-CN")} 项 · 单独展示 {chart.entries.length.toLocaleString("zh-CN")} 项</span>
-      <Button type="button" variant="ghost" size="sm" onClick={() => workflow.showGroup("all")}>查看全部列表</Button>
+      <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => workflow.showGroup("all")}>查看全部列表</Button>
     </div>
     <div className="disk-scan-chart-groups" role="group" aria-label="分组查看">
-      {chart.other.count > 0 && <button type="button" onClick={() => workflow.showGroup("other")}>其他 <strong>{chart.other.count.toLocaleString("zh-CN")}</strong> 项</button>}
+      {chart.other.count > 0 && <button type="button" disabled={disabled} onClick={() => workflow.showGroup("other")}>其他 <strong>{chart.other.count.toLocaleString("zh-CN")}</strong> 项</button>}
       {(["unmeasured", "zero", "excluded"] as const).map((group: Exclude<DiskScanGroup, "all" | "other">) => <button type="button" key={group}
-        disabled={!chart.counts[group]} onClick={() => workflow.showGroup(group)}>{diskScanGroupLabels[group]} <strong>{chart.counts[group].toLocaleString("zh-CN")}</strong></button>)}
+        disabled={disabled || !chart.counts[group]} onClick={() => workflow.showGroup(group)}>{diskScanGroupLabels[group]} <strong>{chart.counts[group].toLocaleString("zh-CN")}</strong></button>)}
     </div>
     {selected ? <div className="disk-scan-chart-detail" role="group" aria-label="选中文件详情">
       <div><strong>{selected.name}</strong><p className="disk-scan-detail-path">{selected.path}</p>
         <p>{diskScanKindLabels[selected.kind]} · {diskScanSize(selected)} · {diskScanStatusLabels[selected.status]}{selected.message ? ` · ${selected.message}` : ""}</p></div>
+      <DiskRemovalButton entry={selected} workflow={workflow} />
       <Button type="button" variant="outline" size="sm" aria-label={`复制路径：${selected.name}`} onClick={() => void onCopy(selected.path)}><Copy aria-hidden="true" />复制路径</Button>
     </div> : <p className="disk-scan-chart-help">点击目录进入下一层，点击文件查看详情。较小条目可通过列表查看。</p>}
   </section>;

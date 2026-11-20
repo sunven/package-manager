@@ -13,6 +13,9 @@ use tauri_plugin_dialog::DialogExt;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
+#[path = "disk_removal.rs"]
+pub(crate) mod removal;
+
 const MAX_ENTRIES: usize = 1_000_000;
 const CHART_LIMIT: usize = 200;
 const UPDATE_INTERVAL: Duration = Duration::from_millis(200);
@@ -67,6 +70,7 @@ struct Node {
     partial: bool,
     message: Option<String>,
     children: Vec<usize>,
+    identity: Option<removal::Identity>,
 }
 
 #[derive(Serialize)]
@@ -79,6 +83,7 @@ pub(crate) struct Entry {
     bytes: Option<u64>,
     status: &'static str,
     message: Option<String>,
+    removal_reason: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -158,6 +163,10 @@ struct Tree {
     nodes: Vec<Node>,
     summary: Summary,
     listing: Option<Listing>,
+    root_chain: Vec<(PathBuf, removal::Identity)>,
+    protected_home: Option<Vec<removal::Identity>>,
+    consumed: bool,
+    mounts: Vec<removal::Identity>,
 }
 
 impl Tree {
@@ -195,6 +204,7 @@ impl Tree {
             bytes: node.bytes,
             status,
             message: node.message.clone(),
+            removal_reason: removal::reason(self, id),
         }
     }
 
@@ -387,6 +397,8 @@ pub(crate) struct Settings {
 struct Registry {
     settings: Settings,
     job: Option<Arc<Job>>,
+    pending: Option<removal::Plan>,
+    active: Option<(String, Arc<AtomicBool>)>,
 }
 
 #[derive(Clone)]
@@ -399,6 +411,7 @@ struct Prepared {
     root: PathBuf,
     entries: ReadDir,
     device: u64,
+    root_chain: Vec<(PathBuf, removal::Identity)>,
 }
 
 fn prepare(path: &str) -> Result<Prepared, String> {
@@ -419,9 +432,10 @@ fn prepare(path: &str) -> Result<Prepared, String> {
     }
     let entries = fs::read_dir(&root).map_err(|e| format!("无法读取扫描起点：{e}"))?;
     Ok(Prepared {
-        root,
+        root: root.clone(),
         entries,
         device: device(&metadata),
+        root_chain: removal::observe_chain(&root).unwrap_or_default(),
     })
 }
 
@@ -473,6 +487,8 @@ impl DiskScanState {
             registry: Arc::new(Mutex::new(Registry {
                 settings,
                 job: None,
+                pending: None,
+                active: None,
             })),
             settings_path,
         }
@@ -482,8 +498,11 @@ impl DiskScanState {
         self.registry.lock().unwrap().settings.clone()
     }
 
-    fn install(&self, prepared: &Prepared) -> Arc<Job> {
+    fn install(&self, prepared: &Prepared) -> Result<Arc<Job>, String> {
         let mut registry = self.registry.lock().unwrap();
+        if registry.pending.is_some() || registry.active.is_some() {
+            return Err("请先结束或取消移除操作。".into());
+        }
         if let Some(old) = &registry.job {
             old.cancel.store(true, Ordering::Relaxed);
         }
@@ -523,6 +542,10 @@ impl DiskScanState {
             partial: false,
             message: None,
             children: Vec::new(),
+            identity: prepared
+                .root_chain
+                .last()
+                .map(|(_, identity)| identity.clone()),
         };
         let job = Arc::new(Job {
             tree: Mutex::new(Tree {
@@ -530,11 +553,26 @@ impl DiskScanState {
                 nodes: vec![root],
                 summary,
                 listing: None,
+                root_chain: prepared.root_chain.clone(),
+                protected_home: std::env::var_os("HOME")
+                    .and_then(|path| PathBuf::from(path).canonicalize().ok())
+                    .and_then(|path| removal::observe_chain(&path).ok())
+                    .map(|chain| chain.into_iter().map(|(_, identity)| identity).collect()),
+                consumed: false,
+                mounts: removal::mount_paths()
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|path| {
+                        fs::symlink_metadata(path)
+                            .ok()
+                            .and_then(|metadata| removal::Identity::read(&metadata))
+                    })
+                    .collect(),
             }),
             cancel: AtomicBool::new(false),
         });
         registry.job = Some(job.clone());
-        job
+        Ok(job)
     }
 
     fn save(&self, settings: &Settings) -> Result<(), Box<dyn std::error::Error>> {
@@ -615,6 +653,7 @@ fn run(job: &Job, prepared: Prepared, max_entries: usize, mut progress: impl FnM
             partial: false,
             message: None,
             children: Vec::new(),
+            identity: metadata.as_ref().ok().and_then(removal::Identity::read),
         };
         let id = tree.nodes.len();
         match metadata {
@@ -747,7 +786,7 @@ pub(crate) async fn start_disk_scan(
     let state = state.inner().clone();
     let (prepared, job) = tauri::async_runtime::spawn_blocking(move || {
         let prepared = prepare(&path)?;
-        let job = state.install(&prepared);
+        let job = state.install(&prepared)?;
         Ok::<_, String>((prepared, job))
     })
     .await

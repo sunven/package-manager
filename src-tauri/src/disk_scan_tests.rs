@@ -4,7 +4,7 @@ fn scan(root: &Path, limit: usize) -> Arc<Job> {
     let config = tempfile::tempdir().unwrap();
     let state = DiskScanState::load(config.path().join("settings.json"));
     let prepared = prepare(root.to_str().unwrap()).unwrap();
-    let job = state.install(&prepared);
+    let job = state.install(&prepared).unwrap();
     run(&job, prepared, limit, |_| {});
     job
 }
@@ -117,7 +117,9 @@ fn invalid_start_preserves_active_job_and_restart_only_restores_path() {
     fs::create_dir(&root).unwrap();
     let file = base.path().join("settings.json");
     let state = DiskScanState::load(file.clone());
-    let job = state.install(&prepare(root.to_str().unwrap()).unwrap());
+    let job = state
+        .install(&prepare(root.to_str().unwrap()).unwrap())
+        .unwrap();
     for invalid in [
         "relative",
         "/this-path-must-not-exist-disk-scan",
@@ -132,7 +134,9 @@ fn invalid_start_preserves_active_job_and_restart_only_restores_path() {
         Some(root.canonicalize().unwrap().display().to_string())
     );
     assert!(reloaded.registry.lock().unwrap().job.is_none());
-    let next = state.install(&prepare(root.to_str().unwrap()).unwrap());
+    let next = state
+        .install(&prepare(root.to_str().unwrap()).unwrap())
+        .unwrap();
     assert!(job.cancel.load(Ordering::Relaxed));
     assert!(!next.cancel.load(Ordering::Relaxed));
     assert!(state
@@ -220,7 +224,7 @@ fn directory_moved_after_validation_keeps_unreadable_entries_unknown() {
     fs::write(root.join("file"), b"data").unwrap();
     let state = DiskScanState::load(base.path().join("settings"));
     let prepared = prepare(root.to_str().unwrap()).unwrap();
-    let job = state.install(&prepared);
+    let job = state.install(&prepared).unwrap();
     // The open directory remains enumerable, but its original child paths no longer exist.
     fs::rename(&root, base.path().join("moved")).unwrap();
     run(&job, prepared, MAX_ENTRIES, |_| {});
@@ -241,11 +245,14 @@ fn directory_moved_after_validation_keeps_unreadable_entries_unknown() {
 fn million_entry_directory_page_is_bounded() {
     let base = tempfile::tempdir().unwrap();
     let state = DiskScanState::load(base.path().join("settings"));
-    let job = state.install(&prepare(base.path().to_str().unwrap()).unwrap());
+    let job = state
+        .install(&prepare(base.path().to_str().unwrap()).unwrap())
+        .unwrap();
     let started = Instant::now();
     let mut tree = job.tree.lock().unwrap();
     for id in 1..=MAX_ENTRIES {
         tree.nodes.push(Node {
+            identity: None,
             parent: Some(0),
             depth: 1,
             name: format!("file-{id:07}").into(),
@@ -310,7 +317,7 @@ fn other_devices_are_visible_but_not_traversed() {
     let state = DiskScanState::load(base.path().join("settings"));
     let mut prepared = prepare(root.to_str().unwrap()).unwrap();
     prepared.device = prepared.device.wrapping_add(1);
-    let job = state.install(&prepared);
+    let job = state.install(&prepared).unwrap();
     run(&job, prepared, MAX_ENTRIES, |_| {});
     let mut tree = job.tree.lock().unwrap();
     let page = tree.page(0, 1, 200, ListGroup::All).unwrap();
@@ -331,7 +338,7 @@ fn stop_during_traversal_preserves_already_read_entries() {
     }
     let state = DiskScanState::load(base.path().join("settings"));
     let prepared = prepare(root.to_str().unwrap()).unwrap();
-    let job = state.install(&prepared);
+    let job = state.install(&prepared).unwrap();
     std::thread::scope(|scope| {
         scope.spawn(|| run(&job, prepared, MAX_ENTRIES, |_| {}));
         loop {
@@ -356,7 +363,7 @@ fn inspect_real_directory() {
     let base = tempfile::tempdir().unwrap();
     let state = DiskScanState::load(base.path().join("settings"));
     let prepared = prepare(&root).unwrap();
-    let job = state.install(&prepared);
+    let job = state.install(&prepared).unwrap();
     let mut progress_count = 0;
     run(&job, prepared, MAX_ENTRIES, |_| {
         progress_count += 1;
@@ -400,11 +407,14 @@ fn inspect_real_directory() {
 fn chart_job(count: usize) -> Arc<Job> {
     let base = tempfile::tempdir().unwrap();
     let state = DiskScanState::load(base.path().join("settings"));
-    let job = state.install(&prepare(base.path().to_str().unwrap()).unwrap());
+    let job = state
+        .install(&prepare(base.path().to_str().unwrap()).unwrap())
+        .unwrap();
     {
         let mut tree = job.tree.lock().unwrap();
         for id in 1..=count {
             tree.nodes.push(Node {
+                identity: None,
                 parent: Some(0),
                 depth: 1,
                 name: format!("file-{id:07}").into(),

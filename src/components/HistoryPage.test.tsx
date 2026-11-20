@@ -119,6 +119,34 @@ function records() {
 }
 
 describe("History page", () => {
+  it.each([true, null])("shows disk removal scope and distinguishes stopped from unconfirmed items (%s)", async (stopped) => {
+    const summary: MaintenanceRecordSummary = { ...managerSummary, domain: "diskEntry", operation: "removeDiskEntries", subject: { rootPath: "/work", targetCount: 2 } };
+    const detail: MaintenanceRecord = { ...managerRecord, domain: "diskEntry", operation: "removeDiskEntries", verification: null, message: "移除批次已结束",
+      detail: { kind: "diskTrash", scanId: "scan-1", rootPath: "/work", stopped,
+        targets: [
+          { id: 1, name: "archive", path: "/work/archive", directory: true, partial: true, bytes: 100 },
+          { id: 2, name: "notes.txt", path: "/work/notes.txt", directory: false, partial: false, bytes: 20 },
+        ], results: [{ id: 1, path: "/work/archive", status: "moved", message: null }],
+      },
+    };
+    mockedInvoke.mockImplementation(async (name) => {
+      if (name === "list_maintenance_history") return { records: [summary], warnings: [] };
+      if (name === "list_manager_history") return { snapshots: [], warnings: [] };
+      if (name === "get_maintenance_record") return detail;
+      throw new Error(`Unexpected command ${name}`);
+    });
+    const openDomain = vi.fn();
+    render(<HistoryPage active managers={[]} historyRevision={0} homeDirectory={null} request={null} onOpenDomain={openDomain} />);
+    await userEvent.click(await screen.findByText("磁盘条目移除 · /work"));
+    const panel = await screen.findByLabelText("维护记录详情");
+    expect(await within(panel).findByText("整个目录 · 扫描不完整")).toBeTruthy();
+    expect(within(panel).getByText(/恢复请使用系统废纸篓/)).toBeTruthy();
+    expect(within(panel).getByText("/work/archive，已移入废纸篓")).toBeTruthy();
+    expect(within(panel).getByText(stopped ? "/work/notes.txt，未执行（批次停止）" : "/work/notes.txt，结果未确认")).toBeTruthy();
+    await userEvent.click(within(panel).getByRole("button", { name: "打开对应页面" }));
+    expect(openDomain).toHaveBeenCalledWith("diskEntry");
+  });
+
   it("lists maintenance records and loads their details", async () => {
     mockedInvoke.mockImplementation(async (name, args) => {
       if (name === "list_maintenance_history") return { records: [managerSummary, projectSummary], warnings: [] };

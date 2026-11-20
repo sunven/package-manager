@@ -22,11 +22,144 @@ function fixture() {
     directory: vi.fn(async ({ scanId, directoryId }) => diskDirectory({ scanId, directory: diskEntry({ id: directoryId }) })),
     chart: vi.fn(async ({ scanId, directoryId }) => diskChart({ scanId, directory: diskEntry({ id: directoryId }) })),
     observe: vi.fn(),
+    removal: {
+      prepare: vi.fn(), cancel: vi.fn(async () => {}), run: vi.fn(), stop: vi.fn(async () => {}),
+      locate: vi.fn(async () => 0), followup: vi.fn(async () => {}),
+    },
   };
   return { effects, callbacks, workflow: createDiskScanWorkflow(effects) };
 }
 
 afterEach(() => { vi.useRealTimers(); });
+
+async function removableFixture() {
+  const context = fixture();
+  const { workflow, effects, callbacks } = context;
+  await workflow.initialize(); await workflow.start(); workflow.setVisible(true);
+  callbacks[0](diskSummary({ revision: 1, phase: "completed", finishedAt: 10 }));
+  await vi.waitFor(() => expect(workflow.read().page).not.toBeNull());
+  vi.mocked(effects.removal.prepare).mockImplementation(async (scanId, ids) => ({
+    id: "plan-1", scanId, rootPath: "/test", targets: ids.map((id) => ({ id, name: `file-${id}`, path: `/test/file-${id}`, directory: false, partial: false, bytes: 10 })),
+  }));
+  return context;
+}
+
+describe("disk removal lifecycle", () => {
+  it("selects only displayed eligible siblings and preserves selection between views", async () => {
+    const { workflow } = await removableFixture();
+    workflow.selectDisplayed(true);
+    expect(workflow.read().selectedIds).toEqual([1, 2, 3]);
+    workflow.loadMore();
+    workflow.setMode("treemap");
+    expect(workflow.read().selectedIds).toEqual([1, 2, 3]);
+    workflow.showGroup("zero");
+    expect(workflow.read().selectedIds).toEqual([]);
+    await workflow.refreshPage();
+    workflow.toggleSelected(diskEntry({ id: 2, kind: "file" }));
+    workflow.enter(1);
+    expect(workflow.read().selectedIds).toEqual([]);
+  });
+
+  it("freezes only the requested target, blocks editing, and cancellation permits a new confirmation", async () => {
+    const { workflow, effects } = await removableFixture();
+    workflow.selectDisplayed(true);
+    await workflow.prepareRemoval([2]);
+    expect(effects.removal.prepare).toHaveBeenCalledWith("scan-1", [2]);
+    workflow.enter(1); await workflow.start(); workflow.selectDisplayed(false);
+    expect(workflow.read().directoryId).toBe(0);
+    expect(effects.start).toHaveBeenCalledTimes(1);
+    expect(workflow.read().selectedIds).toEqual([1, 2, 3]);
+    await workflow.cancelRemoval();
+    expect(effects.removal.cancel).toHaveBeenCalledWith("plan-1");
+    expect(effects.removal.run).not.toHaveBeenCalled();
+    await workflow.prepareRemoval([1]);
+    expect(workflow.read().removal.phase).toBe("confirming");
+  });
+
+  it("continues off-page, keeps partial results and re-scans the committed root instead of the draft", async () => {
+    const { workflow, effects, callbacks } = await removableFixture();
+    const completion = deferred<Awaited<ReturnType<typeof effects.removal.run>>>();
+    let report!: Parameters<typeof effects.removal.run>[1];
+    vi.mocked(effects.removal.run).mockImplementation((_id, progress) => { report = progress; return completion.promise; });
+    workflow.setPath("/unsubmitted");
+    await workflow.prepareRemoval([1, 2]);
+    const run = workflow.confirmRemoval();
+    workflow.setVisible(false);
+    const item = { id: 1, path: "/test/file-1", status: "failed" as const, message: "permission denied" };
+    report({ planId: "plan-1", completed: 1, total: 2, currentPath: null, item });
+    await workflow.stopRemoval();
+    expect(effects.removal.stop).toHaveBeenCalledWith("plan-1");
+    completion.resolve({ results: [item], stopped: true, historyId: "history-1", historyWarning: null }); await run;
+    expect(effects.start).toHaveBeenLastCalledWith("/test", expect.any(Function));
+    expect(workflow.read().draftPath).toBe("/unsubmitted");
+    expect(workflow.read().selectedIds).toEqual([]);
+    expect(workflow.read().removal.results).toEqual([item]);
+    callbacks[1](diskSummary({ scanId: "scan-2", revision: 1, phase: "stopped", finishedAt: 30 }));
+    await vi.waitFor(() => expect(effects.removal.followup).toHaveBeenCalledWith("history-1", "ready", expect.stringContaining("部分结果")));
+    expect(effects.removal.locate).toHaveBeenCalledWith("scan-2", "/test");
+    report({ planId: "plan-1", completed: 2, total: 2, currentPath: "late", item: { ...item, id: 2 } });
+    expect(workflow.read().removal.results).toHaveLength(1);
+    expect(workflow.canRemove(diskEntry({ id: 3 }))).toBe(true);
+  });
+
+  it("leaves old observations read-only after follow-up failure and never retries removal", async () => {
+    const { workflow, effects } = await removableFixture();
+    vi.mocked(effects.removal.run).mockResolvedValue({ results: [{ id: 2, path: "/test/file-2", status: "moved", message: null }], stopped: false, historyId: "history-1", historyWarning: null });
+    vi.mocked(effects.start).mockRejectedValueOnce("root unavailable");
+    await workflow.prepareRemoval([2]); await workflow.confirmRemoval();
+    expect(workflow.read().invalidated).not.toBeNull();
+    expect(workflow.read().removal.results[0].status).toBe("moved");
+    expect(workflow.read().removal.followup).toContain("重新扫描失败");
+    expect(diskScanObservationFacts(workflow.read()).invalidated).not.toBeNull();
+    await workflow.prepareRemoval([1]);
+    expect(effects.removal.run).toHaveBeenCalledTimes(1);
+    expect(effects.removal.prepare).toHaveBeenCalledTimes(1);
+    expect(effects.removal.followup).toHaveBeenCalledWith("history-1", "failed", "root unavailable");
+    await workflow.start();
+    expect(workflow.read().summary?.scanId).toBe("scan-2");
+    expect(workflow.read().invalidated).toBeNull();
+  });
+
+  it("does not start a duplicate run while confirmation is being cancelled", async () => {
+    const { workflow, effects } = await removableFixture();
+    const cancelled = deferred<void>();
+    vi.mocked(effects.removal.cancel).mockReturnValue(cancelled.promise);
+    await workflow.prepareRemoval([2]);
+    const cancel = workflow.cancelRemoval();
+    await workflow.confirmRemoval();
+    expect(effects.removal.run).not.toHaveBeenCalled();
+    cancelled.resolve(); await cancel;
+    expect(workflow.read().removal.phase).toBe("idle");
+  });
+
+  it.each(["confirmation", "selection"])("does not restore a directory over a new %s", async (interaction) => {
+    const { workflow, effects, callbacks } = await removableFixture();
+    const located = deferred<number>();
+    vi.mocked(effects.removal.locate).mockReturnValue(located.promise);
+    vi.mocked(effects.removal.run).mockResolvedValue({ results: [], stopped: true, historyId: "history-1", historyWarning: null });
+    await workflow.prepareRemoval([2]); await workflow.confirmRemoval();
+    callbacks[1](diskSummary({ scanId: "scan-2", revision: 1, phase: "completed", finishedAt: 30 }));
+    expect(effects.removal.locate).toHaveBeenCalled();
+    if (interaction === "confirmation") await workflow.prepareRemoval([3]);
+    else workflow.toggleSelected(diskEntry({ id: 3 }));
+    located.resolve(1);
+    await vi.waitFor(() => expect(effects.removal.followup).toHaveBeenCalled());
+    expect(workflow.read().directoryId).toBe(0);
+    if (interaction === "confirmation") expect(workflow.read().removal.phase).toBe("confirming");
+    else expect(workflow.read().selectedIds).toEqual([3]);
+  });
+
+  it("releases an unclaimed confirmation after a rejected run before rescanning", async () => {
+    const { workflow, effects } = await removableFixture();
+    vi.mocked(effects.removal.run).mockRejectedValue("transport failed");
+    await workflow.prepareRemoval([2]); await workflow.confirmRemoval();
+    expect(effects.removal.cancel).toHaveBeenCalledWith("plan-1");
+    expect(vi.mocked(effects.removal.cancel).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(effects.start).mock.invocationCallOrder[1]);
+    expect(workflow.read().summary?.scanId).toBe("scan-2");
+    expect(workflow.read().removal.error).toContain("操作结果未完整返回");
+    expect(effects.removal.run).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("disk scan lifecycle", () => {
   it("restores only the last path and leaves selection as a draft", async () => {

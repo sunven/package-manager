@@ -29,6 +29,10 @@ function fixture(directory = diskDirectory()) {
       ancestors: [diskEntry()], entries: [], total: 0, counts: { unmeasured: 0, zero: 0, excluded: 0 },
     })),
     observe: vi.fn(),
+    removal: {
+      prepare: vi.fn(), cancel: vi.fn(async () => {}), run: vi.fn(), stop: vi.fn(async () => {}),
+      locate: vi.fn(async () => 0), followup: vi.fn(async () => {}),
+    },
   };
   const workflow = createDiskScanWorkflow(effects);
   function Harness() {
@@ -39,6 +43,47 @@ function fixture(directory = diskDirectory()) {
 }
 
 describe("disk scan page", () => {
+  it("confirms a single row independently of selection, explains partial directories and executes only after confirmation", async () => {
+    const { workflow, effects, Harness } = fixture();
+    vi.mocked(effects.removal.prepare).mockImplementation(async (scanId, ids) => ({ id: "plan-1", scanId, rootPath: "/test", targets: ids.map((id) => ({ id, name: "restricted", path: "/test/restricted", directory: true, partial: true, bytes: null })) }));
+    vi.mocked(effects.removal.run).mockResolvedValue({ results: [{ id: 3, path: "/test/restricted", status: "moved", message: null }], stopped: false, historyId: null, historyWarning: null });
+    await workflow.initialize(); render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "开始扫描" })); await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("checkbox", { name: "全选已显示" }));
+    expect(screen.getByRole("checkbox", { name: "选择：linked" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "移到废纸篓：restricted" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(effects.removal.prepare).toHaveBeenCalledWith("scan-1", [3]);
+    expect(within(dialog).getByText("/test/restricted")).toBeTruthy();
+    expect(within(dialog).getByText(/操作包含未扫描到的内容/)).toBeTruthy();
+    expect(effects.removal.run).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(effects.removal.run).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "移到废纸篓：restricted" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "移到废纸篓" }));
+    await screen.findByText("移除结果");
+    expect(effects.removal.run).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/已移入 1/)).toBeTruthy();
+  });
+
+  it("offers a context action for a chart directory without changing click-to-enter", async () => {
+    const { workflow, effects, Harness } = fixture();
+    vi.mocked(effects.removal.prepare).mockResolvedValue({ id: "plan-1", scanId: "scan-1", rootPath: "/test", targets: [{ id: 1, name: "project", path: "/test/project", directory: true, partial: false, bytes: 4096 }] });
+    await workflow.initialize(); render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "开始扫描" })); await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "矩形树图" }));
+    await screen.findByRole("img");
+    const context = chartEngine.on.mock.calls.find(([event]) => event === "contextmenu")?.[1];
+    expect(context).toBeDefined();
+    fireEvent.contextMenu(screen.getByRole("img"));
+    act(() => context({ data: { id: "1" } }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "移到废纸篓" }));
+    await screen.findByRole("alertdialog");
+    expect(effects.removal.prepare).toHaveBeenCalledWith("scan-1", [1]);
+    expect(workflow.read().directoryId).toBe(0);
+  });
+
   it("selects a draft, scans on submit, drills down and copies files without opening them", async () => {
     const { effects, workflow, Harness } = fixture();
     await workflow.initialize(); render(<Harness />);

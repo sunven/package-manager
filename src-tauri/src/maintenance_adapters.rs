@@ -845,7 +845,9 @@ pub(crate) fn record_followup(
     history.update(id, move |record| {
         if !matches!(
             record.domain,
-            MaintenanceDomain::SessionRecord | MaintenanceDomain::VscodeStorage
+            MaintenanceDomain::SessionRecord
+                | MaintenanceDomain::VscodeStorage
+                | MaintenanceDomain::DiskEntry
         ) {
             return Err("该维护记录没有后续读取步骤".into());
         }

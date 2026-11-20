@@ -535,7 +535,7 @@ export function App() {
             onRequestConsumed={() => setHistoryRequest(null)}
             onOpenDomain={(domain) => {
               actions.closePackageActions();
-              setActiveView(domain === "manager" ? "managers" : domain === "projectCleanup" ? "cleanup" : domain === "vscodeStorage" ? "vscode" : "sessions");
+              setActiveView(domain === "manager" ? "managers" : domain === "diskEntry" ? "disk" : domain === "projectCleanup" ? "cleanup" : domain === "vscodeStorage" ? "vscode" : "sessions");
             }}
           />
         ) : activeView === "settings" ? (

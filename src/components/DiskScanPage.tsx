@@ -1,5 +1,8 @@
+import { DiskRemovalButton, DiskRemovalPanel } from "./DiskRemovalPanel";
+import { diskRemovalLocked } from "../diskRemoval";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "../../components/ui/dropdown-menu";
 import { lazy, Suspense, useEffect } from "react";
-import { ArrowUp, CaretRight, Copy, File, Folder, FolderOpen, Link, HardDrives, Square } from "@phosphor-icons/react";
+import { ArrowUp, CaretRight, Copy, File, Folder, FolderOpen, Link, HardDrives, Square, DotsThree, Trash } from "@phosphor-icons/react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/button";
@@ -19,6 +22,8 @@ async function copyPath(path: string) {
 
 export function DiskScanPage({ view, workflow }: { view: DiskScanView; workflow: DiskScanWorkflow }) {
   const { summary } = view;
+  const locked = diskRemovalLocked(view.removal);
+  const selectable = view.page?.entries.filter(workflow.canRemove) ?? [];
   const page = view.mode === "treemap" ? view.chart : view.page;
   const running = summary?.phase === "running";
   useEffect(() => { workflow.setVisible(true); return () => workflow.setVisible(false); }, [workflow]);
@@ -33,9 +38,9 @@ export function DiskScanPage({ view, workflow }: { view: DiskScanView; workflow:
         <form onSubmit={(event) => { event.preventDefault(); void workflow.start(); }}>
           <label htmlFor="disk-scan-path">扫描目录</label>
           <div className="disk-scan-inputs">
-            <Input id="disk-scan-path" value={view.draftPath} onChange={(event) => workflow.setPath(event.target.value)} placeholder="/Users/… 或 ~/…" autoComplete="off" spellCheck={false} />
-            <Button type="button" variant="outline" disabled={view.picking} onClick={() => void workflow.choose()}><FolderOpen aria-hidden="true" />{view.picking ? "选择中…" : "选择目录"}</Button>
-            <Button type="submit" disabled={!view.loaded || !view.draftPath || view.starting}>{view.starting ? "检查目录…" : summary ? "重新扫描" : "开始扫描"}</Button>
+            <Input id="disk-scan-path" disabled={locked} value={view.draftPath} onChange={(event) => workflow.setPath(event.target.value)} placeholder="/Users/… 或 ~/…" autoComplete="off" spellCheck={false} />
+            <Button type="button" variant="outline" disabled={view.picking || locked} onClick={() => void workflow.choose()}><FolderOpen aria-hidden="true" />{view.picking ? "选择中…" : "选择目录"}</Button>
+            <Button type="submit" disabled={!view.loaded || !view.draftPath || view.starting || locked}>{view.starting ? "检查目录…" : summary ? "重新扫描" : "开始扫描"}</Button>
             {running && <Button type="button" variant="outline" disabled={view.stopping || view.starting} onClick={() => void workflow.stop()}><Square aria-hidden="true" />{view.stopping ? "正在停止…" : "停止扫描"}</Button>}
           </div>
           <p className="disk-scan-hint">只读扫描，包含隐藏文件和目录。</p>
@@ -43,6 +48,7 @@ export function DiskScanPage({ view, workflow }: { view: DiskScanView; workflow:
       </Panel>
       {view.error && <Notice title="无法完成操作" message={view.error} />}
       {(summary?.warning ?? view.warning) && <Notice title="路径记忆提示" message={(summary?.warning ?? view.warning)!} />}
+      <DiskRemovalPanel removal={view.removal} workflow={workflow} />
       {summary ? <>
         <section className="disk-scan-summary" aria-label="本轮扫描记录">
           <div className="disk-scan-record">
@@ -62,29 +68,38 @@ export function DiskScanPage({ view, workflow }: { view: DiskScanView; workflow:
         <Panel className="disk-scan-browser">
           <div className="disk-scan-result-head">
           <div className="disk-scan-view-switch" role="group" aria-label="结果展示方式">
-            <button type="button" aria-pressed={view.mode === "list"} onClick={() => workflow.setMode("list")}>列表</button>
-            <button type="button" aria-pressed={view.mode === "treemap"} onClick={() => workflow.setMode("treemap")}>矩形树图</button>
+            <button type="button" disabled={locked} aria-pressed={view.mode === "list"} onClick={() => workflow.setMode("list")}>列表</button>
+            <button type="button" disabled={locked} aria-pressed={view.mode === "treemap"} onClick={() => workflow.setMode("treemap")}>矩形树图</button>
           </div>
           <div className="disk-scan-browser-head">
-            <Button type="button" size="sm" variant="outline" disabled={!parent} onClick={() => parent && workflow.enter(parent.id)}><ArrowUp aria-hidden="true" />上一级</Button>
+            <Button type="button" size="sm" variant="outline" disabled={!parent || locked} onClick={() => parent && workflow.enter(parent.id)}><ArrowUp aria-hidden="true" />上一级</Button>
             <nav aria-label="目录路径" className="disk-scan-breadcrumbs">
               {page ? <>
-                {page.ancestors.map((entry) => <span key={entry.id}><button type="button" onClick={() => workflow.enter(entry.id)} title={entry.path}>{entry.name}</button><CaretRight aria-hidden="true" /></span>)}
+                {page.ancestors.map((entry) => <span key={entry.id}><button type="button" disabled={locked} onClick={() => workflow.enter(entry.id)} title={entry.path}>{entry.name}</button><CaretRight aria-hidden="true" /></span>)}
                 <span aria-current="location" title={page.directory.path}>{page.directory.name}</span>
               </> : <span>读取目录记录…</span>}
             </nav>
+            {page && page.directory.id !== 0 && <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" size="icon" variant="ghost" disabled={locked} aria-label="当前目录操作"><DotsThree aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={!workflow.canRemove(page.directory)} onSelect={() => void workflow.prepareRemoval([page.directory.id])}><Trash aria-hidden="true" />将当前目录移到废纸篓</DropdownMenuItem></DropdownMenuContent></DropdownMenu>}
             {page && <span className="disk-scan-directory-size">{size(page.directory)}</span>}
           </div>
+          </div>
+          <div className="disk-removal-toolbar">
+            {view.mode === "list" && <label><input type="checkbox" aria-label="全选已显示" disabled={!selectable.length || locked} checked={selectable.length > 0 && selectable.every((entry) => view.selectedIds.includes(entry.id))} onChange={(event) => workflow.selectDisplayed(event.target.checked)} />全选已显示</label>}
+            <span>已选 {view.selectedIds.length} 项</span>
+            {view.mode === "treemap" && <Button type="button" size="sm" variant="ghost" disabled={locked} onClick={() => workflow.setMode("list")}>到列表批量选择</Button>}
+            <Button type="button" size="sm" variant="outline" disabled={!view.selectedIds.length || locked || running || view.starting || !!view.invalidated} onClick={() => void workflow.prepareRemoval(view.selectedIds)}><Trash aria-hidden="true" />移到废纸篓</Button>
+            {running && <span>扫描结束或停止后可移除</span>}
+            {view.invalidated && <span>旧记录仅供查看，请重新扫描</span>}
           </div>
           {view.error && page && <Button type="button" variant="ghost" size="sm" onClick={() => void workflow.refreshPage()}>重试读取目录记录</Button>}
           {view.mode === "list" && view.group !== "all" && <div className="disk-scan-group-filter">
             <span>正在查看：{diskScanGroupLabels[view.group]}{page ? ` · ${page.total.toLocaleString("zh-CN")} 项` : ""}</span>
-            <Button type="button" variant="ghost" size="sm" onClick={() => workflow.showGroup("all")}>查看全部</Button>
+            <Button type="button" variant="ghost" size="sm" disabled={locked} onClick={() => workflow.showGroup("all")}>查看全部</Button>
           </div>}
           {view.mode === "treemap" && view.chart ? <>
             {view.chart.directory.message && <p className="disk-scan-directory-note">{view.chart.directory.message}</p>}
             <Suspense fallback={<EmptyState message="正在加载矩形树图…" />}>
-              <DiskScanTreemap key={`${view.chart.scanId}:${view.chart.directory.id}`} chart={view.chart} pending={view.chartPending} workflow={workflow} onCopy={copyPath} />
+              <DiskScanTreemap key={`${view.chart.scanId}:${view.chart.directory.id}`} chart={view.chart} disabled={locked} pending={view.chartPending} workflow={workflow} onCopy={copyPath} />
             </Suspense>
           </> : page ? <>
             {page.directory.message && <p className="disk-scan-directory-note">{page.directory.message}</p>}
@@ -93,17 +108,17 @@ export function DiskScanPage({ view, workflow }: { view: DiskScanView; workflow:
               <tbody>{page.entries.map((entry) => {
                 const Icon = entry.kind === "directory" ? Folder : entry.kind === "symlink" ? Link : entry.kind === "mount" ? HardDrives : File;
                 return <tr key={entry.id}>
-                  <td className="disk-scan-name"><div><Icon aria-hidden="true" />{entry.kind === "directory" ? <button type="button" title={entry.path} onClick={() => workflow.enter(entry.id)}>{entry.name}<CaretRight aria-hidden="true" /></button> : <span title={entry.path}>{entry.name}</span>}</div></td>
+                  <td className="disk-scan-name"><div><input type="checkbox" aria-label={`选择：${entry.name}`} title={entry.removalReason ?? undefined} checked={view.selectedIds.includes(entry.id)} disabled={!workflow.canRemove(entry)} onChange={() => workflow.toggleSelected(entry)} /><Icon aria-hidden="true" />{entry.kind === "directory" ? <button type="button" disabled={locked} title={entry.path} onClick={() => workflow.enter(entry.id)}>{entry.name}<CaretRight aria-hidden="true" /></button> : <span title={entry.path}>{entry.name}</span>}</div></td>
                   <td className="disk-scan-type">{diskScanKindLabels[entry.kind]}</td>
                   <td className="disk-scan-size">{size(entry)}</td>
                   <td className="disk-scan-status" title={entry.message ?? undefined}><span>{diskScanStatusLabels[entry.status]}</span>{entry.message && <small>{entry.message}</small>}</td>
-                  <td className="disk-scan-copy"><Button type="button" size="icon" variant="ghost" aria-label={`复制路径：${entry.name}`} title="复制路径" onClick={() => void copyPath(entry.path)}><Copy aria-hidden="true" /></Button></td>
+                  <td className="disk-scan-copy"><div><DiskRemovalButton entry={entry} workflow={workflow} icon /><Button type="button" size="icon" variant="ghost" aria-label={`复制路径：${entry.name}`} title="复制路径" onClick={() => void copyPath(entry.path)}><Copy aria-hidden="true" /></Button></div></td>
                 </tr>;
               })}</tbody>
             </table> : <EmptyState message={view.group !== "all" ? "当前分组暂无条目，可查看全部目录内容。" : page.directory.status === "complete" ? "此目录为空。" : page.directory.status === "partial" ? "此目录尚无可展示的条目，读取结果不完整。" : "此目录尚在扫描，已发现的条目会逐步显示。"} />}
             <div className="disk-scan-list-footer">
               <span>已显示 {page.entries.length.toLocaleString("zh-CN")} / {page.total.toLocaleString("zh-CN")} 个已发现条目</span>
-              {page.entries.length < page.total && <Button type="button" size="sm" variant="outline" disabled={view.loading} onClick={workflow.loadMore}>继续显示 200 条</Button>}
+              {page.entries.length < page.total && <Button type="button" size="sm" variant="outline" disabled={view.loading || locked} onClick={workflow.loadMore}>继续显示 200 条</Button>}
             </div>
           </> : view.error ? <Button type="button" variant="outline" onClick={() => void workflow.refreshPage()}>重试读取目录记录</Button> : <EmptyState message="正在读取本轮目录记录…" />}
         </Panel>

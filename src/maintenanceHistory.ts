@@ -1,3 +1,4 @@
+import type { DiskRemovalTarget, DiskRemovalItem } from "./diskRemoval";
 import { managerLabels } from "./constants";
 import type {
   DirectoryMeasurementStatus,
@@ -6,7 +7,7 @@ import type {
   ProjectDataKind,
 } from "./types";
 
-export type MaintenanceDomain = "manager" | "projectCleanup" | "vscodeStorage" | "sessionRecord";
+export type MaintenanceDomain = "manager" | "diskEntry" | "projectCleanup" | "vscodeStorage" | "sessionRecord";
 
 export type MaintenanceOperation =
   | "cleanupCache"
@@ -15,6 +16,7 @@ export type MaintenanceOperation =
   | "uninstallSdkComponent"
   | "cleanBatch"
   | "removeWorkspaceStorage"
+  | "removeDiskEntries"
   | "removeToTrash"
   | "deletePermanently";
 
@@ -171,7 +173,17 @@ export interface OpenCodeDeletionDetail {
   results: OpenCodeDeletionItemSnapshot[];
 }
 
+export interface DiskTrashDetail {
+  kind: "diskTrash";
+  stopped: boolean | null;
+  scanId: string;
+  rootPath: string;
+  targets: DiskRemovalTarget[];
+  results: DiskRemovalItem[];
+}
+
 export type MaintenanceDetail =
+  | DiskTrashDetail
   | ManagerDetail
   | ProjectCleanupDetail
   | VscodeStorageDetail
@@ -229,6 +241,7 @@ export interface MaintenanceHistory {
 }
 
 export const maintenanceDomainLabels: Record<MaintenanceDomain, string> = {
+  diskEntry: "磁盘条目移除",
   manager: "管理器维护",
   projectCleanup: "项目清理",
   vscodeStorage: "VS Code 工作区存储移除",
@@ -242,6 +255,7 @@ export const maintenanceOperationLabels: Record<MaintenanceOperation, string> = 
   uninstallSdkComponent: "SDK 组件卸载",
   cleanBatch: "项目清理批次",
   removeWorkspaceStorage: "工作区存储移除",
+  removeDiskEntries: "磁盘条目移到废纸篓",
   removeToTrash: "会话记录移入废纸篓",
   deletePermanently: "OpenCode 会话永久删除",
 };
@@ -289,6 +303,7 @@ export function maintenanceRecordTitle(record: Pick<MaintenanceRecordSummary, "d
       record.subject.target ? ` ${record.subject.target}` : ""
     }`;
   }
+  if (record.domain === "diskEntry") return `磁盘条目移除 · ${record.subject.rootPath ?? "扫描目录"}`;
   if (record.domain === "projectCleanup") {
     return `项目清理 · ${record.subject.rootPath ?? "扫描目录"}`;
   }
@@ -310,6 +325,7 @@ export function maintenanceRecordState(record: Pick<MaintenanceRecordSummary, "e
 }
 
 export function maintenanceRecoveryBoundary(record: Pick<MaintenanceRecordSummary, "operation" | "domain">) {
+  if (record.domain === "diskEntry") return "目标移入系统废纸篓；目录包含未扫描及后来新增的内容。恢复请使用系统废纸篓，占用不代表实际释放空间。";
   if (record.operation === "cleanMavenArtifacts") return "构件版本目录移入废纸篓，清空前可恢复；空间在清空后释放。其他项目或动态加载仍可能需要这些构件。";
   if (record.operation === "uninstallSdkComponent") return "SDK 组件由 Android SDK 自带 CLI 永久删除，不进入废纸篓，无法由本工具恢复。";
   if (record.operation === "deletePermanently") return "OpenCode 服务永久删除会话及其子会话，无法由本工具恢复。";

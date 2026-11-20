@@ -33,7 +33,7 @@
 .disk-scan-table th:first-child { width: 40%; padding-left: var(--space-lg); }
 .disk-scan-table th:nth-child(2) { width: 12%; }
 .disk-scan-table th:nth-child(3) { width: 16%; text-align: right; }
-.disk-scan-table th:nth-child(5) { width: 56px; }
+.disk-scan-table th:nth-child(5) { width: 94px; }
 .disk-scan-table td { padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: middle; }
 .disk-scan-table td:first-child { padding-left: var(--space-lg); }
 .disk-scan-name > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -87,7 +87,7 @@
   .disk-scan-record time { margin-left: 0; }
   .disk-scan-table thead { display: none; }
   .disk-scan-table tbody { display: block; }
-  .disk-scan-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto 44px; padding: 10px var(--space-lg); gap: 4px 8px; border-top: 1px solid var(--border); }
+  .disk-scan-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto 40px; padding: 10px var(--space-lg); gap: 4px 8px; border-top: 1px solid var(--border); }
   .disk-scan-table td, .disk-scan-table td:first-child { padding: 0; border: 0; }
   .disk-scan-name { grid-column: 1; grid-row: 1; align-self: center; }
   .disk-scan-size { grid-column: 2; grid-row: 1; align-self: center; }
@@ -107,4 +107,31 @@
   .disk-scan-group-filter { padding-inline: var(--space-md); }
   .disk-scan-chart-groups button { min-height: 44px; }
   .disk-scan-chart-detail { flex-wrap: wrap; }
+}
+
+/* Selection stays beside the name; operation status survives the follow-up scan. */
+.disk-scan-name input, .disk-removal-toolbar input { width: 16px; height: 16px; flex: none; accent-color: var(--primary); }
+.disk-scan-copy > div { display: flex; justify-content: flex-end; gap: 4px; }
+.disk-removal-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px var(--space-lg); border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+.disk-removal-toolbar label { display: inline-flex; align-items: center; gap: 8px; }
+.disk-removal-toolbar > span { color: var(--muted-foreground); }
+.disk-removal-result { padding: var(--space-lg); font-size: var(--text-sm); }
+.disk-removal-result-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.disk-removal-result-head > button { margin-left: auto; }
+.disk-removal-result p { margin: 8px 0; overflow-wrap: anywhere; }
+.disk-removal-result summary { cursor: pointer; padding-block: 8px; }
+.disk-removal-targets { list-style: none; padding: 0; margin: 0; max-height: 32vh; overflow: auto; }
+.disk-removal-targets li { padding: 10px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.disk-removal-targets li:last-child { border-bottom: 0; }
+.disk-removal-targets p { margin: 4px 0 0; color: var(--muted-foreground); }
+.disk-removal-confirm { max-height: calc(100dvh - 32px); overflow: auto; font-size: var(--text-sm); }
+.disk-removal-note { color: var(--destructive); }
+.disk-removal-context { z-index: 60; padding: 4px; min-width: 160px; background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 4px 16px #0002; font-size: var(--text-sm); }
+.disk-removal-context [role="menuitem"] { padding: 8px 12px; border-radius: 8px; outline: none; cursor: default; }
+.disk-removal-context [data-highlighted] { background: var(--accent); }
+.disk-removal-context [data-disabled] { opacity: .5; }
+.disk-scan-page button:disabled { cursor: default; }
+@media (max-width: 760px) {
+  .disk-scan-copy > div { flex-direction: column; }
+  .disk-removal-toolbar, .disk-removal-result { padding-inline: var(--space-md); }
 }

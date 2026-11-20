@@ -193,6 +193,7 @@ function RecordDetail({ detail, homeDirectory, onShowSnapshots, onOpenDomain }: 
 }
 
 function Scope({ detail, homeDirectory }: { detail: MaintenanceDetail; homeDirectory: string | null }) {
+  if (detail.kind === "diskTrash") return <div className="grid gap-1 text-sm">{detail.targets.map((target) => <div className="border-t py-2 text-xs" key={target.id}><p className="break-all font-medium">{target.name}</p><p className="break-all text-muted-foreground">{target.path}</p><p>{target.directory ? "整个目录" : "文件"}{target.partial ? " · 扫描不完整" : ""}</p></div>)}</div>;
   if (detail.kind === "manager") return <ManagerScope detail={detail} />;
   if (detail.kind === "projectCleanup") return <ProjectScope detail={detail} homeDirectory={homeDirectory} />;
   if (detail.kind === "vscodeStorage") return <VscodeScope detail={detail} homeDirectory={homeDirectory} />;
@@ -273,6 +274,13 @@ function OpenCodeScope({ detail }: { detail: OpenCodeDeletionDetail }) {
 }
 
 function Results({ detail }: { detail: MaintenanceDetail }) {
+  if (detail.kind === "diskTrash") {
+    const byId = new Map(detail.results.map((item) => [item.id, item]));
+    return <SimpleResults items={detail.targets.map((target) => {
+      const result = byId.get(target.id);
+      return { id: String(target.id), label: target.path, status: result?.status === "moved" ? "Moved" : result?.status === "skipped" ? "Skipped" : result?.status === "failed" ? "Failed" : detail.stopped === true ? "NotAttempted" : "Unconfirmed", reason: null, message: result?.message ?? null };
+    })} reasonLabels={{}} />;
+  }
   if (detail.kind === "manager") return <ManagerResults detail={detail} />;
   if (detail.kind === "projectCleanup") return <ProjectResults detail={detail} />;
   if (detail.kind === "vscodeStorage") return <SimpleResults items={detail.results.map((item) => ({ id: item.id, status: item.status, reason: item.reason, message: item.message }))} reasonLabels={vscodeRemovalReasonLabels as Record<string, string>} />;
@@ -352,6 +360,7 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function subjectFor(detail: MaintenanceDetail): MaintenanceRecordSummary["subject"] {
+  if (detail.kind === "diskTrash") return { rootPath: detail.rootPath, targetCount: detail.targets.length };
   if (detail.kind === "manager") return { managerId: detail.managerId, target: detail.target ?? undefined, targetCount: detail.steps?.length ?? 0 };
   if (detail.kind === "projectCleanup") return { rootPath: detail.scope.scanRootPath, targetCount: detail.scope.candidates.length };
   if (detail.kind === "vscodeStorage") return { source: "vscode", targetCount: detail.scope.workspaces.length };
@@ -362,10 +371,12 @@ function subjectFor(detail: MaintenanceDetail): MaintenanceRecordSummary["subjec
 function countsText(record: MaintenanceRecordSummary) {
   const { counts } = record;
   if (!counts.total) return "无逐目标计数";
-  return `完成 ${counts.succeeded}，跳过 ${counts.skipped}，失败 ${counts.failed}，未执行 ${counts.notAttempted}`;
+  return `完成 ${counts.succeeded}，跳过 ${counts.skipped}，失败 ${counts.failed}，${record.domain === "diskEntry" ? "未记录结果" : "未执行"} ${counts.notAttempted}`;
 }
 
 function statusLabel(status: string) {
+  if (status === "NotAttempted") return "未执行（批次停止）";
+  if (status === "Unconfirmed") return "结果未确认";
   if (status === "Moved") return "已移入废纸篓";
   if (status === "Skipped") return "跳过";
   if (status === "Failed") return "失败";

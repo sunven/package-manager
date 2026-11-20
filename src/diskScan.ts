@@ -1,3 +1,4 @@
+import type { DiskRemovalView } from "./diskRemoval";
 import type { ObservationFacts } from "./observationFacts";
 import { formatBytes } from "./utils/format";
 
@@ -22,6 +23,7 @@ export interface DiskScanEntry {
   name: string;
   path: string;
   kind: "directory" | "file" | "symlink" | "mount" | "special" | "unknown";
+  removalReason: string | null;
   bytes: number | null;
   status: "pending" | "scanning" | "complete" | "partial" | "excluded";
   message: string | null;
@@ -52,6 +54,9 @@ export const diskScanGroupLabels: Record<DiskScanGroup, string> = {
 export interface DiskScanSettings { lastPath: string | null; warning: string | null }
 
 export interface DiskScanView {
+  selectedIds: number[];
+  removal: DiskRemovalView;
+  invalidated: { at: number; reason: string } | null;
   loaded: boolean;
   draftPath: string;
   lastPath: string | null;
@@ -86,7 +91,7 @@ export function diskScanObservationFacts(view: DiskScanView): ObservationFacts {
       note: summary.message,
     } : null,
     failure: view.failure ? { outcome: "failed", reason: view.failure } : null,
-    invalidated: null,
+    invalidated: view.invalidated,
     currentScope: scope ? { key: `disk:${scope}`, label: scope } : null,
   };
 }
