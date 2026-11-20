@@ -19,7 +19,7 @@
 .disk-scan-metrics dd { font-size: var(--text-xl); margin: 4px 0 0; }
 .disk-scan-diagnostic { margin: 10px 0; overflow-wrap: anywhere; }
 .disk-scan-browser { overflow: hidden; }
-.disk-scan-browser-head { display: flex; align-items: center; gap: 12px; padding: 12px var(--space-lg); border-bottom: 1px solid var(--border); }
+.disk-scan-browser-head { display: flex; flex: 1; min-width: min(100%, 300px); align-items: center; gap: 12px; padding: 12px var(--space-lg); }
 .disk-scan-browser-head > button { flex: none; }
 .disk-scan-breadcrumbs { display: flex; flex: 1; min-width: 0; flex-wrap: wrap; gap: 4px; }
 .disk-scan-breadcrumbs span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
@@ -46,6 +46,35 @@
 .disk-scan-size { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .disk-scan-copy { text-align: right; }
 .disk-scan-list-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px var(--space-lg); color: var(--muted-foreground); font-size: var(--text-sm); border-top: 1px solid var(--border); }
+.disk-scan-result-head { display: flex; flex-wrap: wrap; align-items: stretch; border-bottom: 1px solid var(--border); }
+.disk-scan-view-switch { display: flex; flex: none; align-items: stretch; gap: 24px; padding-inline: var(--space-lg); }
+.disk-scan-view-switch button { min-height: 48px; padding: 8px 0; border-bottom: 2px solid transparent; color: var(--muted-foreground); font-size: var(--text-sm); }
+.disk-scan-view-switch button[aria-pressed="true"] { border-bottom-color: var(--foreground); color: var(--foreground); font-weight: 500; }
+.disk-scan-group-filter { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 8px var(--space-lg); border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+/* One full-width chart, sharing the browser's 24px content edges. */
+.disk-scan-chart { min-width: 0; padding: 0 var(--space-lg) 16px; }
+.disk-scan-chart-caption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; padding: 14px 0; font-size: var(--text-sm); }
+.disk-scan-chart-caption p { margin: 0; }
+.disk-scan-chart-caption span { color: var(--muted-foreground); }
+.disk-scan-treemap-canvas { width: 100%; height: clamp(260px, 36vh, 360px); }
+.disk-scan-chart-tooltip { max-width: min(380px, 65vw); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.disk-scan-chart-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding-top: 8px; color: var(--muted-foreground); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.disk-scan-chart-groups { display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 8px 0 12px; border-bottom: 1px solid var(--border); font-size: var(--text-sm); }
+.disk-scan-chart-groups button { min-height: 32px; text-align: left; color: var(--muted-foreground); }
+.disk-scan-chart-groups button:not(:disabled):hover { color: var(--foreground); text-decoration: underline; }
+.disk-scan-chart-groups strong { margin-inline: 4px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--foreground); }
+.disk-scan-chart-groups button:disabled { cursor: default; }
+.disk-scan-chart-detail { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-top: 14px; font-size: var(--text-sm); }
+.disk-scan-chart-detail > div { min-width: 0; overflow-wrap: anywhere; }
+.disk-scan-chart-detail > button { flex: none; }
+.disk-scan-chart-detail strong { font-weight: 500; }
+.disk-scan-chart-detail p { margin: 4px 0 0; color: var(--muted-foreground); }
+.disk-scan-detail-path { font-family: var(--font-mono); }
+.disk-scan-chart-help { margin: 12px 0 0; font-size: var(--text-sm); color: var(--muted-foreground); }
+.disk-scan-page[data-view="treemap"] { gap: var(--space-md); }
+.disk-scan-page[data-view="treemap"] .disk-scan-controls { padding: var(--space-md) var(--space-lg); }
+.disk-scan-page[data-view="treemap"] .disk-scan-root { margin-bottom: 10px; }
+.disk-scan-page[data-view="treemap"] .disk-scan-metrics { margin-bottom: 8px; }
 @media (max-width: 760px) {
   .disk-scan-page { gap: var(--space-md); }
   .disk-scan-controls { padding: var(--space-md); }
@@ -71,4 +100,11 @@
   .disk-scan-metrics dd { font-size: var(--text-lg); }
   .disk-scan-browser-head { padding: 10px var(--space-md); }
   .disk-scan-table tr { padding-inline: var(--space-md); }
+  .disk-scan-view-switch { padding-inline: var(--space-md); }
+  .disk-scan-result-head { display: block; }
+  .disk-scan-view-switch { border-bottom: 1px solid var(--border); }
+  .disk-scan-chart { padding-inline: var(--space-md); }
+  .disk-scan-group-filter { padding-inline: var(--space-md); }
+  .disk-scan-chart-groups button { min-height: 44px; }
+  .disk-scan-chart-detail { flex-wrap: wrap; }
 }

@@ -1,4 +1,4 @@
-import type { DiskScanDirectory, DiskScanSettings, DiskScanSummary, DiskScanView } from "./diskScan";
+import type { DiskScanChart, DiskScanDirectory, DiskScanGroup, DiskScanMode, DiskScanSettings, DiskScanSummary, DiskScanView } from "./diskScan";
 import type { ObservationEvent } from "./observationLedger";
 import { errorToString } from "./utils/format";
 
@@ -7,13 +7,15 @@ export interface DiskScanEffects {
   choose(): Promise<string | null>;
   start(path: string, progress: (summary: DiskScanSummary) => void): Promise<DiskScanSummary>;
   stop(scanId: string): Promise<void>;
-  directory(input: { scanId: string; directoryId: number; view: number; limit: number }): Promise<DiskScanDirectory>;
+  directory(input: { scanId: string; directoryId: number; view: number; limit: number; group: DiskScanGroup }): Promise<DiskScanDirectory>;
+  chart(input: { scanId: string; directoryId: number }): Promise<DiskScanChart>;
   observe(event: ObservationEvent): void;
 }
 
 export function createDiskScanWorkflow(effects: DiskScanEffects) {
   let view: DiskScanView = {
     loaded: false, draftPath: "", lastPath: null, summary: null, directoryId: 0, limit: 200, page: null,
+    mode: "list", group: "all", chart: null, chartPaused: false, chartPending: false,
     starting: false, stopping: false, picking: false, loading: false, error: null, failure: null, warning: null,
   };
   const listeners = new Set<() => void>();
@@ -25,9 +27,19 @@ export function createDiskScanWorkflow(effects: DiskScanEffects) {
   let needsRead = false;
   let directoryError: string | null = null;
   let recordedScan: string | null = null;
+  let chartTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastChartUpdate = 0;
+  let pendingChart: DiskScanChart | null = null;
   function patch(next: Partial<DiskScanView>) {
     view = { ...view, ...next };
     for (const listener of listeners) listener();
+  }
+
+  function resetChartUpdates() {
+    if (chartTimer !== null) clearTimeout(chartTimer);
+    chartTimer = null;
+    pendingChart = null;
+    lastChartUpdate = 0;
   }
 
   async function refreshPage() {
@@ -35,16 +47,49 @@ export function createDiskScanWorkflow(effects: DiskScanEffects) {
     if (reading || !visible || !view.summary) return;
     reading = true;
     while (needsRead && visible && view.summary) {
+      if (view.mode === "treemap" && view.chart) {
+        if (view.chartPaused) {
+          patch({ chartPending: pendingChart !== null || view.summary.revision > view.chart.revision });
+          break;
+        }
+        const delay = 1000 - (Date.now() - lastChartUpdate);
+        if (delay > 0) {
+          chartTimer ??= setTimeout(() => { chartTimer = null; void refreshPage(); }, delay);
+          break;
+        }
+      }
+      if (chartTimer !== null) clearTimeout(chartTimer);
+      chartTimer = null;
       needsRead = false;
       const ticket = navigation;
       const scanId: string = view.summary.scanId;
-      const input = { scanId, directoryId: view.directoryId, view: navigation, limit: view.limit };
+      const mode = view.mode;
+      const input = { scanId, directoryId: view.directoryId, view: navigation, limit: view.limit, group: view.group };
       patch({ loading: true });
       try {
-        const page = await effects.directory(input);
-        if (ticket === navigation && scanId === view.summary?.scanId) {
-          patch({ page, error: view.error === directoryError ? null : view.error });
-          directoryError = null;
+        if (mode === "treemap") {
+          const buffered = pendingChart;
+          pendingChart = null;
+          const chart = buffered && buffered.revision >= view.summary.revision
+            ? buffered : await effects.chart({ scanId, directoryId: input.directoryId });
+          if (ticket === navigation && scanId === view.summary?.scanId) {
+            if (view.chartPaused && view.chart) {
+              pendingChart = chart;
+              patch({ chartPending: true });
+            } else {
+              lastChartUpdate = Date.now();
+              patch({ chart, chartPending: false });
+              needsRead ||= chart.revision < view.summary.revision;
+            }
+            patch({ error: view.error === directoryError ? null : view.error });
+            directoryError = null;
+          }
+        } else {
+          const page = await effects.directory(input);
+          if (ticket === navigation && scanId === view.summary?.scanId) {
+            patch({ page, error: view.error === directoryError ? null : view.error });
+            directoryError = null;
+          }
         }
       } catch (error) {
         if (ticket === navigation && scanId === view.summary?.scanId) {
@@ -63,7 +108,9 @@ export function createDiskScanWorkflow(effects: DiskScanEffects) {
     if (same && summary.revision <= view.summary!.revision) return;
     if (!same) {
       navigation++;
-      patch({ summary, lastPath: summary.rootPath, directoryId: 0, limit: 200, page: null, error: null, failure: null, stopping: false });
+      resetChartUpdates();
+      patch({ summary, lastPath: summary.rootPath, directoryId: 0, limit: 200, page: null, chart: null,
+        group: "all", chartPaused: false, chartPending: false, error: null, failure: null, stopping: false });
     } else patch({ summary, stopping: summary.phase === "running" && view.stopping });
     if (summary.finishedAt && recordedScan !== summary.scanId) {
       recordedScan = summary.scanId;
@@ -88,7 +135,33 @@ export function createDiskScanWorkflow(effects: DiskScanEffects) {
       })();
       return initialization;
     },
-    setVisible(next: boolean) { visible = next; if (next) void refreshPage(); },
+    setVisible(next: boolean) {
+      visible = next;
+      if (next) void refreshPage();
+      else {
+        if (chartTimer !== null) clearTimeout(chartTimer);
+        chartTimer = null;
+        patch({ chartPaused: false });
+      }
+    },
+    setMode(mode: DiskScanMode) {
+      if (mode === view.mode) return;
+      navigation++;
+      resetChartUpdates();
+      patch({ mode, group: "all", page: null, chartPaused: false, chartPending: false, error: null });
+      void refreshPage();
+    },
+    showGroup(group: DiskScanGroup) {
+      navigation++;
+      resetChartUpdates();
+      patch({ mode: "list", group, limit: 200, page: null, chartPaused: false, chartPending: false, error: null });
+      void refreshPage();
+    },
+    setChartPaused(chartPaused: boolean) {
+      if (view.mode !== "treemap" || chartPaused === view.chartPaused) return;
+      patch({ chartPaused });
+      if (!chartPaused && (pendingChart || needsRead)) void refreshPage();
+    },
     setPath(draftPath: string) { patch({ draftPath }); },
     async choose() {
       if (view.picking) return;
@@ -120,7 +193,8 @@ export function createDiskScanWorkflow(effects: DiskScanEffects) {
     },
     enter(directoryId: number) {
       navigation++;
-      patch({ directoryId, limit: 200, page: null, error: null });
+      resetChartUpdates();
+      patch({ directoryId, limit: 200, page: null, chart: null, group: "all", chartPaused: false, chartPending: false, error: null });
       void refreshPage();
     },
     loadMore() { patch({ limit: view.limit + 200 }); void refreshPage(); },

@@ -1,20 +1,16 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { ArrowUp, CaretRight, Copy, File, Folder, FolderOpen, Link, HardDrives, Square } from "@phosphor-icons/react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { EmptyState, Notice, Panel } from "./ui";
-import { diskScanKindLabels, diskScanPhaseLabels, diskScanStatusLabels, type DiskScanEntry, type DiskScanView } from "../diskScan";
+import { diskScanGroupLabels, diskScanKindLabels, diskScanPhaseLabels, diskScanSize as size, diskScanStatusLabels, type DiskScanView } from "../diskScan";
 import type { DiskScanWorkflow } from "../diskScanWorkflow";
 import { formatBytes, errorToString } from "../utils/format";
 import "../diskScan.css";
 
-function size(entry: DiskScanEntry) {
-  if (entry.status === "excluded") return "未计入";
-  if (entry.bytes === null) return "—";
-  return `${entry.status === "complete" ? "" : "≥ "}${formatBytes(entry.bytes)}`;
-}
+const DiskScanTreemap = lazy(() => import("./DiskScanTreemap"));
 
 async function copyPath(path: string) {
   try { await writeText(path); toast.success("路径已复制"); }
@@ -22,12 +18,13 @@ async function copyPath(path: string) {
 }
 
 export function DiskScanPage({ view, workflow }: { view: DiskScanView; workflow: DiskScanWorkflow }) {
-  const { summary, page } = view;
+  const { summary } = view;
+  const page = view.mode === "treemap" ? view.chart : view.page;
   const running = summary?.phase === "running";
   useEffect(() => { workflow.setVisible(true); return () => workflow.setVisible(false); }, [workflow]);
   const parent = page?.ancestors[page.ancestors.length - 1];
   return (
-    <main className="view-grid disk-scan-page">
+    <main className="view-grid disk-scan-page" data-view={view.mode}>
       <header className="disk-scan-title">
         <h1>磁盘扫描</h1>
         <p>从一个目录开始，逐层查看文件和子目录的占用。</p>
@@ -63,6 +60,11 @@ export function DiskScanPage({ view, workflow }: { view: DiskScanView; workflow:
           {(summary.errors > 0 || summary.excluded > 0) && <p className="disk-scan-hint">{summary.errors > 0 && `${summary.errors.toLocaleString("zh-CN")} 处读取问题 · `}{summary.excluded.toLocaleString("zh-CN")} 个主动排除条目（链接、其他磁盘或特殊条目）</p>}
         </section>
         <Panel className="disk-scan-browser">
+          <div className="disk-scan-result-head">
+          <div className="disk-scan-view-switch" role="group" aria-label="结果展示方式">
+            <button type="button" aria-pressed={view.mode === "list"} onClick={() => workflow.setMode("list")}>列表</button>
+            <button type="button" aria-pressed={view.mode === "treemap"} onClick={() => workflow.setMode("treemap")}>矩形树图</button>
+          </div>
           <div className="disk-scan-browser-head">
             <Button type="button" size="sm" variant="outline" disabled={!parent} onClick={() => parent && workflow.enter(parent.id)}><ArrowUp aria-hidden="true" />上一级</Button>
             <nav aria-label="目录路径" className="disk-scan-breadcrumbs">
@@ -73,7 +75,18 @@ export function DiskScanPage({ view, workflow }: { view: DiskScanView; workflow:
             </nav>
             {page && <span className="disk-scan-directory-size">{size(page.directory)}</span>}
           </div>
-          {page ? <>
+          </div>
+          {view.error && page && <Button type="button" variant="ghost" size="sm" onClick={() => void workflow.refreshPage()}>重试读取目录记录</Button>}
+          {view.mode === "list" && view.group !== "all" && <div className="disk-scan-group-filter">
+            <span>正在查看：{diskScanGroupLabels[view.group]}{page ? ` · ${page.total.toLocaleString("zh-CN")} 项` : ""}</span>
+            <Button type="button" variant="ghost" size="sm" onClick={() => workflow.showGroup("all")}>查看全部</Button>
+          </div>}
+          {view.mode === "treemap" && view.chart ? <>
+            {view.chart.directory.message && <p className="disk-scan-directory-note">{view.chart.directory.message}</p>}
+            <Suspense fallback={<EmptyState message="正在加载矩形树图…" />}>
+              <DiskScanTreemap key={`${view.chart.scanId}:${view.chart.directory.id}`} chart={view.chart} pending={view.chartPending} workflow={workflow} onCopy={copyPath} />
+            </Suspense>
+          </> : page ? <>
             {page.directory.message && <p className="disk-scan-directory-note">{page.directory.message}</p>}
             {page.entries.length ? <table className="disk-scan-table" aria-label="目录内容">
               <thead><tr><th scope="col">名称</th><th scope="col">类型</th><th scope="col">占用空间</th><th scope="col">读取状态</th><th scope="col"><span className="sr-only">操作</span></th></tr></thead>
@@ -87,7 +100,7 @@ export function DiskScanPage({ view, workflow }: { view: DiskScanView; workflow:
                   <td className="disk-scan-copy"><Button type="button" size="icon" variant="ghost" aria-label={`复制路径：${entry.name}`} title="复制路径" onClick={() => void copyPath(entry.path)}><Copy aria-hidden="true" /></Button></td>
                 </tr>;
               })}</tbody>
-            </table> : <EmptyState message={page.directory.status === "complete" ? "此目录为空。" : page.directory.status === "partial" ? "此目录尚无可展示的条目，读取结果不完整。" : "此目录尚在扫描，已发现的条目会逐步显示。"} />}
+            </table> : <EmptyState message={view.group !== "all" ? "当前分组暂无条目，可查看全部目录内容。" : page.directory.status === "complete" ? "此目录为空。" : page.directory.status === "partial" ? "此目录尚无可展示的条目，读取结果不完整。" : "此目录尚在扫描，已发现的条目会逐步显示。"} />}
             <div className="disk-scan-list-footer">
               <span>已显示 {page.entries.length.toLocaleString("zh-CN")} / {page.total.toLocaleString("zh-CN")} 个已发现条目</span>
               {page.entries.length < page.total && <Button type="button" size="sm" variant="outline" disabled={view.loading} onClick={workflow.loadMore}>继续显示 200 条</Button>}

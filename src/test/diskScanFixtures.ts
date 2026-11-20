@@ -1,4 +1,4 @@
-import type { DiskScanDirectory, DiskScanEntry, DiskScanSummary } from "../diskScan";
+import type { DiskScanChart, DiskScanDirectory, DiskScanEntry, DiskScanSummary } from "../diskScan";
 
 export function diskSummary(overrides: Partial<DiskScanSummary> = {}): DiskScanSummary {
   return { scanId: "scan-1", revision: 0, rootPath: "/test", phase: "running", startedAt: 1795075200000,
@@ -16,4 +16,10 @@ export function diskDirectory(overrides: Partial<DiskScanDirectory> = {}): DiskS
     diskEntry({ id: 3, name: "restricted", path: "/test/restricted", bytes: null, status: "partial", message: "无法读取目录：权限不足" }),
     diskEntry({ id: 4, name: "linked", path: "/test/linked", kind: "symlink", bytes: null, status: "excluded", message: "符号链接，未计入且不跟随目标。" }),
   ], total: 4, ...overrides };
+}
+
+export function diskChart(overrides: Partial<DiskScanChart> = {}): DiskScanChart {
+  const directory = diskDirectory();
+  return { ...directory, revision: 0, phase: "running", entries: [directory.entries[0]],
+    other: { count: 0, bytes: 0, partial: false }, counts: { unmeasured: 1, zero: 1, excluded: 1 }, ...overrides };
 }

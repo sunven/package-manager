@@ -1,4 +1,5 @@
 import type { ObservationFacts } from "./observationFacts";
+import { formatBytes } from "./utils/format";
 
 export interface DiskScanSummary {
   scanId: string;
@@ -34,6 +35,20 @@ export interface DiskScanDirectory {
   total: number;
 }
 
+export type DiskScanMode = "list" | "treemap";
+export type DiskScanGroup = "all" | "other" | "unmeasured" | "zero" | "excluded";
+
+export interface DiskScanChart extends DiskScanDirectory {
+  revision: number;
+  phase: DiskScanSummary["phase"];
+  other: { count: number; bytes: number; partial: boolean };
+  counts: { unmeasured: number; zero: number; excluded: number };
+}
+
+export const diskScanGroupLabels: Record<DiskScanGroup, string> = {
+  all: "全部条目", other: "其他正占用条目", unmeasured: "尚未统计出占用", zero: "已确认零占用", excluded: "未计入",
+};
+
 export interface DiskScanSettings { lastPath: string | null; warning: string | null }
 
 export interface DiskScanView {
@@ -44,6 +59,11 @@ export interface DiskScanView {
   directoryId: number;
   limit: number;
   page: DiskScanDirectory | null;
+  mode: DiskScanMode;
+  group: DiskScanGroup;
+  chart: DiskScanChart | null;
+  chartPaused: boolean;
+  chartPending: boolean;
   starting: boolean;
   stopping: boolean;
   picking: boolean;
@@ -80,3 +100,9 @@ export const diskScanKindLabels: Record<DiskScanEntry["kind"], string> = {
 export const diskScanStatusLabels: Record<DiskScanEntry["status"], string> = {
   pending: "等待扫描", scanning: "统计中", complete: "已读取", partial: "不完整", excluded: "未计入",
 };
+
+export function diskScanSize(entry: DiskScanEntry) {
+  if (entry.status === "excluded") return "未计入";
+  if (entry.bytes === null) return "—";
+  return `${entry.status === "complete" ? "" : "≥ "}${formatBytes(entry.bytes)}`;
+}

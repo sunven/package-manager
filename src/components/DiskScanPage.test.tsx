@@ -1,13 +1,21 @@
 // @vitest-environment jsdom
 import { useSyncExternalStore } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { DiskScanPage } from "./DiskScanPage";
 import { createDiskScanWorkflow, type DiskScanEffects } from "../diskScanWorkflow";
-import { diskDirectory, diskEntry, diskSummary } from "../test/diskScanFixtures";
+import { diskChart, diskDirectory, diskEntry, diskSummary } from "../test/diskScanFixtures";
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn(async () => {}) }));
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+const chartEngine = vi.hoisted(() => ({ setOption: vi.fn(), on: vi.fn(), resize: vi.fn(), dispose: vi.fn() }));
+vi.mock("echarts/core", () => ({ use: vi.fn(), init: vi.fn(() => chartEngine) }));
+vi.mock("echarts/charts", () => ({ TreemapChart: {} }));
+vi.mock("echarts/components", () => ({ TooltipComponent: {} }));
+vi.mock("echarts/renderers", () => ({ CanvasRenderer: {} }));
+beforeEach(() => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+});
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); delete document.documentElement.dataset.theme; });
 
 function fixture(directory = diskDirectory()) {
   const effects: DiskScanEffects = {
@@ -16,6 +24,10 @@ function fixture(directory = diskDirectory()) {
     start: vi.fn(async () => diskSummary({ phase: "completed", finishedAt: 1795075201000, revision: 1, entries: 4, bytes: 4096 })),
     stop: vi.fn(async () => {}),
     directory: vi.fn(async (input) => input.directoryId === 0 ? directory : diskDirectory({ directory: diskEntry({ id: 1, name: "project", path: "/test/project", bytes: 0 }), ancestors: [diskEntry()], entries: [], total: 0 })),
+    chart: vi.fn(async ({ directoryId }) => directoryId === 0 ? diskChart({ revision: 1, phase: "completed" }) : diskChart({
+      revision: 1, phase: "completed", directory: diskEntry({ id: directoryId, name: "project", path: "/test/project", bytes: 0 }),
+      ancestors: [diskEntry()], entries: [], total: 0, counts: { unmeasured: 0, zero: 0, excluded: 0 },
+    })),
     observe: vi.fn(),
   };
   const workflow = createDiskScanWorkflow(effects);
@@ -82,5 +94,78 @@ describe("disk scan page", () => {
     fireEvent.click(screen.getByRole("button", { name: "开始扫描" }));
     await screen.findByText("此目录尚无可展示的条目，读取结果不完整。");
     expect(screen.queryByText("此目录为空。")).toBeNull();
+  });
+
+  it("selects a chart file, safely displays its name, copies its path and drills into directories", async () => {
+    const { effects, workflow, Harness } = fixture();
+    const file = diskEntry({ id: 5, name: '<img src=x onerror="alert(1)">', kind: "file", path: '/test/<img src=x onerror="alert(1)">', bytes: 512 });
+    vi.mocked(effects.chart).mockResolvedValueOnce(diskChart({ revision: 1, phase: "completed", entries: [diskEntry({ id: 1, name: "project" }), file] }));
+    await workflow.initialize(); render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "开始扫描" })); await screen.findByRole("table");
+    expect(effects.chart).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "矩形树图" }));
+    await screen.findByRole("img");
+    await waitFor(() => expect(chartEngine.setOption).toHaveBeenCalled());
+    const option = chartEngine.setOption.mock.calls[chartEngine.setOption.mock.calls.length - 1][0];
+    const tooltip = option.tooltip.formatter({ data: { id: "5" } }) as HTMLElement;
+    expect(tooltip.textContent).toContain(file.path);
+    expect(tooltip.querySelector("img")).toBeNull();
+    const activate = chartEngine.on.mock.calls.find(([name]) => name === "click")![1];
+    act(() => activate({ data: { id: "5" } }));
+    const details = screen.getByLabelText("选中文件详情");
+    expect(within(details).getByText(file.path)).toBeTruthy();
+    fireEvent.click(within(details).getByRole("button", { name: `复制路径：${file.name}` }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(file.path));
+    act(() => activate({ data: { id: "1" } }));
+    await screen.findByText("此目录为空。");
+    expect(screen.queryByLabelText("选中文件详情")).toBeNull();
+    expect(screen.getByRole("button", { name: "矩形树图" }).getAttribute("aria-pressed")).toBe("true");
+    expect(effects.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens grouped lists from chart counts and lets the user restore all entries", async () => {
+    const { effects, workflow, Harness } = fixture();
+    vi.mocked(effects.directory).mockImplementation(async ({ group }) => group === "unmeasured"
+      ? diskDirectory({ entries: [diskEntry({ id: 3, name: "restricted", bytes: null, status: "partial" })], total: 1 }) : diskDirectory());
+    await workflow.initialize(); render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "开始扫描" })); await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "矩形树图" })); await screen.findByRole("img");
+    fireEvent.click(screen.getByRole("button", { name: "尚未统计出占用 1" }));
+    await screen.findByText("正在查看：尚未统计出占用 · 1 项");
+    expect(within(screen.getByRole("table")).queryByText("readme")).toBeNull();
+    expect(effects.directory).toHaveBeenLastCalledWith(expect.objectContaining({ group: "unmeasured", limit: 200 }));
+    fireEvent.click(screen.getByRole("button", { name: "查看全部" }));
+    await screen.findByText("readme");
+    expect(screen.queryByText(/正在查看/)).toBeNull();
+    expect(effects.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps unknown and zero counts accessible when there is no drawable area", async () => {
+    const { effects, workflow, Harness } = fixture();
+    vi.mocked(effects.chart).mockResolvedValue(diskChart({ revision: 1, phase: "partial", entries: [], total: 3,
+      directory: diskEntry({ bytes: null, status: "partial" }) }));
+    await workflow.initialize(); render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "开始扫描" })); await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "矩形树图" }));
+    await screen.findByText(/当前没有可绘制的正占用/);
+    expect(screen.queryByRole("img")).toBeNull();
+    expect(screen.queryByText("此目录为空。")).toBeNull();
+    for (const label of ["尚未统计出占用 1", "已确认零占用 1", "未计入 1"]) expect(screen.getByRole("button", { name: label })).toBeTruthy();
+    expect(screen.getByText("部分读取")).toBeTruthy();
+  });
+
+  it("repaints the existing canvas on a theme change and disposes it when leaving the chart", async () => {
+    const { workflow, Harness } = fixture();
+    await workflow.initialize(); render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "开始扫描" })); await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "矩形树图" })); await screen.findByRole("img");
+    await waitFor(() => expect(chartEngine.setOption).toHaveBeenCalled());
+    const previous = chartEngine.setOption.mock.calls[chartEngine.setOption.mock.calls.length - 1][0].series[0].data[0].itemStyle.color;
+    document.documentElement.dataset.theme = "dark";
+    await waitFor(() => expect(chartEngine.setOption.mock.calls[chartEngine.setOption.mock.calls.length - 1][0].series[0].data[0].itemStyle.color).not.toBe(previous));
+    expect(chartEngine.dispose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "列表" }));
+    await screen.findByRole("table");
+    expect(chartEngine.dispose).toHaveBeenCalledTimes(1);
   });
 });

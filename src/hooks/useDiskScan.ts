@@ -10,6 +10,7 @@ const workflow = createDiskScanWorkflow({
   start: (path, progress) => invoke("start_disk_scan", { path, onProgress: new Channel<DiskScanSummary>(progress) }),
   stop: (scanId) => invoke("stop_disk_scan", { scanId }),
   directory: (input) => invoke("read_disk_scan_directory", input),
+  chart: (input) => invoke("read_disk_scan_chart", input),
   observe: recordObservation,
 });
 

@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDiskScanWorkflow, type DiskScanEffects } from "./diskScanWorkflow";
-import type { DiskScanDirectory, DiskScanSummary } from "./diskScan";
+import type { DiskScanChart, DiskScanDirectory, DiskScanSummary } from "./diskScan";
 import { diskScanObservationFacts } from "./diskScan";
 import { buildObservationCoverage } from "./observationCoverage";
-import { diskDirectory, diskEntry, diskSummary } from "./test/diskScanFixtures";
+import { diskChart, diskDirectory, diskEntry, diskSummary } from "./test/diskScanFixtures";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -20,10 +20,13 @@ function fixture() {
     start: vi.fn(async (_path, progress) => { callbacks.push(progress); return diskSummary({ scanId: `scan-${callbacks.length}` }); }),
     stop: vi.fn(async () => {}),
     directory: vi.fn(async ({ scanId, directoryId }) => diskDirectory({ scanId, directory: diskEntry({ id: directoryId }) })),
+    chart: vi.fn(async ({ scanId, directoryId }) => diskChart({ scanId, directory: diskEntry({ id: directoryId }) })),
     observe: vi.fn(),
   };
   return { effects, callbacks, workflow: createDiskScanWorkflow(effects) };
 }
+
+afterEach(() => { vi.useRealTimers(); });
 
 describe("disk scan lifecycle", () => {
   it("restores only the last path and leaves selection as a draft", async () => {
@@ -139,5 +142,158 @@ describe("disk scan lifecycle", () => {
     expect(diskScanObservationFacts(workflow.read()).success?.completeness).toBe("partial");
     const current = buildObservationCoverage({ records: {}, facts: { "disk-scan": diskScanObservationFacts(workflow.read()) }, scopes: { "disk-scan": { key: "disk:/saved", label: "/saved" } }, enabledManagers: [] });
     expect(current.items.find((item) => item.id === "disk-scan")).toMatchObject({ status: "partial", currentScopeLabel: "/test", scopeChanged: false });
+  });
+});
+
+async function chartFixture() {
+  vi.useFakeTimers();
+  const fixtureState = fixture();
+  const { effects, workflow } = fixtureState;
+  vi.mocked(effects.chart).mockImplementation(async ({ scanId, directoryId }) => diskChart({
+    scanId, directory: diskEntry({ id: directoryId }), revision: workflow.read().summary!.revision,
+    phase: workflow.read().summary!.phase,
+  }));
+  workflow.setMode("treemap");
+  workflow.setVisible(true);
+  await workflow.initialize(); await workflow.start();
+  await vi.advanceTimersByTimeAsync(0);
+  return fixtureState;
+}
+
+describe("disk scan chart browsing", () => {
+  it("coalesces progress to one chart read per second without reading list pages", async () => {
+    const { effects, callbacks, workflow } = await chartFixture();
+    expect(effects.chart).toHaveBeenCalledTimes(1);
+    expect(effects.directory).not.toHaveBeenCalled();
+    for (let revision = 1; revision <= 3; revision++) {
+      callbacks[0](diskSummary({ revision }));
+      await vi.advanceTimersByTimeAsync(200);
+    }
+    expect(workflow.read().chart?.revision).toBe(0);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(workflow.read().chart?.revision).toBe(3);
+    expect(effects.chart).toHaveBeenCalledTimes(2);
+    workflow.setVisible(false);
+  });
+
+  it("keeps one displayed batch during interaction, even when the scan finishes", async () => {
+    const { effects, callbacks, workflow } = await chartFixture();
+    const shown = workflow.read().chart;
+    workflow.setChartPaused(true);
+    callbacks[0](diskSummary({ revision: 1, phase: "completed", finishedAt: 10, entries: 400 }));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(workflow.read().summary?.phase).toBe("completed");
+    expect(workflow.read().chart).toBe(shown);
+    expect(workflow.read().chartPending).toBe(true);
+    expect(effects.chart).toHaveBeenCalledTimes(1);
+    workflow.setChartPaused(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(workflow.read().chart?.phase).toBe("completed");
+    expect(workflow.read().chartPending).toBe(false);
+    expect(effects.chart).toHaveBeenCalledTimes(2);
+    workflow.setVisible(false);
+  });
+
+  it("buffers an in-flight read when hovering starts and applies it as one batch", async () => {
+    const { effects, callbacks, workflow } = await chartFixture();
+    const pending = deferred<DiskScanChart>();
+    vi.mocked(effects.chart).mockReturnValueOnce(pending.promise);
+    callbacks[0](diskSummary({ revision: 1 }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    workflow.setChartPaused(true);
+    pending.resolve(diskChart({ revision: 1, total: 999, counts: { unmeasured: 10, zero: 20, excluded: 30 } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(workflow.read().chart?.total).toBe(4);
+    expect(workflow.read().chartPending).toBe(true);
+    workflow.setChartPaused(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(workflow.read().chart).toMatchObject({ total: 999, revision: 1, counts: { unmeasured: 10, zero: 20, excluded: 30 } });
+    expect(effects.chart).toHaveBeenCalledTimes(2);
+    workflow.setVisible(false);
+  });
+
+  it("skips an outdated buffered batch when newer results arrive during interaction", async () => {
+    const { effects, callbacks, workflow } = await chartFixture();
+    const pending = deferred<DiskScanChart>();
+    vi.mocked(effects.chart).mockReturnValueOnce(pending.promise);
+    callbacks[0](diskSummary({ revision: 1 }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    workflow.setChartPaused(true);
+    pending.resolve(diskChart({ revision: 1 }));
+    await vi.advanceTimersByTimeAsync(0);
+    callbacks[0](diskSummary({ revision: 2, phase: "completed", finishedAt: 10 }));
+    const displayed: number[] = [];
+    const unsubscribe = workflow.subscribe(() => displayed.push(workflow.read().chart!.revision));
+    workflow.setChartPaused(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(workflow.read().chart).toMatchObject({ revision: 2, phase: "completed" });
+    expect(displayed).not.toContain(1);
+    expect(effects.chart).toHaveBeenCalledTimes(3);
+    unsubscribe();
+    workflow.setVisible(false);
+  });
+
+  it("navigation clears interaction pause and rejects stale chart responses", async () => {
+    const { effects, callbacks, workflow } = await chartFixture();
+    const stale = deferred<DiskScanChart>();
+    vi.mocked(effects.chart).mockReturnValueOnce(stale.promise);
+    callbacks[0](diskSummary({ revision: 1 }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    workflow.setChartPaused(true);
+    workflow.enter(42);
+    expect(workflow.read().chart).toBeNull();
+    expect(workflow.read().chartPaused).toBe(false);
+    stale.resolve(diskChart({ revision: 1 }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(workflow.read().chart?.directory.id).toBe(42);
+    expect(effects.start).toHaveBeenCalledTimes(1);
+    workflow.setVisible(false);
+  });
+
+  it("opens current grouped pages and clears the group when changing directory or returning to the chart", async () => {
+    const { effects, workflow } = await chartFixture();
+    workflow.showGroup("other");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(effects.directory).toHaveBeenLastCalledWith(expect.objectContaining({ group: "other", limit: 200, directoryId: 0 }));
+    workflow.loadMore(); await vi.advanceTimersByTimeAsync(0);
+    expect(effects.directory).toHaveBeenLastCalledWith(expect.objectContaining({ group: "other", limit: 400 }));
+    workflow.setMode("treemap"); await vi.advanceTimersByTimeAsync(0);
+    expect(workflow.read()).toMatchObject({ mode: "treemap", group: "all" });
+    workflow.showGroup("unmeasured"); await vi.advanceTimersByTimeAsync(0);
+    workflow.enter(1); await vi.advanceTimersByTimeAsync(0);
+    expect(workflow.read()).toMatchObject({ directoryId: 1, group: "all", limit: 200 });
+    expect(effects.start).toHaveBeenCalledTimes(1);
+    workflow.setVisible(false);
+  });
+
+  it("keeps view mode when hidden or rescanning and resets it for a new app instance", async () => {
+    const { effects, callbacks, workflow } = await chartFixture();
+    workflow.setChartPaused(true);
+    workflow.setVisible(false);
+    callbacks[0](diskSummary({ revision: 1 }));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(effects.chart).toHaveBeenCalledTimes(1);
+    workflow.setVisible(true); await vi.advanceTimersByTimeAsync(0);
+    expect(workflow.read()).toMatchObject({ mode: "treemap", chartPaused: false });
+    workflow.enter(1); await vi.advanceTimersByTimeAsync(0);
+    workflow.setChartPaused(true);
+    await workflow.start(); await vi.advanceTimersByTimeAsync(0);
+    expect(workflow.read()).toMatchObject({ mode: "treemap", directoryId: 0, chartPaused: false });
+    expect(workflow.read().chart?.scanId).toBe("scan-2");
+    expect(createDiskScanWorkflow(effects).read().mode).toBe("list");
+    workflow.setVisible(false);
+  });
+
+  it("preserves a chart after a read error and recovers through retry", async () => {
+    const { effects, callbacks, workflow } = await chartFixture();
+    vi.mocked(effects.chart).mockRejectedValueOnce("连接中断");
+    callbacks[0](diskSummary({ revision: 1 }));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(workflow.read().chart?.revision).toBe(0);
+    expect(workflow.read().error).toContain("连接中断");
+    await workflow.refreshPage();
+    expect(workflow.read().chart?.revision).toBe(1);
+    expect(workflow.read().error).toBeNull();
+    workflow.setVisible(false);
   });
 });

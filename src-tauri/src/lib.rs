@@ -1149,6 +1149,7 @@ pub fn run() {
             disk_scan::start_disk_scan,
             disk_scan::stop_disk_scan,
             disk_scan::read_disk_scan_directory,
+            disk_scan::read_disk_scan_chart,
             scan_maven_unused_dependencies,
             remove_maven_unused_dependencies,
             choose_maven_project_directory,

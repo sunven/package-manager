@@ -1,6 +1,6 @@
 //! Read-only directory observations. The tree stays native; IPC returns one visible directory.
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::{self, Metadata, ReadDir};
 use std::io::Write;
@@ -14,6 +14,7 @@ use tauri_plugin_dialog::DialogExt;
 use std::os::unix::fs::MetadataExt;
 
 const MAX_ENTRIES: usize = 1_000_000;
+const CHART_LIMIT: usize = 200;
 const UPDATE_INTERVAL: Duration = Duration::from_millis(200);
 static NEXT_SCAN: AtomicU64 = AtomicU64::new(1);
 
@@ -88,6 +89,61 @@ pub(crate) struct DirectoryPage {
     ancestors: Vec<Entry>,
     entries: Vec<Entry>,
     total: usize,
+}
+
+#[derive(Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ListGroup {
+    #[default]
+    All,
+    Other,
+    Unmeasured,
+    Zero,
+    Excluded,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChartOther {
+    count: usize,
+    bytes: u64,
+    partial: bool,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChartCounts {
+    unmeasured: usize,
+    zero: usize,
+    excluded: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DirectoryChart {
+    scan_id: String,
+    revision: u64,
+    phase: Phase,
+    directory: Entry,
+    ancestors: Vec<Entry>,
+    entries: Vec<Entry>,
+    total: usize,
+    other: ChartOther,
+    counts: ChartCounts,
+}
+
+impl Node {
+    fn excluded(&self) -> bool {
+        matches!(self.kind, Kind::Symlink | Kind::Mount | Kind::Special)
+    }
+
+    fn positive(&self) -> bool {
+        !self.excluded() && self.bytes.is_some_and(|bytes| bytes > 0)
+    }
+
+    fn zero(&self) -> bool {
+        !self.excluded() && self.finished && !self.partial && self.bytes == Some(0)
+    }
 }
 
 struct Listing {
@@ -180,23 +236,96 @@ impl Tree {
         }
     }
 
-    fn page(&mut self, directory: usize, view: u64, limit: usize) -> Result<DirectoryPage, String> {
+    fn validate_directory(&self, directory: usize) -> Result<(), String> {
         if self.nodes.get(directory).map(|node| node.kind) != Some(Kind::Directory) {
             return Err("该条目不是本轮可浏览的目录。".into());
         }
+        Ok(())
+    }
+
+    fn ancestors(&self, directory: usize) -> Vec<Entry> {
+        let mut ancestors = Vec::new();
+        let mut next = self.nodes[directory].parent;
+        while let Some(id) = next {
+            ancestors.push(self.entry(id));
+            next = self.nodes[id].parent;
+        }
+        ancestors.reverse();
+        ancestors
+    }
+
+    fn compare_size(&self, a: &usize, b: &usize) -> std::cmp::Ordering {
+        self.nodes[*b]
+            .bytes
+            .cmp(&self.nodes[*a].bytes)
+            .then_with(|| self.nodes[*a].name.cmp(&self.nodes[*b].name))
+            .then(a.cmp(b))
+    }
+
+    // Select from the entire current level, independent of the visible list page.
+    // Only the 200 largest entries need sorting; the rest contribute display weight.
+    fn chart_parts(&self, directory: usize) -> (Vec<usize>, ChartOther, ChartCounts) {
+        let mut ids = Vec::new();
+        let mut counts = ChartCounts::default();
+        for &id in &self.nodes[directory].children {
+            let node = &self.nodes[id];
+            if node.excluded() {
+                counts.excluded += 1;
+            } else if node.positive() {
+                ids.push(id);
+            } else if node.zero() {
+                counts.zero += 1;
+            } else {
+                counts.unmeasured += 1;
+            }
+        }
+        let mut other = ChartOther::default();
+        if ids.len() > CHART_LIMIT {
+            ids.select_nth_unstable_by(CHART_LIMIT, |a, b| self.compare_size(a, b));
+            for &id in &ids[CHART_LIMIT..] {
+                let node = &self.nodes[id];
+                other.count += 1;
+                // Sibling footprints may overlap: never subtract from the parent.
+                other.bytes = other.bytes.saturating_add(node.bytes.unwrap());
+                other.partial |= !node.finished || node.partial;
+            }
+            ids.truncate(CHART_LIMIT);
+        }
+        ids.sort_unstable_by(|a, b| self.compare_size(a, b));
+        (ids, other, counts)
+    }
+
+    fn chart(&self, directory: usize) -> Result<DirectoryChart, String> {
+        self.validate_directory(directory)?;
+        let (ids, other, counts) = self.chart_parts(directory);
+        Ok(DirectoryChart {
+            scan_id: self.summary.scan_id.clone(),
+            revision: self.summary.revision,
+            phase: self.summary.phase,
+            directory: self.entry(directory),
+            ancestors: self.ancestors(directory),
+            entries: ids.into_iter().map(|id| self.entry(id)).collect(),
+            total: self.nodes[directory].children.len(),
+            other,
+            counts,
+        })
+    }
+
+    fn page(
+        &mut self,
+        directory: usize,
+        view: u64,
+        limit: usize,
+        group: ListGroup,
+    ) -> Result<DirectoryPage, String> {
+        self.validate_directory(directory)?;
         let terminal = self.summary.phase != Phase::Running;
         let reset = self.listing.as_ref().is_none_or(|list| {
             list.directory != directory || list.view != view || list.terminal != terminal
         });
         if reset {
             let mut ids = self.nodes[directory].children.clone();
-            ids.sort_unstable_by(|a, b| {
-                self.nodes[*b]
-                    .bytes
-                    .cmp(&self.nodes[*a].bytes)
-                    .then_with(|| self.nodes[*a].name.cmp(&self.nodes[*b].name))
-                    .then(a.cmp(b))
-            });
+            ids.sort_unstable_by(|a, b| self.compare_size(a, b));
             self.listing = Some(Listing {
                 directory,
                 view,
@@ -209,24 +338,33 @@ impl Tree {
                 .extend_from_slice(&self.nodes[directory].children[list.ids.len()..]);
         }
         let list = self.listing.as_ref().unwrap();
-        let entries = list
-            .ids
-            .iter()
-            .take(limit.clamp(1, MAX_ENTRIES))
-            .map(|id| self.entry(*id))
-            .collect();
-        let total = list.ids.len();
-        let mut ancestors = Vec::new();
-        let mut next = self.nodes[directory].parent;
-        while let Some(id) = next {
-            ancestors.push(self.entry(id));
-            next = self.nodes[id].parent;
+        let top: HashSet<usize> = if group == ListGroup::Other {
+            self.chart_parts(directory).0.into_iter().collect()
+        } else {
+            HashSet::new()
+        };
+        let mut total = 0;
+        let mut entries = Vec::new();
+        for &id in &list.ids {
+            let node = &self.nodes[id];
+            let matches = match group {
+                ListGroup::All => true,
+                ListGroup::Other => node.positive() && !top.contains(&id),
+                ListGroup::Unmeasured => !node.excluded() && !node.positive() && !node.zero(),
+                ListGroup::Zero => node.zero(),
+                ListGroup::Excluded => node.excluded(),
+            };
+            if matches {
+                total += 1;
+                if entries.len() < limit.clamp(1, MAX_ENTRIES) {
+                    entries.push(self.entry(id));
+                }
+            }
         }
-        ancestors.reverse();
         Ok(DirectoryPage {
             scan_id: self.summary.scan_id.clone(),
             directory: self.entry(directory),
-            ancestors,
+            ancestors: self.ancestors(directory),
             entries,
             total,
         })
@@ -638,14 +776,30 @@ pub(crate) async fn read_disk_scan_directory(
     directory_id: usize,
     view: u64,
     limit: usize,
+    group: Option<ListGroup>,
     state: tauri::State<'_, DiskScanState>,
 ) -> Result<DirectoryPage, String> {
     let job = state.job(&scan_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        job.tree.lock().unwrap().page(directory_id, view, limit)
+        job.tree
+            .lock()
+            .unwrap()
+            .page(directory_id, view, limit, group.unwrap_or_default())
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn read_disk_scan_chart(
+    scan_id: String,
+    directory_id: usize,
+    state: tauri::State<'_, DiskScanState>,
+) -> Result<DirectoryChart, String> {
+    let job = state.job(&scan_id)?;
+    tauri::async_runtime::spawn_blocking(move || job.tree.lock().unwrap().chart(directory_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
