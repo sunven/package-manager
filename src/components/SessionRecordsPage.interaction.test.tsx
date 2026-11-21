@@ -144,6 +144,7 @@ async function setup(overrides: Options = {}) {
       case "scan_session_records": return fixtures.scan;
       case "scan_session_source": return fixtures.scan[params.source];
       case "scan_opencode_sessions": fixtures.onRefreshOpenCode?.(); return fixtures.openCodeScan;
+      case "record_maintenance_followup": return null;
       case "prepare_opencode_deletion":
         return fixtures.onPrepareOpenCode
           ? fixtures.onPrepareOpenCode(params.request)
@@ -318,6 +319,29 @@ describe("session selection boundaries", () => {
     await waitFor(() => expect(onCommitOpenCode).toHaveBeenCalledExactlyOnceWith("plan-2"));
     await waitFor(() => expect(onRefreshOpenCode).toHaveBeenCalledExactlyOnceWith());
     expect(await screen.findByText("OpenCode 会话已永久删除")).toBeTruthy();
+  });
+
+  it("reports a single failed deletion as unconfirmed and associates its follow-up read", async () => {
+    const onCommitOpenCode = vi.fn().mockResolvedValue({
+      preflightError: null,
+      items: [{ id: "ses_parent", status: "failed", message: "删除结果未能确认" }],
+      completedIds: [],
+      historyId: "history-failed",
+    });
+    const onRefreshOpenCode = vi.fn();
+    await setup({ initialSource: "opencode", openCodeScan, onCommitOpenCode, onRefreshOpenCode });
+    fireEvent.click(screen.getByRole("button", { name: "永久删除 Parent session" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "永久删除" }));
+    expect(await screen.findByText("OpenCode 会话删除未确认")).toBeTruthy();
+    expect(screen.queryByText("OpenCode 会话已永久删除")).toBeNull();
+    expect(screen.getByText(/删除成功 0 条，失败 1 条，未执行 0 条/)).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "选择 Parent session" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "选择 Archived child" })).toBeTruthy();
+    await waitFor(() => expect(mockedInvoke).toHaveBeenCalledWith("record_maintenance_followup", {
+      id: "history-failed", status: "ready", message: null,
+    }));
+    expect(onCommitOpenCode).toHaveBeenCalledExactlyOnceWith("plan-1");
+    expect(onRefreshOpenCode).toHaveBeenCalledTimes(1);
   });
 
   it("previews cascade descendants and clears OpenCode selection when filters change", async () => {

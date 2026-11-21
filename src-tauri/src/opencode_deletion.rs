@@ -268,18 +268,11 @@ fn commit_one(
     if parts.roots.is_empty() {
         return Err("该 OpenCode 会话已不存在，请刷新会话记录后重试。".into());
     }
-    send_delete(service, root)?;
-    let item = OpenCodeDeletionItem {
-        id: root.clone(),
-        status: OpenCodeDeletionStatus::Deleted,
-        message: None,
+    let mut policy = OnePolicy {
+        service,
+        affected: parts.affected.into_iter().map(|record| record.id).collect(),
     };
-    on_item(&item);
-    Ok(OpenCodeDeletionResult {
-        preflight_error: None,
-        items: vec![item],
-        completed_ids: parts.affected.into_iter().map(|record| record.id).collect(),
-    })
+    Ok(run_roots(std::slice::from_ref(root), &mut policy, on_item))
 }
 
 fn commit_selected(
@@ -337,7 +330,7 @@ fn preflight(message: String) -> OpenCodeDeletionResult {
     }
 }
 
-trait BatchPolicy {
+trait DeletionPolicy {
     fn validate(&mut self, index: usize) -> Result<(), String>;
     fn delete(&mut self, root: &str) -> Result<(), String>;
     fn on_deleted(&mut self, root: &str, completed: &mut Vec<String>, seen: &mut HashSet<String>);
@@ -345,7 +338,7 @@ trait BatchPolicy {
 
 fn run_roots(
     roots: &[String],
-    policy: &mut impl BatchPolicy,
+    policy: &mut impl DeletionPolicy,
     on_item: &mut dyn FnMut(&OpenCodeDeletionItem),
 ) -> OpenCodeDeletionResult {
     let mut items = Vec::new();
@@ -420,12 +413,31 @@ fn push_item(
     items.push(item);
 }
 
+struct OnePolicy<'a> {
+    service: &'a Service,
+    affected: Vec<String>,
+}
+
+impl DeletionPolicy for OnePolicy<'_> {
+    fn validate(&mut self, _index: usize) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn delete(&mut self, root: &str) -> Result<(), String> {
+        send_delete(self.service, root)
+    }
+
+    fn on_deleted(&mut self, _root: &str, completed: &mut Vec<String>, _seen: &mut HashSet<String>) {
+        completed.extend(self.affected.iter().cloned());
+    }
+}
+
 struct SelectedPolicy<'a> {
     service: &'a Service,
     affected: HashMap<String, Vec<String>>,
 }
 
-impl BatchPolicy for SelectedPolicy<'_> {
+impl DeletionPolicy for SelectedPolicy<'_> {
     fn validate(&mut self, index: usize) -> Result<(), String> {
         if index != 0 {
             return Ok(());
@@ -463,7 +475,7 @@ struct AgePolicy<'a> {
     roots: Vec<String>,
 }
 
-impl BatchPolicy for AgePolicy<'_> {
+impl DeletionPolicy for AgePolicy<'_> {
     fn validate(&mut self, index: usize) -> Result<(), String> {
         let remaining_roots = &self.roots[index..];
         let records = read_records(self.service)?;

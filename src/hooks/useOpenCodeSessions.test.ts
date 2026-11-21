@@ -146,7 +146,44 @@ describe("OpenCode sessions adapter", () => {
     });
   });
 
-  it("maps execution uncertainty to an error and refreshes", async () => {
+  it.each(["ready", "failed"] as const)("keeps a single deletion failure and records its %s follow-up read", async (refreshStatus) => {
+    const { result: view } = await setup();
+    mockedInvoke.mockResolvedValueOnce(plan());
+    await act(async () => { await view.current.request("one", ["parent"]); });
+    const failure = result({
+      items: [{ id: "parent", status: "failed", message: "response lost" }],
+      completedIds: [],
+      historyId: "history-failed",
+    });
+    mockedInvoke.mockResolvedValueOnce(failure);
+    if (refreshStatus === "ready") {
+      mockedInvoke.mockResolvedValueOnce(initial);
+    } else {
+      mockedInvoke.mockRejectedValueOnce(new Error("service stopped"));
+    }
+    mockedInvoke.mockResolvedValueOnce(null);
+    await act(async () => { await view.current.confirm(view.current.operation!.id); });
+    expect(view.current.outcome).toMatchObject({
+      result: failure,
+      error: null,
+      completedIds: [],
+      refresh: { status: refreshStatus },
+    });
+    expect(view.current.scan?.records.map(({ id }) => id)).toEqual(initial.records.map(({ id }) => id));
+    expect(mockedInvoke).toHaveBeenCalledWith("record_maintenance_followup", {
+      id: "history-failed",
+      status: refreshStatus,
+      message: refreshStatus === "ready" ? null : "service stopped",
+    });
+    expect(mockedInvoke.mock.calls.map(([name]) => name)).toEqual([
+      "prepare_opencode_deletion",
+      "commit_opencode_deletion",
+      "scan_opencode_sessions",
+      "record_maintenance_followup",
+    ]);
+  });
+
+  it("preserves an IPC error and refreshes without retrying deletion", async () => {
     const { result: view } = await setup();
     mockedInvoke.mockResolvedValueOnce(plan());
     await act(async () => { await view.current.request("one", ["parent"]); });

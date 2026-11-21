@@ -368,7 +368,7 @@ export function SessionRecordsPage({
       {openCodeDeleteResult ? (
         <Alert variant={openCodeDeleteResult.error || openCodeDeleteResult.result?.preflightError || openCodeDeleteResult.result?.items.some((item) => item.status === "failed") ? "destructive" : "default"}>
           <AlertTitle>{openCodeDeleteResult.pending.kind === "one"
-            ? openCodeDeleteResult.error || openCodeDeleteResult.result?.preflightError ? "OpenCode 会话删除未确认" : "OpenCode 会话已永久删除"
+            ? openCodeDeleteResult.error || openCodeDeleteResult.result?.preflightError || openCodeDeleteResult.result?.items.some((item) => item.status === "failed") ? "OpenCode 会话删除未确认" : "OpenCode 会话已永久删除"
             : openCodeDeleteResult.result?.preflightError ? "OpenCode 批量删除已取消"
               : openCodeDeleteResult.error ? "OpenCode 批量删除结果未能确认"
                 : openCodeDeleteResult.result?.items.some((item) => item.status === "failed") ? "OpenCode 批量删除部分完成" : "OpenCode 会话已永久删除"}</AlertTitle>

@@ -1,4 +1,8 @@
 use super::*;
+use crate::maintenance_adapters::{commit_opencode_deletion, record_followup};
+use crate::maintenance_history::{
+    ExecutionSummary, FollowUpReadStatus, MaintenanceDetail, MaintenanceHistoryState,
+};
 use crate::opencode_sessions::{test_service, Service};
 use reqwest::Url;
 use std::io::{Read, Write};
@@ -122,11 +126,11 @@ fn selected_prepare_previews_the_cascade_without_deleting() {
 }
 
 #[test]
-fn one_commit_uses_the_current_cascade_and_reports_completed_ids() {
+fn one_commit_keeps_root_only_preflight_and_reports_the_current_cascade() {
     let (url, server) = mock_server(vec![
         (200, page(&[("ses_parent", None, 1, None), ("ses_child", Some("ses_parent"), 1, None)])),
         (200, session("ses_parent")),
-        (200, active(&[])),
+        (200, active(&["ses_child"])),
         (200, page(&[
             ("ses_parent", None, 1, None),
             ("ses_child", Some("ses_parent"), 1, None),
@@ -141,6 +145,93 @@ fn one_commit_uses_the_current_cascade_and_reports_completed_ids() {
     assert_eq!(result.items[0].status, OpenCodeDeletionStatus::Deleted);
     assert_eq!(result.completed_ids, vec!["ses_parent", "ses_child", "ses_new"]);
     assert_eq!(server.join().unwrap().iter().filter(|request| request.starts_with("delete ")).count(), 1);
+}
+
+#[test]
+fn one_delete_failures_keep_the_receipt_history_and_followup() {
+    for (status, body) in [
+        (409, ""),
+        (500, ""),
+        (200, "false"),
+        (200, r#"{"data":false}"#),
+        (200, "{"),
+        (0, ""),
+    ] {
+        let records = [("ses_parent", None, 1, None), ("ses_child", Some("ses_parent"), 1, None)];
+        let (url, server) = mock_server(vec![
+            (200, page(&records)),
+            (200, session("ses_parent")),
+            (200, active(&[])),
+            (200, page(&records)),
+            (status, body.into()),
+        ]);
+        let service = test_service(url);
+        let state = DeletionState::default();
+        let plan = prepare_one(&state, &service, "ses_parent");
+        let directory = tempfile::tempdir().unwrap();
+        let history = MaintenanceHistoryState::new(directory.path().into());
+        let attempt = commit_opencode_deletion(&history, &plan, |sink| {
+            state.commit_with_service_reporter(&service, &plan.plan_id, sink)
+        });
+        let requests = server.join().unwrap();
+        assert_eq!(requests.iter().filter(|request| request.starts_with("delete ")).count(), 1);
+        let receipt = attempt.expect("a DELETE failure must keep its receipt");
+        assert!(receipt.history_warning.is_none());
+        assert_eq!(receipt.result.preflight_error, None);
+        assert_eq!(receipt.result.items.len(), 1);
+        assert_eq!(receipt.result.items[0].id, "ses_parent");
+        assert_eq!(receipt.result.items[0].status, OpenCodeDeletionStatus::Failed);
+        assert!(receipt.result.items[0].message.is_some());
+        assert!(receipt.result.completed_ids.is_empty());
+        let id = receipt.history_id.as_deref().unwrap();
+        let serialized = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(serialized["historyId"], id);
+        assert_eq!(serialized["items"][0]["status"], "failed");
+
+        let record = history.get(id).unwrap();
+        assert_eq!(record.execution, ExecutionSummary::Failed);
+        assert!(record.finished_at.is_some());
+        let MaintenanceDetail::OpenCodeDeletion(detail) = record.detail else {
+            panic!("expected OpenCode deletion detail");
+        };
+        assert_eq!(detail.scope.plan_id, plan.plan_id);
+        assert_eq!(detail.results.len(), 1);
+        assert_eq!(detail.results[0].status, "Failed");
+        assert_eq!(detail.results[0].message, receipt.result.items[0].message);
+        assert!(detail.completed_ids.is_empty());
+
+        record_followup(&history, id, "failed", Some("service stopped".into())).unwrap();
+        let record = history.get(id).unwrap();
+        assert_eq!(record.execution, ExecutionSummary::Failed);
+        assert_eq!(record.follow_up_read.unwrap().status, FollowUpReadStatus::Failed);
+    }
+}
+
+#[test]
+fn one_preflight_rejection_is_not_executed_and_sends_no_delete() {
+    let records = [("ses_parent", None, 1, None)];
+    let (url, server) = mock_server(vec![
+        (200, page(&records)),
+        (200, session("ses_parent")),
+        (200, active(&["ses_parent"])),
+    ]);
+    let service = test_service(url);
+    let state = DeletionState::default();
+    let plan = prepare_one(&state, &service, "ses_parent");
+    let directory = tempfile::tempdir().unwrap();
+    let history = MaintenanceHistoryState::new(directory.path().into());
+    let error = commit_opencode_deletion(&history, &plan, |sink| {
+        state.commit_with_service_reporter(&service, &plan.plan_id, sink)
+    }).err().unwrap();
+    assert!(error.contains("仍在运行"));
+    assert!(server.join().unwrap().iter().all(|request| !request.starts_with("delete ")));
+    let record = history.get(&history.list().records[0].id).unwrap();
+    assert_eq!(record.execution, ExecutionSummary::NotExecuted);
+    let MaintenanceDetail::OpenCodeDeletion(detail) = record.detail else {
+        panic!("expected OpenCode deletion detail");
+    };
+    assert!(detail.results.is_empty());
+    assert!(detail.completed_ids.is_empty());
 }
 
 #[test]
@@ -278,6 +369,10 @@ fn mock_server(responses: Vec<(u16, String)>) -> (Url, thread::JoinHandle<Vec<St
                 }
             }
             requests.push(String::from_utf8_lossy(&request).to_lowercase());
+            // Zero simulates a peer closing after receiving the request without replying.
+            if status == 0 {
+                continue;
+            }
             let reason = if status == 404 { "Not Found" } else { "OK" };
             write!(
                 stream,
