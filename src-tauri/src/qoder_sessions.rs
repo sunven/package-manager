@@ -4,9 +4,7 @@ use crate::session_records::{
     SessionRemovalItem, SessionRemovalProgress, SessionRemovalReason, SessionRemovalResult,
     SessionRemovalStatus, SessionScanStatus, SessionSourceKind, SessionSourceScan,
 };
-use crate::session_scan_cache::{
-    DirFingerprint, SessionScanState, TranscriptKind, TranscriptState,
-};
+use crate::session_scan_cache::{SessionScanState, TranscriptKind, TranscriptState};
 use crate::types::AgeEligibleCounts;
 use serde::Deserialize;
 use serde_json::value::RawValue;
@@ -349,7 +347,7 @@ fn measure(path: &Path, budget: &mut usize) -> u64 {
     bytes
 }
 
-fn record_bytes(paths: &RecordPaths, state: &SessionScanState) -> u64 {
+fn record_bytes(paths: &RecordPaths) -> u64 {
     let transcript = paths
         .transcript
         .as_deref()
@@ -360,28 +358,12 @@ fn record_bytes(paths: &RecordPaths, state: &SessionScanState) -> u64 {
     let sidecar = paths
         .sidecar
         .as_deref()
-        .map(|directory| sidecar_bytes(directory, state))
+        .map(|directory| {
+            let mut budget = MEASURE_BUDGET;
+            measure(directory, &mut budget)
+        })
         .unwrap_or(0);
     transcript.saturating_add(sidecar)
-}
-
-fn sidecar_bytes(directory: &Path, state: &SessionScanState) -> u64 {
-    let fingerprint = DirFingerprint::read(directory);
-    if let Some(fingerprint) = fingerprint {
-        if let Ok(cache) = state.qoder_sidecar_bytes().lock() {
-            if let Some((cached, bytes)) = cache.get(directory) {
-                if *cached == fingerprint {
-                    return *bytes;
-                }
-            }
-        }
-    }
-    let mut budget = MEASURE_BUDGET;
-    let bytes = measure(directory, &mut budget);
-    if let (Some(fingerprint), Ok(mut cache)) = (fingerprint, state.qoder_sidecar_bytes().lock()) {
-        cache.insert(directory.to_path_buf(), (fingerprint, bytes));
-    }
-    bytes
 }
 
 fn list_records(
@@ -468,13 +450,9 @@ fn list_records(
         }
     }
     let mut seen = HashSet::new();
-    let mut seen_sidecars = HashSet::new();
     for paths in groups.into_values() {
         if let Some(transcript) = paths.transcript.as_deref() {
             seen.insert(transcript.to_path_buf());
-        }
-        if let Some(sidecar) = paths.sidecar.as_deref() {
-            seen_sidecars.insert(sidecar.to_path_buf());
         }
         let details = read_details(&paths, state);
         scan.records.push(SessionRecord {
@@ -482,15 +460,12 @@ fn list_records(
             title: details.title.unwrap_or_else(|| UNNAMED_TITLE.to_string()),
             last_activity_ms: details.last_activity_ms,
             working_directory: details.working_directory,
-            bytes: record_bytes(&paths, state),
+            bytes: record_bytes(&paths),
             in_use: Some(paths.is_open(open_paths)),
             grok: None,
         });
     }
     state.transcripts().retain_source(root, &seen);
-    if let Ok(mut cache) = state.qoder_sidecar_bytes().lock() {
-        cache.retain(|path, _| !path.starts_with(root) || seen_sidecars.contains(path));
-    }
     scan.records.sort_by(|left, right| {
         right
             .last_activity_ms
@@ -952,6 +927,48 @@ mod tests {
         let after_second = state.transcripts().stats();
         assert_eq!(after_second.bytes_read, after_first.bytes_read);
         assert!(after_second.reused > after_first.reused);
+    }
+
+    #[test]
+    fn repeated_scans_remeasure_growing_and_truncated_sidecar_files_for_both_editions() {
+        for edition in [QoderEdition::International, QoderEdition::Cn] {
+            let fixture = Fixture::new();
+            fixture.session("project", STEM);
+            let agent = fixture.sidecar("project", STEM, "2025-01-03T00:00:00.000Z");
+            let state = SessionScanState::default();
+            let scan = || {
+                scan_root_with_open_files(&fixture.root(), edition, &state, &|_| Ok(HashSet::new()))
+            };
+            let first = scan().records[0].bytes;
+            let bytes_read = state.transcripts().stats().bytes_read;
+
+            fs::write(&agent, [0u8; 30]).unwrap();
+            assert_eq!(scan().records[0].bytes, first + 27);
+            fs::write(&agent, "x").unwrap();
+            assert_eq!(scan().records[0].bytes, first - 2);
+            assert_eq!(state.transcripts().stats().bytes_read, bytes_read);
+        }
+    }
+
+    #[test]
+    fn repeated_scans_remeasure_nested_sidecar_additions_and_removals_for_both_editions() {
+        for edition in [QoderEdition::International, QoderEdition::Cn] {
+            let fixture = Fixture::new();
+            fixture.session("project", STEM);
+            let agent = fixture.sidecar("project", STEM, "2025-01-03T00:00:00.000Z");
+            let state = SessionScanState::default();
+            let scan = || {
+                scan_root_with_open_files(&fixture.root(), edition, &state, &|_| Ok(HashSet::new()))
+            };
+            let first = scan().records[0].bytes;
+
+            let added = agent.parent().unwrap().join("extra.jsonl");
+            fs::write(&added, [0u8; 5]).unwrap();
+            assert_eq!(scan().records[0].bytes, first + 5);
+            fs::remove_file(&added).unwrap();
+            fs::remove_file(&agent).unwrap();
+            assert_eq!(scan().records[0].bytes, first - 3);
+        }
     }
 
     #[test]

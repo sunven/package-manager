@@ -4,9 +4,7 @@ use crate::session_records::{
     SessionRemovalItem, SessionRemovalProgress, SessionRemovalReason, SessionRemovalResult,
     SessionRemovalStatus, SessionScanStatus, SessionSourceScan,
 };
-use crate::session_scan_cache::{
-    CachedTree, DirFingerprint, FileFingerprint, SessionScanState, TreeFingerprint,
-};
+use crate::session_scan_cache::SessionScanState;
 use crate::types::AgeEligibleCounts;
 use serde::Serialize;
 use serde_json::Value;
@@ -170,49 +168,12 @@ impl TreeScan {
     }
 }
 
-fn scan_tree_cached(path: &Path, session_id: &str, state: &SessionScanState) -> TreeScan {
-    let Some(dir) = DirFingerprint::read(path) else {
-        return TreeScan {
-            bytes_complete: false,
-            ..TreeScan::new()
-        };
-    };
-    let fingerprint = TreeFingerprint {
-        dir,
-        updates: FileFingerprint::read(&path.join("updates.jsonl")),
-        summary: FileFingerprint::read(&path.join("summary.json")),
-        subagents: DirFingerprint::read(&path.join("subagents")),
-    };
-    if let Ok(cache) = state.grok_trees().lock() {
-        if let Some(cached) = cache.get(path) {
-            if cached.fingerprint == fingerprint {
-                return TreeScan {
-                    bytes: cached.bytes,
-                    bytes_complete: cached.bytes_complete,
-                    related_ids: cached.related_ids.clone(),
-                    relations_complete: cached.relations_complete,
-                };
-            }
-        }
-    }
-    let scan = scan_tree(path, session_id);
-    if let Ok(mut cache) = state.grok_trees().lock() {
-        cache.insert(
-            path.to_path_buf(),
-            CachedTree {
-                fingerprint,
-                bytes: scan.bytes,
-                bytes_complete: scan.bytes_complete,
-                related_ids: scan.related_ids.clone(),
-                relations_complete: scan.relations_complete,
-            },
-        );
-    }
-    scan
-}
-
 fn scan_tree(path: &Path, session_id: &str) -> TreeScan {
     let mut scan = TreeScan::new();
+    if !plain_directory(path) {
+        scan.bytes_complete = false;
+        return scan;
+    }
     let mut file_budget = 100_000usize;
     let mut relation_budget = 10_000usize;
     walk_tree(
@@ -338,15 +299,6 @@ fn walk_tree(
 }
 
 fn read_record(root: &Path, id: &str, measure_bytes: bool) -> Result<SessionRecord, String> {
-    read_record_with_state(root, id, measure_bytes, &SessionScanState::default())
-}
-
-fn read_record_with_state(
-    root: &Path,
-    id: &str,
-    measure_bytes: bool,
-    state: &SessionScanState,
-) -> Result<SessionRecord, String> {
     let path = record_path(root, id)?;
     let summary = read_metadata(&path.join("summary.json"))?;
     let info = summary.get("info").ok_or(INVALID_RECORD)?;
@@ -366,7 +318,7 @@ fn read_record_with_state(
     .collect::<Vec<_>>()
     .join(" ");
     let tree = if measure_bytes {
-        scan_tree_cached(&path, session_id, state)
+        scan_tree(&path, session_id)
     } else {
         TreeScan::new()
     };
@@ -400,10 +352,6 @@ fn empty_scan(root: &Path) -> SessionSourceScan {
 }
 
 fn list_records(root: &Path) -> SessionSourceScan {
-    list_records_with_state(root, &SessionScanState::default())
-}
-
-fn list_records_with_state(root: &Path, state: &SessionScanState) -> SessionSourceScan {
     let mut scan = empty_scan(root);
     match fs::symlink_metadata(root) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -423,7 +371,6 @@ fn list_records_with_state(root: &Path, state: &SessionScanState) -> SessionSour
         scan.message = Some("无法读取 Grok Build 会话来源。".into());
         return scan;
     };
-    let mut seen = HashSet::new();
     for group in groups {
         let Ok(group) = group else {
             unreadable += 1;
@@ -462,8 +409,7 @@ fn list_records_with_state(root: &Path, state: &SessionScanState) -> SessionSour
                 unreadable += 1;
                 continue;
             };
-            seen.insert(entry.path());
-            match read_record_with_state(root, &id, true, state) {
+            match read_record(root, &id, true) {
                 Ok(record) => {
                     if record.grok.as_ref().is_some_and(|details| {
                         !details.bytes_complete || !details.relations_complete
@@ -475,9 +421,6 @@ fn list_records_with_state(root: &Path, state: &SessionScanState) -> SessionSour
                 Err(_) => unreadable += 1,
             }
         }
-    }
-    if let Ok(mut cache) = state.grok_trees().lock() {
-        cache.retain(|path, _| !path.starts_with(root) || seen.contains(path));
     }
     let relations = scan
         .records
@@ -737,7 +680,7 @@ pub(crate) fn scan_default(state: &SessionScanState) -> SessionSourceScan {
             return scan;
         }
     };
-    let mut scan = list_records_with_state(&root, state);
+    let mut scan = list_records(&root);
     if matches!(
         scan.status,
         SessionScanStatus::Missing | SessionScanStatus::Failed
@@ -1060,6 +1003,70 @@ mod tests {
     }
 
     #[test]
+    fn repeated_scans_remeasure_growing_and_truncated_record_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let id = fixture(root, "project", FIRST, Some(OLD));
+        let path = root.join(&id);
+        fs::create_dir_all(path.join("attachments/nested")).unwrap();
+        let files = [
+            path.join("attachment.bin"),
+            path.join("attachments/nested/image.bin"),
+        ];
+        for file in &files {
+            fs::write(file, [0u8; 3]).unwrap();
+        }
+        let scan = || list_records(root);
+        let mut expected = scan().records[0].bytes;
+
+        for file in &files {
+            fs::write(file, [0u8; 30]).unwrap();
+            expected += 27;
+            assert_eq!(scan().records[0].bytes, expected);
+            fs::write(file, "x").unwrap();
+            expected -= 29;
+            assert_eq!(scan().records[0].bytes, expected);
+        }
+    }
+
+    #[test]
+    fn repeated_scans_remeasure_nested_record_additions_and_removals() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let id = fixture(root, "project", FIRST, Some(OLD));
+        let nested = root.join(&id).join("attachments/nested");
+        fs::create_dir_all(&nested).unwrap();
+        let existing = nested.join("image.bin");
+        fs::write(&existing, [0u8; 3]).unwrap();
+        let scan = || list_records(root);
+        let first = scan().records[0].bytes;
+
+        let added = nested.join("extra.bin");
+        fs::write(&added, [0u8; 5]).unwrap();
+        assert_eq!(scan().records[0].bytes, first + 5);
+        fs::remove_file(&added).unwrap();
+        fs::remove_file(&existing).unwrap();
+        assert_eq!(scan().records[0].bytes, first - 3);
+    }
+
+    #[test]
+    fn directory_measurement_rejects_missing_file_and_symlink_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("directory");
+        fs::create_dir(&directory).unwrap();
+        let file = directory.join("attachment.bin");
+        fs::write(&file, [0u8; 3]).unwrap();
+        let linked = temp.path().join("linked");
+        std::os::unix::fs::symlink(&directory, &linked).unwrap();
+
+        for path in [temp.path().join("missing"), file, linked] {
+            let scan = scan_tree(&path, FIRST);
+            assert_eq!(scan.bytes, 0);
+            assert!(!scan.bytes_complete);
+        }
+    }
+
+    #[test]
     fn malformed_identity_is_diagnostic_but_optional_metadata_does_not_hide_records() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
@@ -1294,10 +1301,42 @@ mod tests {
         assert!(!serde_json::to_string(&scan)
             .unwrap()
             .contains("private subagent prompt"));
+
+        fs::write(
+            subagent.join("meta.json"),
+            serde_json::to_vec(&json!({
+                "parent_session_id": SECOND, "child_session_id": FIRST,
+                "child_cwd": "/example", "prompt": "private subagent prompt"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let changed = list_records(root);
+        assert!(changed.records[0]
+            .grok
+            .as_ref()
+            .unwrap()
+            .related_session_ids
+            .is_empty());
+
         fs::write(subagent.join("meta.json"), "broken").unwrap();
         let partial = list_records(root);
         assert_eq!(partial.status, SessionScanStatus::Partial);
         assert!(!partial.records[0].grok.as_ref().unwrap().relations_complete);
+
+        fs::write(
+            subagent.join("meta.json"),
+            serde_json::to_vec(&json!({
+                "parent_session_id": FIRST, "child_session_id": SECOND
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let repaired = list_records(root);
+        assert_eq!(repaired.status, SessionScanStatus::Ready);
+        let details = repaired.records[0].grok.as_ref().unwrap();
+        assert!(details.relations_complete);
+        assert_eq!(details.related_session_ids, vec![SECOND]);
     }
 
     #[test]

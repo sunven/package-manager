@@ -40,27 +40,6 @@ impl FileFingerprint {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct DirFingerprint {
-    pub ino: u64,
-    pub mtime_secs: i64,
-    pub mtime_nanos: i64,
-}
-
-impl DirFingerprint {
-    pub(crate) fn read(path: &Path) -> Option<Self> {
-        let metadata = fs::symlink_metadata(path).ok()?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return None;
-        }
-        fingerprint_fields(&metadata).map(|(ino, _, mtime_secs, mtime_nanos)| Self {
-            ino,
-            mtime_secs,
-            mtime_nanos,
-        })
-    }
-}
-
 #[cfg(unix)]
 fn fingerprint_fields(metadata: &fs::Metadata) -> Option<(u64, u64, i64, i64)> {
     Some((
@@ -267,23 +246,6 @@ fn apply_line<S>(bytes: &[u8], state: &mut S, apply: &mut dyn FnMut(&mut S, &str
     apply(state, trimmed);
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TreeFingerprint {
-    pub dir: DirFingerprint,
-    pub updates: Option<FileFingerprint>,
-    pub summary: Option<FileFingerprint>,
-    pub subagents: Option<DirFingerprint>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct CachedTree {
-    pub fingerprint: TreeFingerprint,
-    pub bytes: u64,
-    pub bytes_complete: bool,
-    pub related_ids: Vec<String>,
-    pub relations_complete: bool,
-}
-
 struct Timed<T> {
     at: Instant,
     value: T,
@@ -380,8 +342,6 @@ pub(crate) struct SessionScanState(Arc<SessionScanCache>);
 #[derive(Default)]
 struct SessionScanCache {
     transcripts: TextCache<TranscriptState>,
-    qoder_sidecar_bytes: Mutex<HashMap<PathBuf, (DirFingerprint, u64)>>,
-    grok_trees: Mutex<HashMap<PathBuf, CachedTree>>,
     open_files: OpenFilesCache,
     processes: TimedCache<Arc<HashMap<u32, String>>>,
 }
@@ -397,16 +357,6 @@ impl SessionScanState {
 
     pub(crate) fn processes(&self) -> &TimedCache<Arc<HashMap<u32, String>>> {
         &self.0.processes
-    }
-
-    pub(crate) fn qoder_sidecar_bytes(
-        &self,
-    ) -> &Mutex<HashMap<PathBuf, (DirFingerprint, u64)>> {
-        &self.0.qoder_sidecar_bytes
-    }
-
-    pub(crate) fn grok_trees(&self) -> &Mutex<HashMap<PathBuf, CachedTree>> {
-        &self.0.grok_trees
     }
 }
 
