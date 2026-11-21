@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { useSessionRecords } from "../hooks/useSessionRecords";
 import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
-import { openCodeObservationFacts, sessionObservationFacts } from "../observationFacts";
+import { openCodeObservationFacts } from "../observationFacts";
 import { requireCoverageItem } from "../observationCoverage";
 import { coverageIndexFromFacts } from "../test/observationFixtures";
 import { SessionRecordsPage } from "./SessionRecordsPage";
@@ -169,11 +169,11 @@ async function setup(overrides: Options = {}) {
     records = useSessionRecords(true);
     openCode = useOpenCodeSessions(true);
     const index = coverageIndexFromFacts({
-      "session:codex": sessionObservationFacts("codex", records.scan?.codex ?? null, records.scanningSources.codex, records.error),
-      "session:claude": sessionObservationFacts("claude", records.scan?.claude ?? null, records.scanningSources.claude, records.error),
-      "session:grok": sessionObservationFacts("grok", records.scan?.grok ?? null, records.scanningSources.grok, records.error),
-      "session:qoder": sessionObservationFacts("qoder", records.scan?.qoder ?? null, records.scanningSources.qoder, records.error),
-      "session:qoder-cn": sessionObservationFacts("qoder-cn", records.scan?.["qoder-cn"] ?? null, records.scanningSources["qoder-cn"], records.error),
+      "session:codex": records.sources["codex"].facts,
+      "session:claude": records.sources["claude"].facts,
+      "session:grok": records.sources["grok"].facts,
+      "session:qoder": records.sources["qoder"].facts,
+      "session:qoder-cn": records.sources["qoder-cn"].facts,
       "session:opencode": openCodeObservationFacts(openCode.scan, openCode.scanning, openCode.error),
     });
     return visible ? <SessionRecordsPage
@@ -193,7 +193,7 @@ async function setup(overrides: Options = {}) {
     /> : null;
   }
   const { rerender } = render(<Harness />);
-  await waitFor(() => expect(records.scan).not.toBeNull());
+  await waitFor(() => expect(records.sources.codex.scan).not.toBeNull());
   await waitFor(() => expect(openCode.scan).not.toBeNull());
   vi.clearAllMocks();
   return { selected, age,

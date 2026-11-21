@@ -12,7 +12,7 @@ import {
 } from "../sessionRecords";
 import { recordMaintenanceFollowUp } from "../maintenanceFollowUp";
 import { errorToString } from "../utils/format";
-import { recordObservationFacts, sessionObservationFacts } from "../observationFacts";
+import { recordObservationFacts, sessionObservationFacts, type ObservationFacts } from "../observationFacts";
 import { sessionObservationId } from "../observationItems";
 import { useSessionOperation, type SessionOperationAdapter, type SessionRead } from "./useSessionOperation";
 
@@ -32,17 +32,24 @@ function confirmedRecord(record: SessionRecord) {
 
 const SESSION_SCOPES = ["codex", "claude", "grok", "qoder", "qoder-cn"] as const;
 
+type SessionSourceObservation = {
+  scan: SessionSourceScan | null;
+  scanning: boolean;
+  facts: ObservationFacts;
+};
+
 function isDirectoryScoped(source: SessionSourceId) {
   return source === "grok" || source === "qoder" || source === "qoder-cn";
 }
 
-function emptySource(): SessionSourceScan {
+function failedSource(previous: SessionSourceScan | undefined, message: string): SessionSourceScan {
   return {
     directory: "",
-    status: "Missing",
     records: [],
-    message: null,
     ageEligible: { days7: 0, days30: 0 },
+    ...previous,
+    status: "Failed",
+    message,
   };
 }
 
@@ -92,7 +99,7 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
       } catch (caught) {
         const message = errorToString(caught);
         return {
-          scans: { [source]: { ...(previous[source] ?? emptySource()), status: "Failed", message } },
+          scans: { [source]: failedSource(previous[source], message) },
           failures: { [source]: message },
           globalError: null,
         };
@@ -104,7 +111,9 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
       const scans: Partial<Record<SessionSourceId, SessionSourceScan>> = {};
       const failures: Partial<Record<SessionSourceId, string>> = {};
       for (const source of scopes) {
-        const scan = retained(previous[source], next[source] ?? emptySource());
+        const nextSource = next[source];
+        if (!nextSource) continue;
+        const scan = retained(previous[source], nextSource);
         scans[source] = scan;
         const failure = failureOf(scan);
         if (failure) failures[source] = failure;
@@ -115,7 +124,7 @@ const adapter: SessionOperationAdapter<SessionSourceId, SessionSourceScan, Pendi
       const scans: Partial<Record<SessionSourceId, SessionSourceScan>> = {};
       const failures: Partial<Record<SessionSourceId, string>> = {};
       for (const source of scopes) {
-        scans[source] = { ...(previous[source] ?? emptySource()), status: "Failed", message };
+        scans[source] = failedSource(previous[source], message);
         failures[source] = message;
       }
       return { scans, failures, globalError: message };
@@ -188,27 +197,13 @@ export function useSessionRecords(active: boolean) {
   const [openingSession, setOpeningSession] = useState<{ source: SessionSourceId; id: string } | null>(null);
   const opening = useRef(false);
   const mutation = useRef(false);
-  const scan = useMemo<SessionRecordScan | null>(
-    () => scans.codex || scans.claude || scans.grok || scans.qoder || scans["qoder-cn"]
-      ? {
-          codex: scans.codex ?? emptySource(),
-          claude: scans.claude ?? emptySource(),
-          grok: scans.grok,
-          qoder: scans.qoder,
-          "qoder-cn": scans["qoder-cn"],
-        }
-      : null,
-    [scans.codex, scans.claude, scans.grok, scans.qoder, scans["qoder-cn"]],
-  );
-  const scanningSources = useMemo(
-    () => ({
-      codex: scanning.codex ?? false,
-      claude: scanning.claude ?? false,
-      grok: scanning.grok ?? false,
-      qoder: scanning.qoder ?? false,
-      "qoder-cn": scanning["qoder-cn"] ?? false,
-    }),
-    [scanning.codex, scanning.claude, scanning.grok, scanning.qoder, scanning["qoder-cn"]],
+  const sources = useMemo(
+    () => Object.fromEntries(SESSION_SCOPES.map((source) => {
+      const scan = scans[source] ?? null;
+      const busy = scanning[source] ?? false;
+      return [source, { scan, scanning: busy, facts: sessionObservationFacts(source, scan, busy, null) }];
+    })) as Record<SessionSourceId, SessionSourceObservation>,
+    [scans, scanning],
   );
   async function openSession(source: SessionSourceId, record: SessionRecord): Promise<string | null> {
     if (opening.current || mutation.current || operation || scanning[source]) return "当前操作尚未结束，请稍后重试。";
@@ -259,8 +254,7 @@ export function useSessionRecords(active: boolean) {
   } : null;
 
   return {
-    scan,
-    scanningSources,
+    sources,
     error,
     refresh: (source?: SessionSourceId) => refresh(source ? [source] : SESSION_SCOPES),
     operation,

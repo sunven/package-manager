@@ -6,9 +6,9 @@ import { useSessionRecords } from "../hooks/useSessionRecords";
 import { useOpenCodeSessions } from "../hooks/useOpenCodeSessions";
 import { SessionRecordsPage } from "./SessionRecordsPage";
 import { requireCoverageItem } from "../observationCoverage";
-import { openCodeObservationFacts, sessionObservationFacts } from "../observationFacts";
+import { openCodeObservationFacts } from "../observationFacts";
 import { coverageIndexFromFacts } from "../test/observationFixtures";
-import type { SessionRecord, SessionRecordScan, SessionSourceScan } from "../sessionRecords";
+import type { SessionRecord, SessionRecordScan, SessionSourceId, SessionSourceScan } from "../sessionRecords";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -45,11 +45,11 @@ function Harness() {
   const records = useSessionRecords(true);
   const openCode = useOpenCodeSessions(false);
   const index = coverageIndexFromFacts({
-    "session:codex": sessionObservationFacts("codex", records.scan?.codex ?? null, records.scanningSources.codex, records.error),
-    "session:claude": sessionObservationFacts("claude", records.scan?.claude ?? null, records.scanningSources.claude, records.error),
-    "session:grok": sessionObservationFacts("grok", records.scan?.grok ?? null, records.scanningSources.grok, records.error),
-    "session:qoder": sessionObservationFacts("qoder", records.scan?.qoder ?? null, records.scanningSources.qoder, records.error),
-    "session:qoder-cn": sessionObservationFacts("qoder-cn", records.scan?.["qoder-cn"] ?? null, records.scanningSources["qoder-cn"], records.error),
+    "session:codex": records.sources["codex"].facts,
+    "session:claude": records.sources["claude"].facts,
+    "session:grok": records.sources["grok"].facts,
+    "session:qoder": records.sources["qoder"].facts,
+    "session:qoder-cn": records.sources["qoder-cn"].facts,
     "session:opencode": openCodeObservationFacts(openCode.scan, openCode.scanning, openCode.error),
   });
   return <SessionRecordsPage
@@ -67,10 +67,10 @@ function Harness() {
 
 function respond(scan: SessionSourceScan, removal?: unknown) {
   const empty: SessionSourceScan = { directory: "", status: "Missing", records: [], message: null, ageEligible: { days7: 0, days30: 0 } };
-  const all: SessionRecordScan = { codex: empty, claude: empty, grok: scan };
-  mockedInvoke.mockImplementation(async (command) => {
+  const all: SessionRecordScan = { codex: empty, claude: empty, grok: scan, qoder: empty, "qoder-cn": empty };
+  mockedInvoke.mockImplementation(async (command, args) => {
     if (command === "scan_session_records") return all;
-    if (command === "scan_session_source") return scan;
+    if (command === "scan_session_source") return all[(args as { source: SessionSourceId }).source];
     if (command === "open_grok_session") return null;
     if (command.startsWith("remove_session_record")) return removal ?? {
       moved: 0, failed: 0, skipped: 0, operationError: null, message: null, items: [],

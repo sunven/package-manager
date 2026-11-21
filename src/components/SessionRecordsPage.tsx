@@ -88,7 +88,7 @@ export function SessionRecordsPage({
   coverageItems: Record<SessionSourceId | "opencode", ObservationCoverageItem>;
   onShowHistory?: (recordId: string) => void;
 }) {
-  const { scan, scanningSources, error, refresh: onRefresh } = records;
+  const { sources: sourceObservations, error, refresh: onRefresh } = records;
   const {
     scan: openCodeScan,
     scanning: openCodeScanning,
@@ -97,7 +97,10 @@ export function SessionRecordsPage({
     error: openCodeError,
   } = openCode;
   // Age cut-offs follow the latest scan instead of drifting on every render.
-  const currentTime = useMemo(() => nowMs ?? Date.now(), [nowMs, scan]);
+  const currentTime = useMemo(() => nowMs ?? Date.now(), [
+    nowMs, sourceObservations.codex.scan, sourceObservations.claude.scan,
+    sourceObservations.grok.scan, sourceObservations.qoder.scan, sourceObservations["qoder-cn"].scan,
+  ]);
   const pending = records.operation?.phase !== "refreshing" ? records.operation?.target ?? null : null;
   const removing = records.operation !== null && records.operation.phase !== "confirming";
   const removalProgress = records.operation?.phase === "executing" ? records.operation.progress : null;
@@ -121,14 +124,16 @@ export function SessionRecordsPage({
   const [filters, setFilters] = useState<Record<SessionSourceId, SessionFilter>>({ codex: { query: "", usage: "all" }, claude: { query: "", usage: "all" }, grok: { query: "", usage: "all" }, qoder: { query: "", usage: "all" }, "qoder-cn": { query: "", usage: "all" } });
   const deferredFilters = useDeferredValue(filters);
   const counts = useMemo(() => {
-    if (!scan) return null;
     return Object.fromEntries(
-      sources.map((source) => [
-        source.key,
-        filterSessionRecords(scan[source.key]?.records ?? [], deferredFilters[source.key]).length,
-      ]),
-    ) as Record<SessionSourceId, number>;
-  }, [scan, deferredFilters]);
+      sources.map((source) => {
+        const scan = sourceObservations[source.key].scan;
+        return [source.key, scan ? filterSessionRecords(scan.records, deferredFilters[source.key]).length : undefined];
+      }),
+    ) as Record<SessionSourceId, number | undefined>;
+  }, [
+    sourceObservations.codex.scan, sourceObservations.claude.scan, sourceObservations.grok.scan,
+    sourceObservations.qoder.scan, sourceObservations["qoder-cn"].scan, deferredFilters,
+  ]);
   const openSessionRef = useRef(records.openSession);
   openSessionRef.current = records.openSession;
   const requestRemovalRef = useRef(records.request);
@@ -146,27 +151,27 @@ export function SessionRecordsPage({
   const selectionTrigger = useRef<HTMLButtonElement | null>(null);
   const completedSessionIds = records.outcome?.completedIds ?? null;
   const codexSelection = useSessionSelection({
-    records: scan?.codex.records ?? null,
+    records: sourceObservations.codex.scan?.records ?? null,
     isSelectable: selectableSession,
     completedIds: records.outcome?.source === "codex" ? completedSessionIds : null,
   });
   const claudeSelection = useSessionSelection({
-    records: scan?.claude.records ?? null,
+    records: sourceObservations.claude.scan?.records ?? null,
     isSelectable: selectableSession,
     completedIds: records.outcome?.source === "claude" ? completedSessionIds : null,
   });
   const grokSelection = useSessionSelection({
-    records: scan?.grok?.records ?? null,
+    records: sourceObservations.grok.scan?.records ?? null,
     isSelectable: selectableSession,
     completedIds: records.outcome?.source === "grok" ? completedSessionIds : null,
   });
   const qoderSelection = useSessionSelection({
-    records: scan?.qoder?.records ?? null,
+    records: sourceObservations.qoder.scan?.records ?? null,
     isSelectable: selectableSession,
     completedIds: records.outcome?.source === "qoder" ? completedSessionIds : null,
   });
   const qoderCnSelection = useSessionSelection({
-    records: scan?.["qoder-cn"]?.records ?? null,
+    records: sourceObservations["qoder-cn"].scan?.records ?? null,
     isSelectable: selectableSession,
     completedIds: records.outcome?.source === "qoder-cn" ? completedSessionIds : null,
   });
@@ -184,7 +189,7 @@ export function SessionRecordsPage({
   });
 
   return (
-    <main className="view-grid hum-session-page" aria-busy={scanningSources.codex || scanningSources.claude || scanningSources.grok || scanningSources.qoder || scanningSources["qoder-cn"] || openCodeScanning}>
+    <main className="view-grid hum-session-page" aria-busy={Object.values(sourceObservations).some((source) => source.scanning) || openCodeScanning}>
       <PageHeader title="会话记录" />
       {error ? (
         <Alert variant="destructive">
@@ -410,7 +415,7 @@ export function SessionRecordsPage({
       <Tabs className="min-w-0" onValueChange={(value) => setActiveSource(value as SessionSourceId | "opencode")} value={activeSource}>
         <TabsList className="hum-session-source-tabs h-auto w-full flex-wrap">
           {sources.map((source) => {
-            const count = counts?.[source.key];
+            const count = counts[source.key];
             return (
               <TabsTrigger key={source.key} value={source.key}>
                 {source.label}
@@ -426,7 +431,7 @@ export function SessionRecordsPage({
           </TabsTrigger>
         </TabsList>
         {sources.map((source) => {
-          const data = scan?.[source.key];
+          const data = sourceObservations[source.key].scan;
           const selection = selections[source.key];
           return (
             <TabsContent className="min-w-0" key={source.key} value={source.key}>
@@ -463,10 +468,10 @@ export function SessionRecordsPage({
                 onSortChange={(next) => setSorts((current) => ({ ...current, [source.key]: next }))}
                 onToggle={(groupKey, nextCollapsed) => setCollapsed((current) => ({ ...current, [`${source.key}:${groupKey}`]: nextCollapsed }))}
                 removing={removing || Boolean(records.openingSession)}
-                scanning={scanningSources[source.key]}
+                scanning={sourceObservations[source.key].scanning}
                 selectedIds={selection.selectedIds}
                 sort={sorts[source.key]}
-                source={data ?? null}
+                source={data}
                 coverageItem={coverageItems[source.key]}
                 sourceKey={source.key}
               />

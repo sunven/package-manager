@@ -33,7 +33,6 @@ import {
   managerObservationFacts,
   openCodeObservationFacts,
   projectObservationFacts,
-  sessionObservationFacts,
   vscodeObservationFacts,
   type ObservationFactsMap,
 } from "./observationFacts";
@@ -131,27 +130,11 @@ export function App() {
       vscodeStorage.scanning,
       vscodeStorage.error,
     );
-    facts["session:codex"] = sessionObservationFacts(
-      "codex",
-      sessionRecords.scan?.codex ?? null,
-      sessionRecords.scanningSources.codex,
-      sessionRecords.error,
-    );
-    facts["session:claude"] = sessionObservationFacts(
-      "claude",
-      sessionRecords.scan?.claude ?? null,
-      sessionRecords.scanningSources.claude,
-      sessionRecords.error,
-    );
-    facts["session:grok"] = sessionObservationFacts(
-      "grok", sessionRecords.scan?.grok ?? null, sessionRecords.scanningSources.grok, sessionRecords.error,
-    );
-    facts["session:qoder"] = sessionObservationFacts(
-      "qoder", sessionRecords.scan?.qoder ?? null, sessionRecords.scanningSources.qoder, sessionRecords.error,
-    );
-    facts["session:qoder-cn"] = sessionObservationFacts(
-      "qoder-cn", sessionRecords.scan?.["qoder-cn"] ?? null, sessionRecords.scanningSources["qoder-cn"], sessionRecords.error,
-    );
+    facts["session:codex"] = sessionRecords.sources.codex.facts;
+    facts["session:claude"] = sessionRecords.sources.claude.facts;
+    facts["session:grok"] = sessionRecords.sources.grok.facts;
+    facts["session:qoder"] = sessionRecords.sources.qoder.facts;
+    facts["session:qoder-cn"] = sessionRecords.sources["qoder-cn"].facts;
     facts["session:opencode"] = openCodeObservationFacts(
       openCodeSessions.scan,
       openCodeSessions.scanning,
@@ -172,7 +155,7 @@ export function App() {
     projectCleanup.view,
     diskScan.view,
     vscodeStorage.scan, vscodeStorage.scanning, vscodeStorage.error,
-    sessionRecords.scan, sessionRecords.scanningSources.codex, sessionRecords.scanningSources.claude, sessionRecords.scanningSources.grok, sessionRecords.scanningSources.qoder, sessionRecords.scanningSources["qoder-cn"], sessionRecords.error,
+    sessionRecords.sources,
     openCodeSessions.scan, openCodeSessions.scanning, openCodeSessions.error,
     codex.extensions.marketplaces, codex.extensions.plugins, codex.extensions.hooks, codex.skills,
     claude.state.marketplacesView, claude.state.pluginsView, claude.state.hooksView, claude.skills,

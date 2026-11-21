@@ -10,6 +10,13 @@ import type {
   SessionSourceScan,
 } from "../sessionRecords";
 import { useSessionRecords } from "./useSessionRecords";
+import { coverageItemFromFacts } from "../test/observationFixtures";
+import { sessionObservationId } from "../observationItems";
+import {
+  getObservationLedgerSnapshot,
+  recordObservation,
+  resetObservationLedgerForTests,
+} from "../observationLedger";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -21,8 +28,8 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 const mockedInvoke = vi.mocked(invoke);
-beforeEach(() => vi.resetAllMocks());
-afterEach(cleanup);
+beforeEach(() => { vi.resetAllMocks(); resetObservationLedgerForTests(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); resetObservationLedgerForTests(); });
 
 function record(id: string): SessionRecord {
   return { id, title: id, lastActivityMs: 1, bytes: 10, inUse: false, workingDirectory: null };
@@ -56,6 +63,97 @@ const removal: SessionRemovalResult = {
 };
 
 describe("Session records adapter", () => {
+  it("does not report an unread source as a current observation", async () => {
+    mockedInvoke.mockResolvedValueOnce(source("codex-new"));
+    const { result } = renderHook(() => useSessionRecords(false));
+    await act(async () => { await result.current.refresh("codex"); });
+
+    for (const source of ["claude", "grok", "qoder", "qoder-cn"] as const) {
+      const view = result.current.sources[source];
+      const itemId = sessionObservationId(source);
+      expect(view.scan).toBeNull();
+      expect(coverageItemFromFacts(itemId, { [itemId]: view.facts }).status).toBe("notObserved");
+      expect(getObservationLedgerSnapshot().records[itemId]).toBeUndefined();
+    }
+    const facts = {
+      "session:claude": result.current.sources.claude.facts,
+    };
+
+    recordObservation({
+      kind: "success", itemId: "session:claude", at: 1000,
+      scope: "session:claude:/previous", scopeLabel: "Claude 会话目录",
+      completeness: "complete", note: null,
+    });
+    expect(coverageItemFromFacts("session:claude", facts, getObservationLedgerSnapshot().records).status)
+      .toBe("lastObserved");
+  });
+
+  it("records actual directory absence as a complete observation", async () => {
+    const missing = source("missing", { status: "Missing", records: [] });
+    mockedInvoke.mockResolvedValueOnce(missing);
+    const { result } = renderHook(() => useSessionRecords(false));
+    await act(async () => { await result.current.refresh("claude"); });
+
+    const view = result.current.sources.claude;
+    expect(view.scan).toEqual(missing);
+    expect(view.facts.success).toMatchObject({ completeness: "complete", note: "未找到目录" });
+    expect(coverageItemFromFacts("session:claude", { "session:claude": view.facts }).status).toBe("observed");
+    expect(getObservationLedgerSnapshot().records["session:claude"]?.lastSuccess)
+      .toMatchObject({ completeness: "complete", note: "未找到目录", scope: "session:claude:/sessions" });
+  });
+
+  it("does not invent or restamp observations absent from a full read", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    mockedInvoke.mockResolvedValueOnce(initial);
+    const { result } = renderHook(() => useSessionRecords(false));
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.sources.grok.scan).toBeNull();
+    expect(result.current.sources.qoder.scan).toBeNull();
+    expect(result.current.sources["qoder-cn"].scan).toBeNull();
+    expect(getObservationLedgerSnapshot().records["session:grok"]).toBeUndefined();
+
+    mockedInvoke.mockResolvedValueOnce(source("grok-kept"));
+    await act(async () => { await result.current.refresh("grok"); });
+    const previousSuccess = getObservationLedgerSnapshot().records["session:grok"]?.lastSuccess;
+    vi.mocked(Date.now).mockReturnValue(2000);
+    mockedInvoke.mockResolvedValueOnce(initial);
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.sources.grok.scan?.records[0].title).toBe("grok-kept");
+    expect(getObservationLedgerSnapshot().records["session:grok"]?.lastSuccess).toEqual(previousSuccess);
+  });
+
+  it.each(["failed result", "rejected read"])("keeps old records and observation metadata after a %s", async (kind) => {
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    mockedInvoke.mockResolvedValueOnce({
+      ...initial,
+      codex: source("kept", { ageEligible: { days7: 2, days30: 1 } }),
+    });
+    const { result } = renderHook(() => useSessionRecords(false));
+    await act(async () => { await result.current.refresh(); });
+    const previousSuccess = getObservationLedgerSnapshot().records["session:codex"]?.lastSuccess;
+    expect(previousSuccess?.at).toBe(1000);
+
+    vi.mocked(Date.now).mockReturnValue(2000);
+    if (kind === "failed result") {
+      mockedInvoke.mockResolvedValueOnce(source("ignored", { status: "Failed", records: [], message: "cannot read" }));
+    } else {
+      mockedInvoke.mockRejectedValueOnce(new Error("cannot read"));
+    }
+    await act(async () => { await result.current.refresh("codex"); });
+
+    const view = result.current.sources.codex;
+    expect(view.scan?.records[0].title).toBe("kept");
+    expect(view.scan?.ageEligible).toEqual({ days7: 2, days30: 1 });
+    expect(view.facts.failure).toEqual({ outcome: "failed", reason: "cannot read" });
+    const ledger = getObservationLedgerSnapshot().records;
+    expect(ledger["session:codex"]?.lastSuccess).toEqual(previousSuccess);
+    expect(ledger["session:codex"]?.lastAttempt).toMatchObject({ at: 2000, outcome: "failed", reason: "cannot read" });
+    expect(coverageItemFromFacts("session:codex", { "session:codex": view.facts }, ledger).status).toBe("failed");
+    expect(result.current.sources.claude.facts.failure).toBeNull();
+    expect(result.current.sources.claude.scan?.records[0].title).toBe("claude");
+    expect(ledger["session:claude"]?.lastSuccess?.at).toBe(1000);
+  });
+
   it("does not begin any removal when usage detection is unavailable", async () => {
     const unknown = { ...record("unknown"), inUse: null };
     mockedInvoke.mockResolvedValueOnce(source("unknown", {
@@ -84,13 +182,13 @@ describe("Session records adapter", () => {
     const { result } = renderHook(() => useSessionRecords(false));
     await act(async () => { await result.current.refresh("codex"); });
     expect(mockedInvoke).toHaveBeenCalledWith("scan_session_source", { source: "codex" });
-    expect(result.current.scan?.codex.records[0].title).toBe("codex-new");
-    expect(result.current.scan?.claude.status).toBe("Missing");
+    expect(result.current.sources.codex.scan?.records[0].title).toBe("codex-new");
+    expect(result.current.sources.claude.scan).toBeNull();
     expect(result.current.error).toBeNull();
 
     mockedInvoke.mockRejectedValueOnce(new Error("cannot read"));
     await act(async () => { await result.current.refresh("claude"); });
-    expect(result.current.scan?.claude).toMatchObject({ status: "Failed", message: "cannot read" });
+    expect(result.current.sources.claude.scan).toMatchObject({ status: "Failed", message: "cannot read" });
     expect(result.current.error).toBeNull();
   });
 
@@ -103,16 +201,16 @@ describe("Session records adapter", () => {
       claude: source("claude-new"),
     });
     await act(async () => { await result.current.refresh(); });
-    expect(result.current.scan?.codex).toMatchObject({ status: "Failed", message: "source failed" });
-    expect(result.current.scan?.codex.records[0].title).toBe("initial");
-    expect(result.current.scan?.claude.records[0].title).toBe("claude-new");
+    expect(result.current.sources.codex.scan).toMatchObject({ status: "Failed", message: "source failed" });
+    expect(result.current.sources.codex.scan?.records[0].title).toBe("initial");
+    expect(result.current.sources.claude.scan?.records[0].title).toBe("claude-new");
     expect(result.current.error).toBeNull();
 
     mockedInvoke.mockRejectedValueOnce(new Error("full failure"));
     await act(async () => { await result.current.refresh(); });
     expect(result.current.error).toBe("full failure");
-    expect(result.current.scan?.codex).toMatchObject({ status: "Failed", message: "full failure" });
-    expect(result.current.scan?.codex.records[0].title).toBe("initial");
+    expect(result.current.sources.codex.scan).toMatchObject({ status: "Failed", message: "full failure" });
+    expect(result.current.sources.codex.scan?.records[0].title).toBe("initial");
   });
 
   it("retains the age counts that belong to retained records", async () => {
@@ -134,7 +232,7 @@ describe("Session records adapter", () => {
     });
     await act(async () => { await result.current.refresh(); });
 
-    expect(result.current.scan?.codex.ageEligible).toEqual({ days7: 2, days30: 1 });
+    expect(result.current.sources.codex.scan?.ageEligible).toEqual({ days7: 2, days30: 1 });
   });
 
   const removals: { target: Parameters<ReturnType<typeof useSessionRecords>["request"]>[0]; command: string; args: unknown }[] = [
@@ -201,9 +299,9 @@ describe("Session records adapter", () => {
     mockedInvoke.mockResolvedValueOnce(removal);
     act(() => result.current.request({ kind: "one", source: "codex", record: record("record") }));
     await act(async () => { await result.current.confirm(result.current.operation!.id); });
-    expect(result.current.scan?.codex.records.map((row) => row.id)).toEqual(["kept"]);
-    expect(result.current.scan?.codex.ageEligible).toEqual({ days7: 1, days30: 1 });
-    expect(result.current.scan?.claude.records[0].title).toBe("claude");
+    expect(result.current.sources.codex.scan?.records.map((row) => row.id)).toEqual(["kept"]);
+    expect(result.current.sources.codex.scan?.ageEligible).toEqual({ days7: 1, days30: 1 });
+    expect(result.current.sources.claude.scan?.records[0].title).toBe("claude");
     expect(result.current.outcome?.completedIds).toEqual(["record"]);
     expect(mockedInvoke).not.toHaveBeenCalledWith("scan_session_source", { source: "codex" });
   });
@@ -272,11 +370,17 @@ describe("Session records adapter", () => {
     });
     const { result } = renderHook(() => useSessionRecords(true));
 
+    expect(result.current.sources.codex).toMatchObject({ scan: null, scanning: true });
+    expect(result.current.sources.claude).toMatchObject({ scan: null, scanning: true });
     codex.resolve(source("codex-live"));
-    await waitFor(() => expect(result.current.scan?.codex.records[0]?.title).toBe("codex-live"));
-    expect(result.current.scan?.claude.records).toEqual([]);
+    await waitFor(() => expect(result.current.sources.codex.scan?.records[0]?.title).toBe("codex-live"));
+    expect(result.current.sources.claude.scan).toBeNull();
+    const pending = result.current.sources.claude;
+    expect(pending.facts.success).toBeNull();
+    expect(coverageItemFromFacts("session:claude", { "session:claude": pending.facts }).status).toBe("inProgress");
+    expect(getObservationLedgerSnapshot().records["session:claude"]).toBeUndefined();
 
     claude.resolve(source("claude-live"));
-    await waitFor(() => expect(result.current.scan?.claude.records[0]?.title).toBe("claude-live"));
+    await waitFor(() => expect(result.current.sources.claude.scan?.records[0]?.title).toBe("claude-live"));
   });
 });

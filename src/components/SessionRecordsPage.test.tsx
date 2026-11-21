@@ -13,38 +13,51 @@ import type { ObservationRecord } from "../observationLedger";
 import type {
   OpenCodeSessionScan,
   SessionRecordScan,
+  SessionSourceId,
   SessionSourceScan,
 } from "../sessionRecords";
+
+function sourceObservations(
+  scan: Partial<Record<SessionSourceId, SessionSourceScan>>,
+  scanning: Partial<Record<SessionSourceId, boolean>> = {},
+): ReturnType<typeof useSessionRecords>["sources"] {
+  return Object.fromEntries((["codex", "claude", "grok", "qoder", "qoder-cn"] as const).map((source) => {
+    const data = scan[source] ?? null;
+    const busy = scanning[source] ?? false;
+    return [source, { scan: data, scanning: busy, facts: sessionObservationFacts(source, data, busy, null) }];
+  })) as ReturnType<typeof useSessionRecords>["sources"];
+}
 
 function SessionRecordsPage({
   scan,
   coverageItems,
   ...props
 }: {
-  scan: SessionRecordScan;
+  scan: Partial<Record<SessionSourceId, SessionSourceScan>>;
   homeDirectory: string | null;
   initialSource?: "codex" | "claude" | "opencode";
   coverageItems?: Record<"codex" | "claude" | "grok" | "qoder" | "qoder-cn" | "opencode", ObservationCoverageItem>;
 }) {
   const records = useSessionRecords(false);
   const openCode = useOpenCodeSessions(false);
-  return <Page {...props} coverageItems={coverageItems ?? observationCoverageItems(scan)} records={{ ...records, scan }} openCode={openCode} />;
+  return <Page {...props} coverageItems={coverageItems ?? observationCoverageItems(scan)} records={{ ...records, sources: sourceObservations(scan) }} openCode={openCode} />;
 }
 
 function observationCoverageItems(
-  scan: SessionRecordScan,
+  scan: Partial<Record<SessionSourceId, SessionSourceScan>>,
   options: {
     scanning?: { codex?: boolean; claude?: boolean };
     records?: Partial<Record<"session:codex" | "session:claude" | "session:opencode", ObservationRecord>>;
     openCode?: OpenCodeSessionScan | null;
   } = {},
 ): Record<"codex" | "claude" | "grok" | "qoder" | "qoder-cn" | "opencode", ObservationCoverageItem> {
+  const sources = sourceObservations(scan, options.scanning);
   const index = coverageIndexFromFacts({
-    "session:codex": sessionObservationFacts("codex", scan.codex, options.scanning?.codex ?? false, null),
-    "session:claude": sessionObservationFacts("claude", scan.claude, options.scanning?.claude ?? false, null),
-    "session:grok": sessionObservationFacts("grok", scan.grok ?? null, false, null),
-    "session:qoder": sessionObservationFacts("qoder", scan.qoder ?? null, false, null),
-    "session:qoder-cn": sessionObservationFacts("qoder-cn", scan["qoder-cn"] ?? null, false, null),
+    "session:codex": sources.codex.facts,
+    "session:claude": sources.claude.facts,
+    "session:grok": sources.grok.facts,
+    "session:qoder": sources.qoder.facts,
+    "session:qoder-cn": sources["qoder-cn"].facts,
     "session:opencode": openCodeObservationFacts(options.openCode ?? null, false, null),
   }, options.records);
   return {
@@ -86,7 +99,7 @@ const scan: SessionRecordScan = {
 };
 
 function renderWithCoverage(
-  sourceScan: SessionRecordScan,
+  sourceScan: Partial<Record<SessionSourceId, SessionSourceScan>>,
   options: Parameters<typeof observationCoverageItems>[1] = {},
   initialSource?: "codex" | "claude" | "opencode",
 ) {
@@ -101,6 +114,15 @@ function renderWithCoverage(
 }
 
 describe("SessionRecordsPage", () => {
+  it("shows an unread source without an empty-list count or missing-directory message", () => {
+    const html = renderWithCoverage({ codex }, {}, "claude");
+    expect(html).toContain("尚未读取会话记录");
+    expect(html).toContain("未观察");
+    expect(html).not.toContain("未找到 Claude 会话记录目录");
+    expect(html).not.toContain("0 条");
+    expect(html.match(/<button\b[^>]*role="tab"[^>]*>Claude([\s\S]*?)<\/button>/)?.[1]).toBe("");
+  });
+
   it("shows unknown usage and blocks removal while retaining the observed records", () => {
     const html = renderWithCoverage({
       ...scan,

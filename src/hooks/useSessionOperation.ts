@@ -133,7 +133,9 @@ export function useSessionOperation<Source extends string, Scan, Target, Result 
       setScanning((current) => ({ ...current, [scope]: false }));
       const failure = observed.failures[scope] ?? null;
       if (failure && firstFailure === null) firstFailure = failure;
-      adapter.observe?.(scope, observed.scans[scope] ?? scansRef.current[scope] ?? null, failure, at, false);
+      if (observed.scans[scope] !== undefined || failure) {
+        adapter.observe?.(scope, observed.scans[scope] ?? scansRef.current[scope] ?? null, failure, at, false);
+      }
       setOutcome((current) => current && adapter.scopesFor(current.target).includes(scope)
         ? { ...current, refresh: failure ? { status: "failed", message: failure } : { status: "ready", message: null } }
         : current);
