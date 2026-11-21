@@ -351,6 +351,19 @@ export interface ProjectDataScan {
   mavenMessage: string | null;
 }
 
+export type ProjectScanProgress =
+  | { phase: "started"; scanId: string }
+  | { phase: "discovered"; scan: ProjectDataScan }
+  | { phase: "measured"; candidateId: string; measurement: DirectoryMeasurement };
+
+export interface ProjectScanSummary {
+  scanId: string;
+  finish: ProjectScanMeasurement;
+  finishedAt: number;
+  record: ProjectScanRecord | null;
+  historyWarning: string | null;
+}
+
 export interface ProjectScanCandidateKey {
   kind: ProjectDataKind;
   directoryPath: string;
@@ -394,18 +407,6 @@ export interface ProjectScanRecord {
   candidates: ProjectScanCandidateCounts;
   baseline: ProjectScanBaseline | null;
   changes: ProjectScanCandidateChanges | null;
-}
-
-export interface ProjectScanRecordDraft {
-  presetId: string;
-  scanId: string;
-  rootPath: string;
-  maxDepth: number;
-  finishedAt: number;
-  skipped: number;
-  measurement: ProjectScanMeasurement;
-  projects: ProjectCounts;
-  candidates: ProjectScanCandidateKey[];
 }
 
 export interface PresetScanHistory {

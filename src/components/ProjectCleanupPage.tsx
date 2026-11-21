@@ -134,7 +134,7 @@ export function ProjectCleanupPage({
       candidate.cleanability.kind !== "cleanable" || candidate.selected,
     );
   const settingsBusy = view.settings.phase === "loading";
-  const scanBusy = view.scan.phase === "discovering" || view.scan.phase === "measuring";
+  const scanBusy = view.scan.phase === "discovering" || view.scan.phase === "measuring" || view.scan.phase === "stopping";
   const batchRunning = view.batch?.phase === "running";
   const workflowFailure = view.settings.failure ?? view.scan.failure;
   const displayedMessage = message ?? (workflowFailure ? failureMessage(workflowFailure) : null);
@@ -262,14 +262,14 @@ export function ProjectCleanupPage({
           {scanBusy ? (
             <Button
               className="shrink-0"
-              disabled={Boolean(view.batch)}
+              disabled={Boolean(view.batch) || view.scan.phase === "stopping"}
               onClick={() => report(workflow.requestScanStop(), "无法取消扫描")}
               size="sm"
               type="button"
               variant="outline"
             >
               <X data-icon="inline-start" />
-              取消扫描
+              {view.scan.phase === "stopping" ? "正在停止" : "取消扫描"}
             </Button>
           ) : null}
           <Button
@@ -382,7 +382,7 @@ export function ProjectCleanupPage({
             全选当前可清理项
           </Button>
           <Button
-            disabled={!view.totals.selectedCount || Boolean(view.batch)}
+            disabled={!view.totals.selectedCount || Boolean(view.batch) || view.scan.phase === "stopping"}
             onClick={() => report(workflow.clearSelection(), "无法清空选择")}
             size="sm"
             type="button"
@@ -494,6 +494,7 @@ export function ProjectCleanupPage({
                   homeDirectory={homeDirectory}
                   key={candidate.candidateId}
                   report={report}
+                  scanStopped={view.scan.phase === "stopped" || view.scan.phase === "stopping"}
                   workflow={workflow}
                 />
               ))}
@@ -630,11 +631,17 @@ function presetHistoryLabel(
 }
 
 function ProjectDataScanNotice({ view }: { view: ProjectCleanupView }) {
+  if (view.scan.phase === "stopping") {
+    return <Alert><AlertTitle>正在停止扫描</AlertTitle><AlertDescription>正在等待目录读取和扫描记录保存结束。</AlertDescription></Alert>;
+  }
+  if (view.scan.failure && (view.scan.phase === "discovering" || view.scan.phase === "measuring")) {
+    return <Alert variant="destructive"><AlertTitle>停止扫描失败</AlertTitle><AlertDescription>{view.scan.failure.message}</AlertDescription></Alert>;
+  }
   if (view.scan.phase === "stopped") {
     return (
       <Alert>
         <AlertTitle>扫描已取消</AlertTitle>
-        <AlertDescription>未开始的占用测量已停止；当前结果可能不完整。</AlertDescription>
+        <AlertDescription>目录读取已停止，已完成的占用测量予以保留；当前结果可能不完整。</AlertDescription>
       </Alert>
     );
   }
@@ -694,6 +701,7 @@ function ProjectDataRow({
   copyPath,
   homeDirectory,
   report,
+  scanStopped,
   workflow,
 }: {
   active: boolean;
@@ -702,11 +710,12 @@ function ProjectDataRow({
   copyPath: (path: string) => Promise<void>;
   homeDirectory: string | null;
   report: (outcome: WorkflowOutcome<unknown>, title: string) => void;
+  scanStopped: boolean;
   workflow: ProjectCleanupWorkflow;
 }) {
   const selectable = candidate.cleanability.kind === "cleanable";
   const displayName = rowProjectName(candidate);
-  const blockedReason = candidateCleanabilityMessage(candidate);
+  const blockedReason = candidateCleanabilityMessage(candidate, scanStopped);
   const blockedReasonId = `project-candidate-${encodeURIComponent(candidate.candidateId)}-eligibility`;
 
   return (
@@ -766,9 +775,9 @@ function ProjectDataRow({
   );
 }
 
-function candidateCleanabilityMessage(candidate: ProjectCleanupCandidateView): string | null {
+function candidateCleanabilityMessage(candidate: ProjectCleanupCandidateView, scanStopped: boolean): string | null {
   if (candidate.cleanability.kind === "cleanable") return null;
-  if (candidate.cleanability.kind === "measuring") return "正在测量目录占用，完成后可选择清理。";
+  if (candidate.cleanability.kind === "measuring") return scanStopped ? "目录占用尚未测量，重新扫描后可选择清理。" : "正在测量目录占用，完成后可选择清理。";
   if (candidate.cleanability.kind === "requires-rescan") return "该候选已尝试清理；重新扫描后才能再次选择。";
 
   if (candidate.cleanability.reason === "identity-not-verified") {

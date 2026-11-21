@@ -18,7 +18,7 @@ import {
   type ObservationCoverageItem,
 } from "../observationCoverage";
 import { resetObservationLedgerForTests, type ObservationRecord } from "../observationLedger";
-import { presetSettings } from "../test/fixtures";
+import { completedProjectScan, presetSettings } from "../test/fixtures";
 import type {
   DirectoryMeasurement,
   ProjectCleanupBatchProgress,
@@ -26,6 +26,7 @@ import type {
   ProjectCleanupSettings,
   ProjectDataCandidate,
   ProjectScanRecord,
+  ProjectScanSummary,
 } from "../types";
 
 afterEach(() => {
@@ -98,6 +99,34 @@ function scanRecord(overrides: Partial<ProjectScanRecord> = {}): ProjectScanReco
   };
 }
 
+it("shows stopping and keeps controls disabled until native cancellation settles", async () => {
+  const user = userEvent.setup();
+  const terminal = deferred<ProjectScanSummary>();
+  const requestScanStop = vi.fn().mockResolvedValue(undefined);
+  const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
+    readSettings: async () => presetSettings(), requestScanStop,
+    runScan: async ({ onProgress }) => {
+      onProgress({ phase: "started", scanId: "scan-1" });
+      return terminal.promise;
+    },
+  }));
+  await workflow.initialize();
+  function Page() {
+    const view = useSyncExternalStore(workflow.subscribe, workflow.read);
+    return <ProjectCleanupPage coverageItem={projectCoverageItem(view)} homeDirectory={null} view={view} workflow={workflow} />;
+  }
+  render(<Page />);
+  await user.click(screen.getByRole("button", { name: "扫描项目目录" }));
+  await user.click(screen.getByRole("button", { name: "取消扫描" }));
+  expect(screen.getByText("正在停止扫描")).toBeTruthy();
+  expect((screen.getByRole("button", { name: "正在停止" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByLabelText("深度") as HTMLInputElement).disabled).toBe(true);
+  expect(requestScanStop).toHaveBeenCalledExactlyOnceWith("scan-1");
+  terminal.resolve({ scanId: "scan-1", finish: "stopped", finishedAt: 100, record: null, historyWarning: null });
+  await waitFor(() => expect(screen.getByText("扫描已取消")).toBeTruthy());
+  expect((screen.getByRole("button", { name: "扫描项目目录" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
 it("lets a user edit a multi-digit depth before saving it for the next scan", async () => {
   const user = userEvent.setup();
   const updateDepth = vi.fn(async (_id: string, maxDepth: number) => presetSettings({ maxDepth }));
@@ -132,7 +161,7 @@ it("selects a saved scan root from the path dropdown and restores its depth with
   const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
     readSettings: async () => initial,
     selectPreset,
-    scan,
+    runScan: scan,
   }));
   await workflow.initialize();
   function Page() {
@@ -173,8 +202,7 @@ it("filters candidate types by keyboard while retaining the selected candidates"
   ];
   const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
     readSettings: async () => presetSettings(),
-    scan: async () => ({ rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8, status: "Ready", projects: { total: 0, rust: 0, node: 0, maven: 0 }, candidates, skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null, mavenAvailable: true, mavenMessage: null }),
-    measure: async () => measurement,
+    runScan: completedProjectScan(({ rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8, status: "Ready", projects: { total: 0, rust: 0, node: 0, maven: 0 }, candidates, skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null, mavenAvailable: true, mavenMessage: null }), () => measurement),
   }));
   await workflow.initialize();
   await workflow.startScan();
@@ -217,13 +245,12 @@ it("shows candidate qualification reasons beside disabled checkboxes", async () 
   const measurement: DirectoryMeasurement = { status: "Ready", bytes: 1024, human: "1 KiB", files: 1, directories: 1, skipped: 0, latestModifiedMs: null, message: null };
   const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
     readSettings: async () => presetSettings(),
-    scan: async () => ({
+    runScan: completedProjectScan(({
       rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8,
       status: "Ready", projects: { total: 1, rust: 1, node: 0, maven: 0 },
       candidates: [{ candidateId: "rust-link", kind: "RustTarget", projectPath: "/code/rust-app", directoryPath: "/code/rust-app/target", status: "Symlink", message: "链接目标未经扫描", measurement }],
       skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null, mavenAvailable: true, mavenMessage: null,
-    }),
-    measure: async () => measurement,
+    }), () => measurement),
   }));
   await workflow.initialize();
   await workflow.startScan();
@@ -290,12 +317,11 @@ it("keeps scan-history time and observation time independent", async () => {
   const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
     readSettings: async () => presetSettings({ maxDepth: 8 }),
     readScanHistory: async () => ({ histories: { "preset-1": { records: [current] } }, warning: null }),
-    scan: async () => ({
+    runScan: completedProjectScan(({
       rootId: "root-1", scanId: "scan-1", rootPath: "/code", maxDepth: 8,
       status: "Ready", projects: { total: 0, rust: 0, node: 0, maven: 0 },
       candidates: [], skipped: 0, errors: [], cargoAvailable: true, cargoMessage: null, mavenAvailable: true, mavenMessage: null,
-    }),
-    measure: async () => measurement,
+    }), () => measurement),
   }));
   await workflow.initialize();
   await workflow.startScan();
@@ -351,7 +377,7 @@ it("renders cleanup batch progress and the final summary", async () => {
   });
   const workflow = createProjectCleanupWorkflow(createInMemoryProjectCleanupEffects({
     readSettings: async () => presetSettings(),
-    scan: async () => ({
+    runScan: completedProjectScan(({
       rootId: "root-1",
       scanId: "scan-1",
       rootPath: "/code",
@@ -365,8 +391,7 @@ it("renders cleanup batch progress and the final summary", async () => {
       cargoMessage: null,
       mavenAvailable: true,
       mavenMessage: null,
-    }),
-    measure: async () => measurement,
+    }), () => measurement),
     runBatch,
   }));
   await workflow.initialize();

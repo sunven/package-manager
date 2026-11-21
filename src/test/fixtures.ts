@@ -1,4 +1,5 @@
-import type { ManagerId, ManagerSnapshot, ProjectCleanupSettings } from "../types";
+import type { DirectoryMeasurement, ManagerId, ManagerSnapshot, ProjectCleanupSettings, ProjectDataCandidate, ProjectDataScan, ProjectScanSummary } from "../types";
+import type { ProjectCleanupEffects } from "../projectCleanupWorkflow";
 import type { SessionRemovalResult } from "../sessionRecords";
 
 export function managerFixture(id: ManagerId = "Npm", changes: Partial<ManagerSnapshot> = {}): ManagerSnapshot {
@@ -11,4 +12,21 @@ export function presetSettings(changes: Partial<ProjectCleanupSettings> = {}): P
 
 export function removalResult(changes: Partial<SessionRemovalResult> = {}): SessionRemovalResult {
   return { moved: 0, failed: 0, skipped: 0, items: [], message: null, operationError: null, ...changes };
+}
+
+export function completedProjectScan(
+  scan: ProjectDataScan,
+  measurement: (candidate: ProjectDataCandidate) => DirectoryMeasurement,
+  changes: Partial<ProjectScanSummary> = {},
+): ProjectCleanupEffects["runScan"] {
+  return async ({ onProgress }) => {
+    onProgress({ phase: "started", scanId: scan.scanId });
+    onProgress({ phase: "discovered", scan });
+    for (const candidate of scan.candidates) {
+      if (candidate.status === "Ready" || candidate.status === "Unrecognized") {
+        onProgress({ phase: "measured", candidateId: candidate.candidateId, measurement: measurement(candidate) });
+      }
+    }
+    return { scanId: scan.scanId, finish: "finished", finishedAt: Date.now(), record: null, historyWarning: null, ...changes };
+  };
 }

@@ -1,12 +1,11 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { CleanupBatchSummary, ProjectCleanupEffects } from "./projectCleanupWorkflow";
 import type {
-  DirectoryMeasurement,
   ProjectCleanupBatchProgress,
   ProjectCleanupSettings,
-  ProjectDataScan,
   ProjectScanHistoryRead,
-  ProjectScanRecord,
+  ProjectScanSummary,
+  ProjectScanProgress,
 } from "./types";
 
 export function createTauriProjectCleanupEffects(): ProjectCleanupEffects {
@@ -18,9 +17,11 @@ export function createTauriProjectCleanupEffects(): ProjectCleanupEffects {
     selectPreset: (presetId) => invoke<ProjectCleanupSettings>("select_project_cleanup_preset", { presetId }),
     removePreset: (presetId) => invoke<ProjectCleanupSettings>("remove_project_cleanup_preset", { presetId }),
     updateDepth: (presetId, maxDepth) => invoke<ProjectCleanupSettings>("update_project_cleanup_depth", { presetId, maxDepth }),
-    scan: (input) => invoke<ProjectDataScan>("scan_project_data", input),
-    measure: (input) =>
-      invoke<DirectoryMeasurement>("measure_project_data_candidate", input),
+    runScan: ({ rootId, maxDepth, onProgress }) => {
+      const progress = new Channel<ProjectScanProgress>(onProgress);
+      return invoke<ProjectScanSummary>("run_project_scan", { rootId, maxDepth, onProgress: progress });
+    },
+    requestScanStop: (scanId) => invoke("request_project_scan_stop", { scanId }),
     runBatch: ({ scanId, batchId, candidateIds, onProgress }) => {
       const progress = new Channel<ProjectCleanupBatchProgress>(onProgress);
       return invoke<CleanupBatchSummary>("run_project_cleanup_batch", {
@@ -36,7 +37,5 @@ export function createTauriProjectCleanupEffects(): ProjectCleanupEffects {
     openCandidate: (input) => invoke("open_project_data_path", input),
     readScanHistory: (presetIds) =>
       invoke<ProjectScanHistoryRead>("list_project_scan_history", { presetIds }),
-    recordScanHistory: (draft) =>
-      invoke<ProjectScanRecord>("record_project_scan_history", { draft }),
   };
 }

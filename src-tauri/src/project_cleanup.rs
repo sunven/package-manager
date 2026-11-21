@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[path = "project_scan.rs"]
+pub(crate) mod scan;
+
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
@@ -234,6 +237,7 @@ struct Registry {
     root: Option<AuthorizedRoot>,
     scan: Option<ScanSession>,
     pending_scan_id: Option<String>,
+    active_scan: Option<scan::ActiveScan>,
     active_batch: Option<String>,
     stop_requested: bool,
 }
@@ -259,6 +263,9 @@ impl ProjectCleanupState {
         change: impl FnOnce(&mut Registry) -> Result<ProjectCleanupSettings, String>,
     ) -> Result<ProjectCleanupSettings, String> {
         let mut registry = self.lock()?;
+        if registry.active_scan.is_some() {
+            return Err("项目扫描仍在执行，请等待扫描结束后修改预设".into());
+        }
         let mut next = registry.clone();
         let settings = change(&mut next)?;
         *registry = next;
@@ -281,6 +288,7 @@ impl ProjectCleanupState {
         self.change_settings(|registry| registry.update_depth(id, depth))
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_scan(
         &self,
         root_id: &str,
@@ -289,6 +297,7 @@ impl ProjectCleanupState {
         self.lock()?.prepare_scan(root_id, max_depth)
     }
 
+    #[cfg(test)]
     pub(crate) fn install_scan(
         &self,
         root_id: &str,
@@ -302,14 +311,7 @@ impl ProjectCleanupState {
             .install_scan(root_id, scan_id, root_path, max_depth, discovery, tools)
     }
 
-    pub(crate) fn candidate_for_measurement(
-        &self,
-        scan_id: &str,
-        candidate_id: &str,
-    ) -> Result<CandidateRecord, String> {
-        self.lock()?.candidate(scan_id, candidate_id)
-    }
-
+    #[cfg(test)]
     pub(crate) fn apply_measurement(
         &self,
         scan_id: &str,
@@ -366,6 +368,9 @@ impl ProjectCleanupState {
 
     pub(crate) fn begin_batch(&self, batch_id: &str) -> Result<BatchGuard<'_>, String> {
         let mut registry = self.lock()?;
+        if registry.active_scan.as_ref().is_some_and(|scan| scan.stopped()) {
+            return Err("项目扫描正在停止，请等待扫描结束后清理".into());
+        }
         if registry.active_batch.is_some() {
             return Err("另一个项目清理批次仍在执行".into());
         }
@@ -472,6 +477,7 @@ impl Registry {
             root: None,
             scan: None,
             pending_scan_id: None,
+            active_scan: None,
             active_batch: None,
             stop_requested: false,
         };
@@ -905,7 +911,12 @@ struct DiscoveredCandidate {
     identities: Option<Vec<(PathBuf, Identity)>>,
 }
 
+#[cfg(test)]
 pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
+    discover_project_data_until(root, max_depth, &|| false).expect("uncancelled discovery")
+}
+
+fn discover_project_data_until(root: &Path, max_depth: u8, stopped: &dyn Fn() -> bool) -> Option<Discovery> {
     let mut discovery = Discovery {
         projects: ProjectCounts::default(),
         candidates: Vec::new(),
@@ -915,6 +926,9 @@ pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
     let mut pending = vec![(root.to_path_buf(), 0_u8)];
 
     while let Some((directory, depth)) = pending.pop() {
+        if stopped() {
+            return None;
+        }
         let is_rust = is_cargo_project(&directory);
         let is_maven = is_maven_project(&directory);
         let is_node = is_node_project(&directory);
@@ -951,6 +965,9 @@ pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
             }
         };
         for entry in entries {
+            if stopped() {
+                return None;
+            }
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(err) => {
@@ -979,7 +996,7 @@ pub(crate) fn discover_project_data(root: &Path, max_depth: u8) -> Discovery {
     discovery
         .candidates
         .sort_by(|left, right| left.directory_path.cmp(&right.directory_path));
-    discovery
+    if stopped() { None } else { Some(discovery) }
 }
 
 impl Discovery {
@@ -1206,16 +1223,23 @@ fn is_link(metadata: &fs::Metadata) -> bool {
 }
 
 pub(crate) fn measure_project_data(kind: ProjectDataKind, path: &Path) -> DirectoryMeasurement {
+    measure_project_data_until(kind, path, &|| false).expect("uncancelled measurement")
+}
+
+fn measure_project_data_until(kind: ProjectDataKind, path: &Path, stopped: &dyn Fn() -> bool) -> Option<DirectoryMeasurement> {
+    if stopped() {
+        return None;
+    }
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return missing_measurement(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Some(missing_measurement()),
         Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-            return failed_measurement(DirectoryMeasurementStatus::PermissionDenied, err)
+            return Some(failed_measurement(DirectoryMeasurementStatus::PermissionDenied, err))
         }
-        Err(err) => return failed_measurement(DirectoryMeasurementStatus::Error, err),
+        Err(err) => return Some(failed_measurement(DirectoryMeasurementStatus::Error, err)),
     };
     if is_link(&metadata) || !metadata.is_dir() {
-        return DirectoryMeasurement {
+        return Some(DirectoryMeasurement {
             status: DirectoryMeasurementStatus::Error,
             bytes: None,
             human: None,
@@ -1224,12 +1248,12 @@ pub(crate) fn measure_project_data(kind: ProjectDataKind, path: &Path) -> Direct
             skipped: 0,
             latest_modified_ms: None,
             message: Some("Project data path is not a regular directory".to_string()),
-        };
+        });
     }
 
     #[cfg(not(any(unix, windows)))]
     if kind == ProjectDataKind::NodeModules {
-        return DirectoryMeasurement {
+        return Some(DirectoryMeasurement {
             status: DirectoryMeasurementStatus::Error,
             bytes: None,
             human: None,
@@ -1240,24 +1264,27 @@ pub(crate) fn measure_project_data(kind: ProjectDataKind, path: &Path) -> Direct
             message: Some(
                 "Guarded node_modules deletion is unavailable on this platform".to_string(),
             ),
-        };
+        });
     }
 
     let mut stats = MeasurementStats::default();
     let mut seen = HashSet::new();
-    measure_directory(
+    if !measure_directory(
         path,
         kind == ProjectDataKind::NodeModules,
         &metadata,
         &mut stats,
         &mut seen,
-    );
+        stopped,
+    ) || stopped() {
+        return None;
+    }
     let status = if stats.skipped == 0 {
         DirectoryMeasurementStatus::Ready
     } else {
         DirectoryMeasurementStatus::Partial
     };
-    DirectoryMeasurement {
+    Some(DirectoryMeasurement {
         status,
         bytes: Some(stats.bytes),
         human: Some(format_bytes(stats.bytes)),
@@ -1266,7 +1293,7 @@ pub(crate) fn measure_project_data(kind: ProjectDataKind, path: &Path) -> Direct
         skipped: stats.skipped,
         latest_modified_ms: stats.latest_modified_ms,
         message: stats.first_error,
-    }
+    })
 }
 
 #[derive(Default)]
@@ -1285,16 +1312,23 @@ fn measure_directory(
     root_metadata: &fs::Metadata,
     stats: &mut MeasurementStats,
     seen: &mut HashSet<(u64, u64)>,
-) {
+    stopped: &dyn Fn() -> bool,
+) -> bool {
+    if stopped() {
+        return false;
+    }
     stats.directories = stats.directories.saturating_add(1);
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
         Err(err) => {
             stats.record_skip(path, err);
-            return;
+            return true;
         }
     };
     for entry in entries {
+        if stopped() {
+            return false;
+        }
         let entry = match entry {
             Ok(entry) => entry,
             Err(err) => {
@@ -1320,15 +1354,19 @@ fn measure_directory(
                 );
                 continue;
             }
-            measure_directory(
+            if !measure_directory(
                 &entry_path,
                 enforce_single_filesystem,
                 root_metadata,
                 stats,
                 seen,
-            );
+                stopped,
+            ) {
+                return false;
+            }
         }
     }
+    true
 }
 
 impl MeasurementStats {

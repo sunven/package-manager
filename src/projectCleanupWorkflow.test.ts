@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { completedProjectScan } from "./test/fixtures";
 import {
   createProjectCleanupWorkflow,
   type CleanupBatchSummary,
@@ -13,7 +14,8 @@ import type {
   ProjectCleanupBatchProgress,
   ProjectCleanupSettings,
   ProjectScanRecord,
-  ProjectScanRecordDraft,
+  ProjectScanProgress,
+  ProjectScanSummary,
 } from "./types";
 
 function settings(rootId = "root-1", rootPath = "/code", maxDepth = 6) {
@@ -28,14 +30,6 @@ function deferred<T>() {
     reject = rejectPromise;
   });
   return { promise, reject, resolve };
-}
-
-async function waitFor(predicate: () => boolean) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (predicate()) return;
-    await Promise.resolve();
-  }
-  throw new Error("condition was not reached");
 }
 
 function pendingCandidate(
@@ -97,31 +91,16 @@ function scan(
   };
 }
 
-function recordFromDraft(
-  draft: ProjectScanRecordDraft,
-  overrides: Partial<ProjectScanRecord> = {},
-): ProjectScanRecord {
-  const candidates = {
-    total: draft.candidates.length,
-    rustTarget: draft.candidates.filter((candidate) => candidate.kind === "RustTarget").length,
-    mavenTarget: draft.candidates.filter((candidate) => candidate.kind === "MavenTarget").length,
-    nodeModules: draft.candidates.filter((candidate) => candidate.kind === "NodeModules").length,
-  };
-  return {
-    id: `record-${draft.finishedAt}`,
-    presetId: draft.presetId,
-    scanId: draft.scanId,
-    rootPath: draft.rootPath,
-    maxDepth: draft.maxDepth,
-    finishedAt: draft.finishedAt,
-    discovery: { complete: draft.skipped === 0, skipped: draft.skipped },
-    measurement: draft.measurement,
-    projects: draft.projects,
-    candidates,
-    baseline: null,
-    changes: null,
-    ...overrides,
-  };
+function summary(overrides: Partial<ProjectScanSummary> = {}): ProjectScanSummary {
+  return { scanId: "scan-1", finish: "finished", finishedAt: 100, record: null, historyWarning: null, ...overrides };
+}
+
+function record(overrides: Partial<ProjectScanRecord> = {}): ProjectScanRecord {
+  return { id: "record-1", presetId: "preset-1", scanId: "scan-1", rootPath: "/code", maxDepth: 6,
+    finishedAt: 100, discovery: { complete: true, skipped: 0 }, measurement: "finished",
+    projects: { total: 1, rust: 0, node: 1, maven: 0 },
+    candidates: { total: 1, rustTarget: 0, mavenTarget: 0, nodeModules: 1 },
+    baseline: null, changes: null, ...overrides };
 }
 
 function cleanupResult(
@@ -147,56 +126,58 @@ function cleanupResult(
 afterEach(resetObservationLedgerForTests);
 
 describe("Project Cleanup workflow", () => {
-  it("records completed, stopped and failed scans in the observation ledger", async () => {
+  it("queues an early stop and keeps controls locked until the native terminal receipt", async () => {
+    const terminal = deferred<ProjectScanSummary>();
+    let emit!: (progress: ProjectScanProgress) => void;
+    const requestScanStop = vi.fn().mockResolvedValue(undefined);
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      runScan: async ({ onProgress }) => { emit = onProgress; return terminal.promise; },
+      requestScanStop,
+    }));
+    await workflow.initialize();
+    const running = workflow.startScan();
+    workflow.requestScanStop();
+    expect(workflow.read().scan.phase).toBe("stopping");
+    expect(requestScanStop).not.toHaveBeenCalled();
+    expect(await workflow.startScan()).toEqual({ kind: "unavailable", reason: "scan-active" });
+    expect(await workflow.selectPreset("preset-1")).toEqual({ kind: "unavailable", reason: "scan-active" });
+    emit({ phase: "started", scanId: "scan-1" });
+    expect(requestScanStop).toHaveBeenCalledExactlyOnceWith("scan-1");
+    terminal.resolve(summary({ finish: "stopped" }));
+    await expect(running).resolves.toEqual({ kind: "cancelled" });
+    expect(workflow.read().scan).toMatchObject({ phase: "stopped", session: null });
+    expect(workflow.read().history.byPreset["preset-1"]).toEqual([]);
+  });
+
+  it("records native completed, stopped and failed scans in the observation ledger", async () => {
     const completed = createProjectCleanupWorkflow(effects({
       readSettings: async () => settings(),
-      scan: async () => scan([]),
+      runScan: completedProjectScan(scan([]), () => measurement(100)),
     }));
     await completed.initialize();
     await completed.startScan();
-    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastSuccess).toMatchObject({
-      completeness: "complete",
-      scope: "/code\n6",
-    });
-
+    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastSuccess).toMatchObject({ completeness: "complete", scope: "/code\n6" });
     resetObservationLedgerForTests();
-    const measuring = deferred<DirectoryMeasurement>();
     const stopped = createProjectCleanupWorkflow(effects({
       readSettings: async () => settings(),
-      scan: async () => scan([pendingCandidate("candidate")]),
-      measure: async () => measuring.promise,
+      runScan: completedProjectScan(scan([pendingCandidate("candidate")]), () => measurement(100), { finish: "stopped" }),
     }));
     await stopped.initialize();
-    const running = stopped.startScan();
-    await waitFor(() => stopped.read().scan.phase === "measuring");
-    stopped.requestScanStop();
-    measuring.resolve(measurement(100));
-    await running;
-    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastSuccess).toMatchObject({
-      completeness: "partial",
-      note: "扫描未完成",
-    });
-
+    await stopped.startScan();
+    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastSuccess).toMatchObject({ completeness: "partial", note: "扫描未完成" });
     resetObservationLedgerForTests();
-    const failed = createProjectCleanupWorkflow(effects({
-      readSettings: async () => settings(),
-      scan: async () => { throw new Error("offline"); },
-    }));
+    const failed = createProjectCleanupWorkflow(effects({ readSettings: async () => settings(), runScan: async () => { throw new Error("offline"); } }));
     await failed.initialize();
     await failed.startScan();
-    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastAttempt).toMatchObject({
-      outcome: "failed",
-      reason: "offline",
-      scope: "/code\n6",
-    });
+    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastAttempt).toMatchObject({ outcome: "failed", reason: "offline" });
   });
 
   it("locks settings changes while saving and discards old candidates when switching presets", async () => {
     const saving = deferred<ProjectCleanupSettings>();
     const workflow = createProjectCleanupWorkflow(effects({
       readSettings: async () => settings(),
-      scan: async () => scan([pendingCandidate("old-candidate")]),
-      measure: async () => measurement(100),
+      runScan: completedProjectScan(scan([pendingCandidate("old-candidate")]), () => measurement(100)),
       selectPreset: async () => saving.promise,
       removePreset: async () => ({ ...settings(), rootId: null, rootPath: null, presets: [], activePresetId: null }),
     }));
@@ -218,8 +199,7 @@ describe("Project Cleanup workflow", () => {
   it("preserves saved depth and the scan when saving fails", async () => {
     const workflow = createProjectCleanupWorkflow(effects({
       readSettings: async () => settings(),
-      scan: async () => scan([pendingCandidate("candidate")]),
-      measure: async () => measurement(100),
+      runScan: completedProjectScan(scan([pendingCandidate("candidate")]), () => measurement(100)),
       updateDepth: async () => { throw new Error("disk full"); },
     }));
     await workflow.initialize();
@@ -290,201 +270,170 @@ describe("Project Cleanup workflow", () => {
     unsubscribe();
   });
 
-  it("discovers a Scan Session and measures candidates with four workers", async () => {
-    const candidates = ["one", "two", "three", "four", "five"].map((id) => pendingCandidate(id));
-    const gates = new Map(candidates.map((item) => [
-      item.candidateId,
-      deferred<DirectoryMeasurement>(),
-    ]));
-    const measurementCalls: string[] = [];
-    const workflow = createProjectCleanupWorkflow(
-      effects({
-        readSettings: async () => settings(),
-        scan: async () => scan(candidates),
-        measure: async ({ candidateId }) => {
-          measurementCalls.push(candidateId);
-          return gates.get(candidateId)!.promise;
-        },
-      }),
-    );
+  it("publishes native discovery and measurement progress until final recording ends", async () => {
+    const terminal = deferred<ProjectScanSummary>();
+    let emit!: (progress: ProjectScanProgress) => void;
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      runScan: async ({ onProgress }) => { emit = onProgress; return terminal.promise; },
+    }));
     await workflow.initialize();
-
     const running = workflow.startScan();
-    await waitFor(() => measurementCalls.length === 4);
-
-    expect(measurementCalls).toEqual(["one", "two", "three", "four"]);
-    expect(workflow.read().scan).toMatchObject({
-      phase: "measuring",
-      pendingMeasurements: 5,
-      session: { scanId: "scan-1" },
-    });
-
-    for (const candidateId of measurementCalls) {
-      gates.get(candidateId)!.resolve(measurement(100));
-    }
-    await waitFor(() => measurementCalls.length === 5);
-    expect(measurementCalls).toEqual(["one", "two", "three", "four", "five"]);
-    gates.get("five")!.resolve(measurement(500));
-
-    await expect(running).resolves.toEqual({
-      kind: "succeeded",
-      value: { scanId: "scan-1", finish: "completed" },
-    });
-    expect(workflow.read().scan).toMatchObject({
-      phase: "ready",
-      pendingMeasurements: 0,
-      session: {
-        candidates: [
-          { candidateId: "one", measurement: { bytes: 100 } },
-          { candidateId: "two", measurement: { bytes: 100 } },
-          { candidateId: "three", measurement: { bytes: 100 } },
-          { candidateId: "four", measurement: { bytes: 100 } },
-          { candidateId: "five", measurement: { bytes: 500 } },
-        ],
-      },
-    });
+    emit({ phase: "started", scanId: "scan-1" });
+    emit({ phase: "discovered", scan: scan([pendingCandidate("one"), pendingCandidate("two")]) });
+    expect(workflow.read().scan).toMatchObject({ phase: "measuring", pendingMeasurements: 2 });
+    emit({ phase: "measured", candidateId: "one", measurement: measurement(100) });
+    workflow.setSelected(["one"], true);
+    expect(workflow.read().totals.selectedBytes).toBe(100);
+    emit({ phase: "measured", candidateId: "two", measurement: measurement(200) });
+    expect(workflow.read().scan).toMatchObject({ phase: "measuring", pendingMeasurements: 0 });
+    expect(await workflow.setMaxDepth(3)).toEqual({ kind: "unavailable", reason: "scan-active" });
+    terminal.resolve(summary());
+    await running;
+    expect(workflow.read().scan.phase).toBe("ready");
+    expect(workflow.read().totals).toMatchObject({ verifiedBytes: 300, selectedBytes: 100 });
   });
 
-  it("stops a scan cooperatively and ignores late measurements", async () => {
-    const candidates = ["one", "two", "three", "four", "five", "six"].map((id) => pendingCandidate(id));
-    const gates = new Map(candidates.map((item) => [
-      item.candidateId,
-      deferred<DirectoryMeasurement>(),
-    ]));
-    const measurementCalls: string[] = [];
-    const workflow = createProjectCleanupWorkflow(
-      effects({
-        readSettings: async () => settings(),
-        scan: async () => scan(candidates),
-        measure: async ({ candidateId }) => {
-          measurementCalls.push(candidateId);
-          return gates.get(candidateId)!.promise;
-        },
-      }),
-    );
+  it("preserves completed measurements and ignores progress after the native stop receipt", async () => {
+    const terminal = deferred<ProjectScanSummary>();
+    let emit!: (progress: ProjectScanProgress) => void;
+    const requestScanStop = vi.fn().mockResolvedValue(undefined);
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(), requestScanStop,
+      runScan: async ({ onProgress }) => { emit = onProgress; onProgress({ phase: "started", scanId: "scan-1" }); onProgress({ phase: "discovered", scan: scan([pendingCandidate("one"), pendingCandidate("two")]) }); return terminal.promise; },
+    }));
     await workflow.initialize();
     const running = workflow.startScan();
-    await waitFor(() => measurementCalls.length === 4);
-
-    gates.get("one")!.resolve(measurement(100));
-    await waitFor(
-      () => workflow.read().scan.session?.candidates[0].measurement.status === "Ready",
-    );
-    expect(measurementCalls).toEqual(["one", "two", "three", "four", "five"]);
-    expect(workflow.requestScanStop()).toEqual({
-      kind: "succeeded",
-      value: undefined,
-    });
-    expect(workflow.read().scan).toMatchObject({
-      phase: "stopped",
-      pendingMeasurements: 0,
-    });
-
-    for (const candidateId of ["two", "three", "four", "five"]) {
-      gates.get(candidateId)!.resolve(measurement(900));
-    }
+    emit({ phase: "measured", candidateId: "one", measurement: measurement(100) });
+    workflow.setSelected(["one"], true);
+    workflow.requestScanStop();
+    expect(workflow.read().scan.phase).toBe("stopping");
+    expect(workflow.prepareCleanupBatch(["one"])).toEqual({ kind: "unavailable", reason: "scan-stopping" });
+    terminal.resolve(summary({ finish: "stopped", record: record({ measurement: "stopped" }) }));
     await expect(running).resolves.toEqual({ kind: "cancelled" });
-    expect(measurementCalls).toEqual(["one", "two", "three", "four", "five"]);
-    expect(workflow.read().scan.session?.candidates.map((candidate) => candidate.measurement.bytes)).toEqual([
-      100,
-      null,
-      null,
-      null,
-      null,
-      null,
-    ]);
+    expect(workflow.read().scan.session?.candidates.map((candidate) => candidate.measurement.bytes)).toEqual([100, null]);
+    expect(workflow.read().totals.selectedCount).toBe(1);
+    emit({ phase: "measured", candidateId: "two", measurement: measurement(900) });
+    expect(workflow.read().scan.session?.candidates[1].measurement.status).toBe("Pending");
+    expect(requestScanStop).toHaveBeenCalledExactlyOnceWith("scan-1");
+    expect(workflow.read().history.byPreset["preset-1"]).toHaveLength(1);
   });
 
   it("publishes Cleanable Candidate policy progressively", async () => {
-    const candidates = [
-      pendingCandidate("node"),
-      pendingCandidate("rust", "RustTarget"),
-      pendingCandidate("maven", "MavenTarget"),
-      pendingCandidate("unknown", "NodeModules", "Unrecognized"),
-      pendingCandidate("partial"),
-    ];
-    const gates = new Map(candidates.map((item) => [
-      item.candidateId,
-      deferred<DirectoryMeasurement>(),
-    ]));
-    const workflow = createProjectCleanupWorkflow(
-      effects({
-        readSettings: async () => settings(),
-        scan: async () => ({ ...scan(candidates), cargoAvailable: false, mavenAvailable: false }),
-        measure: async ({ candidateId }) => gates.get(candidateId)!.promise,
-      }),
-    );
+    const candidates = [pendingCandidate("node"), pendingCandidate("rust", "RustTarget"), pendingCandidate("maven", "MavenTarget"), pendingCandidate("unknown", "NodeModules", "Unrecognized"), pendingCandidate("partial")];
+    const terminal = deferred<ProjectScanSummary>();
+    let emit!: (progress: ProjectScanProgress) => void;
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      runScan: async ({ onProgress }) => { emit = onProgress; onProgress({ phase: "discovered", scan: { ...scan(candidates), cargoAvailable: false, mavenAvailable: false } }); return terminal.promise; },
+    }));
     await workflow.initialize();
     const running = workflow.startScan();
-
-    gates.get("node")!.resolve(measurement(100));
-    await waitFor(
-      () => workflow.read().scan.session?.candidates[0].measurement.status === "Ready",
-    );
-    expect(workflow.read().scan.session?.candidates[0]).toMatchObject({
-      candidateId: "node",
-      cleanability: { kind: "cleanable" },
-      selected: false,
-    });
+    emit({ phase: "measured", candidateId: "node", measurement: measurement(100) });
+    expect(workflow.read().scan.session?.candidates[0]).toMatchObject({ cleanability: { kind: "cleanable" }, selected: false });
     expect(workflow.read().scan.phase).toBe("measuring");
-
-    gates.get("rust")!.resolve(measurement(200));
-    gates.get("maven")!.resolve(measurement(250));
-    gates.get("unknown")!.resolve(measurement(300));
-    gates.get("partial")!.resolve({
-      ...measurement(50),
-      status: "Partial",
-      skipped: 1,
-      message: "one path skipped",
-    });
+    for (const candidateId of ["rust", "maven", "unknown"]) emit({ phase: "measured", candidateId, measurement: measurement(200) });
+    emit({ phase: "measured", candidateId: "partial", measurement: { ...measurement(50), status: "Partial", skipped: 1, message: "one path skipped" } });
+    terminal.resolve(summary());
     await running;
-
-    expect(
-      workflow.read().scan.session?.candidates.map((candidate) => candidate.cleanability),
-    ).toEqual([
-      { kind: "cleanable" },
-      { kind: "blocked", reason: "cleanup-mechanism-unavailable" },
-      { kind: "blocked", reason: "cleanup-mechanism-unavailable" },
-      { kind: "blocked", reason: "identity-not-verified" },
-      { kind: "blocked", reason: "directory-footprint-incomplete" },
+    expect(workflow.read().scan.session?.candidates.map((candidate) => candidate.cleanability)).toEqual([
+      { kind: "cleanable" }, { kind: "blocked", reason: "cleanup-mechanism-unavailable" }, { kind: "blocked", reason: "cleanup-mechanism-unavailable" },
+      { kind: "blocked", reason: "identity-not-verified" }, { kind: "blocked", reason: "directory-footprint-incomplete" },
     ]);
   });
 
-  it("keeps a Scan Session when one candidate measurement fails", async () => {
-    const workflow = createProjectCleanupWorkflow(
-      effects({
-        readSettings: async () => settings(),
-        scan: async () => scan([pendingCandidate("broken")]),
-        measure: async () => {
-          throw new Error("permission denied");
-        },
-      }),
-    );
+  it("keeps a Scan Session when native progress reports a measurement failure", async () => {
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      runScan: completedProjectScan(scan([pendingCandidate("broken")]), () => ({ ...measurement(0), status: "Error", bytes: null, message: "permission denied" })),
+    }));
     await workflow.initialize();
+    await expect(workflow.startScan()).resolves.toEqual({ kind: "succeeded", value: { scanId: "scan-1", finish: "completed" } });
+    expect(workflow.read().scan).toMatchObject({ phase: "ready", failure: null, session: { candidates: [{ measurement: { status: "Error", message: "permission denied" }, cleanability: { kind: "blocked", reason: "directory-footprint-incomplete" } }] } });
+  });
 
-    await expect(workflow.startScan()).resolves.toEqual({
-      kind: "succeeded",
-      value: { scanId: "scan-1", finish: "completed" },
-    });
-    expect(workflow.read().scan).toMatchObject({
-      phase: "ready",
-      failure: null,
-      session: {
-        candidates: [
-          {
-            candidateId: "broken",
-            measurement: {
-              status: "Error",
-              message: "permission denied",
-            },
-            cleanability: {
-              kind: "blocked",
-              reason: "directory-footprint-incomplete",
-            },
-          },
-        ],
+  it("preserves cleanup results and selection while sibling measurements continue", async () => {
+    const terminal = deferred<ProjectScanSummary>();
+    let emit!: (progress: ProjectScanProgress) => void;
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      runScan: async ({ onProgress }) => {
+        emit = onProgress;
+        onProgress({ phase: "discovered", scan: scan([pendingCandidate("one"), pendingCandidate("two")]) });
+        return terminal.promise;
       },
+      runBatch: async ({ onProgress }) => {
+        onProgress({ phase: "advanced", candidateId: "one", outcome: { kind: "result", result: cleanupResult("one", 100) }, completedCount: 1, cleanedBytes: 100 });
+        return { finish: "completed", totalCount: 1, completedCount: 1, failedCount: 0, cleanedBytes: 100, historyId: null, historyWarning: null };
+      },
+    }));
+    await workflow.initialize();
+    const running = workflow.startScan();
+    emit({ phase: "measured", candidateId: "one", measurement: measurement(100) });
+    workflow.setSelected(["one"], true);
+    expect(workflow.prepareCleanupBatch(["one"])).toMatchObject({ kind: "succeeded" });
+    await workflow.runCleanupBatch();
+    workflow.closeCleanupBatch();
+    expect(workflow.read().scan.phase).toBe("measuring");
+    emit({ phase: "measured", candidateId: "one", measurement: measurement(900) });
+    emit({ phase: "measured", candidateId: "two", measurement: measurement(200) });
+    workflow.setSelected(["two"], true);
+    terminal.resolve(summary({ record: record({ candidates: { total: 2, rustTarget: 0, mavenTarget: 0, nodeModules: 2 } }) }));
+    await running;
+    expect(workflow.read().scan.session?.candidates[0]).toMatchObject({
+      measurement: { bytes: 0 }, selected: false, cleanability: { kind: "requires-rescan" }, cleanup: { kind: "attempted" },
     });
+    expect(workflow.read().scan.session?.candidates[1].selected).toBe(true);
+    expect(workflow.read().history.byPreset["preset-1"][0].candidates.total).toBe(2);
+  });
+
+  it("allows retrying a failed stop request while the scan remains active", async () => {
+    const terminal = deferred<ProjectScanSummary>();
+    const requestScanStop = vi.fn().mockRejectedValueOnce(new Error("IPC unavailable")).mockResolvedValueOnce(undefined);
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(), requestScanStop,
+      runScan: async ({ onProgress }) => { onProgress({ phase: "started", scanId: "scan-1" }); return terminal.promise; },
+    }));
+    await workflow.initialize();
+    const running = workflow.startScan();
+    workflow.requestScanStop();
+    await Promise.resolve();
+    expect(workflow.read().scan).toMatchObject({ phase: "discovering", failure: { message: "无法停止扫描：IPC unavailable" } });
+    expect(await workflow.selectPreset("preset-1")).toMatchObject({ kind: "unavailable" });
+    workflow.requestScanStop();
+    expect(requestScanStop).toHaveBeenCalledTimes(2);
+    terminal.resolve(summary({ finish: "stopped" }));
+    await running;
+  });
+
+  it("ignores old progress and stop failures while a new scan is active", async () => {
+    const first = deferred<ProjectScanSummary>();
+    const second = deferred<ProjectScanSummary>();
+    const stop = deferred<void>();
+    const updates: Array<(progress: ProjectScanProgress) => void> = [];
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      requestScanStop: async () => stop.promise,
+      runScan: async ({ onProgress }) => {
+        updates.push(onProgress);
+        const scanId = `scan-${updates.length}`;
+        onProgress({ phase: "started", scanId });
+        onProgress({ phase: "discovered", scan: { ...scan([pendingCandidate("candidate")]), scanId } });
+        return updates.length === 1 ? first.promise : second.promise;
+      },
+    }));
+    await workflow.initialize();
+    const oldRun = workflow.startScan();
+    workflow.requestScanStop();
+    first.resolve(summary({ finish: "stopped" }));
+    await oldRun;
+    const newRun = workflow.startScan();
+    updates[0]({ phase: "measured", candidateId: "candidate", measurement: measurement(900) });
+    stop.reject(new Error("old stop failed"));
+    await Promise.resolve();
+    expect(workflow.read().scan).toMatchObject({ phase: "measuring", failure: null, session: { scanId: "scan-2", candidates: [{ measurement: { status: "Pending" } }] } });
+    second.resolve(summary({ scanId: "scan-2" }));
+    await newRun;
   });
 
   it("owns Cleanable Candidate selection and Directory Footprint totals", async () => {
@@ -493,9 +442,8 @@ describe("Project Cleanup workflow", () => {
     const workflow = createProjectCleanupWorkflow(
       effects({
         readSettings: async () => settings(),
-        scan: async () => scan([ready, review]),
-        measure: async ({ candidateId }) =>
-          candidateId === "ready" ? measurement(500) : measurement(200),
+        runScan: completedProjectScan(scan([ready, review]), ({ candidateId }) =>
+          candidateId === "ready" ? measurement(500) : measurement(200)),
       }),
     );
     await workflow.initialize();
@@ -536,9 +484,8 @@ describe("Project Cleanup workflow", () => {
     const workflow = createProjectCleanupWorkflow(
       effects({
         readSettings: async () => settings(),
-        scan: async () => scan(candidates),
-        measure: async ({ candidateId }) =>
-          measurement({ one: 100, two: 200, three: 300 }[candidateId]!),
+        runScan: completedProjectScan(scan(candidates), ({ candidateId }) =>
+          measurement({ one: 100, two: 200, three: 300 }[candidateId]!)),
       }),
     );
     await workflow.initialize();
@@ -584,9 +531,8 @@ describe("Project Cleanup workflow", () => {
     const workflow = createProjectCleanupWorkflow(
       effects({
         readSettings: async () => settings(),
-        scan: async () => scan(candidates),
-        measure: async ({ candidateId }) =>
-          measurement({ one: 100, two: 200, three: 300 }[candidateId]!),
+        runScan: completedProjectScan(scan(candidates), ({ candidateId }) =>
+          measurement({ one: 100, two: 200, three: 300 }[candidateId]!)),
         runBatch,
       }),
     );
@@ -699,8 +645,7 @@ describe("Project Cleanup workflow", () => {
     const workflow = createProjectCleanupWorkflow(
       effects({
         readSettings: async () => settings(),
-        scan: async () => scan(candidates),
-        measure: async () => measurement(100),
+        runScan: completedProjectScan(scan(candidates), () => measurement(100)),
         runBatch,
         requestStop,
       }),
@@ -778,8 +723,7 @@ describe("Project Cleanup workflow", () => {
     const workflow = createProjectCleanupWorkflow(
       effects({
         readSettings: async () => settings(),
-        scan: async () => scan([pendingCandidate("candidate-1")]),
-        measure: async () => measurement(100),
+        runScan: completedProjectScan(scan([pendingCandidate("candidate-1")]), () => measurement(100)),
         openRoot: async (rootId) => {
           openedRoots.push(rootId);
         },
@@ -811,8 +755,7 @@ describe("Project Cleanup workflow", () => {
         readSettings: async () => settings(),
         chooseRoot: async () => settings("root-2", "/work", 9),
         updateDepth: async (_id, depth) => settings("root-1", "/code", depth),
-        scan: async () => scan([pendingCandidate("candidate-1")]),
-        measure: async () => measurement(100),
+        runScan: completedProjectScan(scan([pendingCandidate("candidate-1")]), () => measurement(100)),
       }),
     );
     await workflow.initialize();
@@ -840,139 +783,36 @@ describe("Project Cleanup workflow", () => {
     });
   });
 
-  it("records completed and stopped scans with their terminal measurement state", async () => {
-    const completedDrafts: ProjectScanRecordDraft[] = [];
-    const completed = createProjectCleanupWorkflow(
-      effects({
-        readSettings: async () => settings(),
-        scan: async () => scan(
-          [pendingCandidate("candidate")],
-          { total: 3, rust: 1, node: 2, maven: 0 },
-        ),
-        measure: async () => measurement(100),
-        recordScanHistory: async (draft) => {
-          completedDrafts.push(draft);
-          return recordFromDraft(draft);
-        },
-      }),
-    );
-    await completed.initialize();
-    await completed.startScan();
-
-    expect(completedDrafts).toHaveLength(1);
-    expect(completedDrafts[0]).toMatchObject({
-      presetId: "preset-1",
-      scanId: "scan-1",
-      rootPath: "/code",
-      maxDepth: 6,
-      skipped: 0,
-      measurement: "finished",
-      projects: { total: 3, rust: 1, node: 2, maven: 0 },
-      candidates: [{ kind: "NodeModules", directoryPath: "/code/candidate/node_modules" }],
-    });
-    expect(completed.read().history.byPreset["preset-1"]).toHaveLength(1);
-    expect(completed.read().history.byPreset["preset-1"][0]).toMatchObject({
-      measurement: "finished",
-      candidates: { total: 1, nodeModules: 1 },
-    });
-
-    const stoppedDrafts: ProjectScanRecordDraft[] = [];
-    const measuring = deferred<DirectoryMeasurement>();
-    const stopped = createProjectCleanupWorkflow(
-      effects({
-        readSettings: async () => settings(),
-        scan: async () => scan(
-          [pendingCandidate("candidate")],
-          { total: 1, rust: 0, node: 1, maven: 0 },
-        ),
-        measure: async () => measuring.promise,
-        recordScanHistory: async (draft) => {
-          stoppedDrafts.push(draft);
-          return recordFromDraft(draft);
-        },
-      }),
-    );
-    await stopped.initialize();
-    const running = stopped.startScan();
-    await waitFor(() => stopped.read().scan.phase === "measuring");
-    stopped.requestScanStop();
-    await waitFor(() => stoppedDrafts.length === 1);
-    measuring.resolve(measurement(100));
-    await running;
-    await waitFor(() => stopped.read().history.byPreset["preset-1"]?.length === 1);
-    expect(stoppedDrafts[0].measurement).toBe("stopped");
-    expect(stopped.read().history.byPreset["preset-1"][0].measurement).toBe("stopped");
-  });
-
-  it("does not record failed or discovery-stage stopped scans", async () => {
-    const failedDrafts: ProjectScanRecordDraft[] = [];
-    const failed = createProjectCleanupWorkflow(
-      effects({
-        readSettings: async () => settings(),
-        scan: async () => { throw new Error("offline"); },
-        recordScanHistory: async (draft) => {
-          failedDrafts.push(draft);
-          return recordFromDraft(draft);
-        },
-      }),
-    );
-    await failed.initialize();
-    await failed.startScan();
-    expect(failedDrafts).toHaveLength(0);
-    expect(failed.read().history.recordWarning).toBeNull();
-
-    const discovery = deferred<ProjectDataScan>();
-    const stoppedDrafts: ProjectScanRecordDraft[] = [];
-    const stopped = createProjectCleanupWorkflow(
-      effects({
-        readSettings: async () => settings(),
-        scan: async () => discovery.promise,
-        recordScanHistory: async (draft) => {
-          stoppedDrafts.push(draft);
-          return recordFromDraft(draft);
-        },
-      }),
-    );
-    await stopped.initialize();
-    const running = stopped.startScan();
-    await waitFor(() => stopped.read().scan.phase === "discovering");
-    stopped.requestScanStop();
-    discovery.resolve(scan([]));
-    await running;
-    expect(stoppedDrafts).toHaveLength(0);
-  });
-
-  it("keeps the scan result when the history record cannot be saved", async () => {
-    const workflow = createProjectCleanupWorkflow(
-      effects({
-        readSettings: async () => settings(),
-        scan: async () => scan([pendingCandidate("candidate")]),
-        measure: async () => measurement(100),
-        recordScanHistory: async () => { throw new Error("disk full"); },
-      }),
-    );
+  it("keeps native terminal records and reports saving warnings without changing the scan", async () => {
+    const saved = record();
+    const workflow = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      runScan: completedProjectScan(scan([pendingCandidate("candidate")]), () => measurement(100), { record: saved }),
+    }));
     await workflow.initialize();
-    await expect(workflow.startScan()).resolves.toEqual({
-      kind: "succeeded",
-      value: { scanId: "scan-1", finish: "completed" },
-    });
-    expect(workflow.read().scan.phase).toBe("ready");
-    expect(workflow.read().history.recordWarning).toContain("disk full");
+    await workflow.startScan();
+    expect(workflow.read().history.byPreset["preset-1"]).toEqual([saved]);
+    const failedSave = createProjectCleanupWorkflow(effects({
+      readSettings: async () => settings(),
+      runScan: completedProjectScan(scan([pendingCandidate("candidate")]), () => measurement(100), { historyWarning: "disk full" }),
+    }));
+    await failedSave.initialize();
+    await expect(failedSave.startScan()).resolves.toMatchObject({ kind: "succeeded" });
+    expect(failedSave.read().scan.phase).toBe("ready");
+    expect(failedSave.read().history.recordWarning).toBe("disk full");
+  });
+
+  it("keeps discovery-stop receipts separate from successful observations", async () => {
+    const workflow = createProjectCleanupWorkflow(effects({ readSettings: async () => settings(), runScan: async () => summary({ finish: "stopped" }) }));
+    await workflow.initialize();
+    await workflow.startScan();
+    expect(workflow.read().scan.session).toBeNull();
     expect(workflow.read().history.byPreset["preset-1"]).toEqual([]);
+    expect(getObservationLedgerSnapshot().records["project-scan"]?.lastSuccess).toBeUndefined();
   });
 
   it("loads persisted scan histories and keeps settings usable when history is unavailable", async () => {
-    const persisted = recordFromDraft({
-      presetId: "preset-1",
-      scanId: "scan-1",
-      rootPath: "/code",
-      maxDepth: 6,
-      finishedAt: 100,
-      skipped: 0,
-      measurement: "finished",
-      projects: { total: 2, rust: 1, node: 1, maven: 0 },
-      candidates: [],
-    });
+    const persisted = record({ finishedAt: 123, measurement: "stopped" });
     const loaded = createProjectCleanupWorkflow(
       effects({
         readSettings: async () => settings(),

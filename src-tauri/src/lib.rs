@@ -41,15 +41,13 @@ mod types;
 mod vscode_removal;
 mod vscode_storage;
 
-use crate::command::{run_command, run_command_owned};
+use crate::command::run_command_owned;
 use crate::managers::{
     run_android_sdk_uninstall_with_runner, run_cache_cleanup_with_runner,
     run_npm_maintenance_with_runner, run_pnpm_maintenance_with_runner, scan_manager_snapshot,
 };
 use crate::project_cleanup::{
-    discover_project_data, measure_project_data, DirectoryMeasurement, ProjectCleanupSettings,
-    ProjectCleanupState,
-    ProjectDataOpenTarget, ProjectDataScan, ToolAvailability,
+    ProjectCleanupSettings, ProjectCleanupState, ProjectDataOpenTarget,
 };
 use crate::types::{
     AndroidSdkMaintenanceOperation, CacheCleanupRun, MaintenanceRunPreview, ManagerId,
@@ -766,17 +764,6 @@ async fn list_project_scan_history(
 }
 
 #[tauri::command]
-async fn record_project_scan_history(
-    draft: project_scan_history::ProjectScanRecordDraft,
-    state: tauri::State<'_, project_scan_history::ProjectScanHistoryState>,
-) -> Result<project_scan_history::ProjectScanRecord, String> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.record(draft))
-        .await
-        .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
 async fn choose_project_cleanup_root(
     app: tauri::AppHandle,
     state: tauri::State<'_, ProjectCleanupState>,
@@ -802,61 +789,30 @@ async fn choose_project_cleanup_root(
 }
 
 #[tauri::command]
-async fn scan_project_data(
+async fn run_project_scan(
     root_id: String,
     max_depth: u8,
+    on_progress: tauri::ipc::Channel<project_cleanup::scan::ProjectScanProgress>,
     state: tauri::State<'_, ProjectCleanupState>,
-) -> Result<ProjectDataScan, String> {
-    let (root_path, max_depth, scan_id) = state.prepare_scan(&root_id, max_depth)?;
-    let scan_root = root_path.clone();
-    let (discovery, tools) = tauri::async_runtime::spawn_blocking(move || {
-        let discovery = discover_project_data(&scan_root, max_depth);
-        let (cargo_available, cargo_message) = probe_tool("cargo");
-        let (maven_available, maven_message) = if discovery.has_maven_candidates() {
-            probe_tool("mvn")
-        } else {
-            (true, None)
-        };
-        (
-            discovery,
-            ToolAvailability {
-                cargo_available,
-                cargo_message,
-                maven_available,
-                maven_message,
-            },
-        )
+    history: tauri::State<'_, project_scan_history::ProjectScanHistoryState>,
+) -> Result<project_cleanup::scan::ProjectScanSummary, String> {
+    let state = state.inner().clone();
+    let history = history.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        project_cleanup::scan::run(&state, &history, &root_id, max_depth, &|progress| {
+            let _ = on_progress.send(progress);
+        })
     })
     .await
-    .map_err(|err| format!("Project data scan failed: {err}"))?;
-    state.install_scan(&root_id, scan_id, root_path, max_depth, discovery, tools)
-}
-
-fn probe_tool(program: &str) -> (bool, Option<String>) {
-    match run_command(program, &["--version"], std::time::Duration::from_secs(5)) {
-        Ok(run) if run.exit_code == Some(0) => (true, None),
-        Ok(run) => (
-            false,
-            Some(run.stderr.trim().to_string()).filter(|message| !message.is_empty()),
-        ),
-        Err(failure) => (false, Some(failure.message)),
-    }
+    .map_err(|error| format!("项目扫描任务未能完成：{error}"))?
 }
 
 #[tauri::command]
-async fn measure_project_data_candidate(
+fn request_project_scan_stop(
     scan_id: String,
-    candidate_id: String,
     state: tauri::State<'_, ProjectCleanupState>,
-) -> Result<DirectoryMeasurement, String> {
-    let candidate = state.candidate_for_measurement(&scan_id, &candidate_id)?;
-    let kind = candidate.kind;
-    let directory_path = candidate.directory_path.clone();
-    let measurement =
-        tauri::async_runtime::spawn_blocking(move || measure_project_data(kind, &directory_path))
-            .await
-            .map_err(|err| format!("Project data measurement failed: {err}"))?;
-    state.apply_measurement(&scan_id, &candidate_id, measurement)
+) -> Result<(), String> {
+    project_cleanup::scan::request_stop(&state, &scan_id)
 }
 
 #[tauri::command]
@@ -1206,9 +1162,8 @@ pub fn run() {
             remove_project_cleanup_preset,
             update_project_cleanup_depth,
             list_project_scan_history,
-            record_project_scan_history,
-            scan_project_data,
-            measure_project_data_candidate,
+            run_project_scan,
+            request_project_scan_stop,
             run_project_cleanup_batch,
             request_project_cleanup_stop,
             open_project_cleanup_root,

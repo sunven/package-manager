@@ -1,14 +1,13 @@
 import type {
-  DirectoryMeasurement,
   ProjectCleanupBatchProgress,
   ProjectCleanupResult,
   ProjectCleanupSettings,
   ProjectDataCandidate,
   ProjectDataScan,
   ProjectScanHistoryRead,
-  ProjectScanMeasurement,
   ProjectScanRecord,
-  ProjectScanRecordDraft,
+  ProjectScanProgress,
+  ProjectScanSummary,
 } from "./types";
 import { bumpHistoryRevision } from "./historyRevision";
 import { projectScopeKey } from "./observationFacts";
@@ -20,8 +19,8 @@ export interface ProjectCleanupEffects {
   selectPreset(id: string): Promise<ProjectCleanupSettings>;
   removePreset(id: string): Promise<ProjectCleanupSettings>;
   updateDepth(id: string, maxDepth: number): Promise<ProjectCleanupSettings>;
-  scan(input: { rootId: string; maxDepth: number }): Promise<ProjectDataScan>;
-  measure(input: { scanId: string; candidateId: string }): Promise<DirectoryMeasurement>;
+  runScan(input: { rootId: string; maxDepth: number; onProgress: (progress: ProjectScanProgress) => void }): Promise<ProjectScanSummary>;
+  requestScanStop(scanId: string): Promise<void>;
   runBatch(input: {
     scanId: string;
     batchId: string;
@@ -36,7 +35,6 @@ export interface ProjectCleanupEffects {
     target: "Project" | "Directory";
   }): Promise<void>;
   readScanHistory(presetIds: string[]): Promise<ProjectScanHistoryRead>;
-  recordScanHistory(draft: ProjectScanRecordDraft): Promise<ProjectScanRecord>;
 }
 
 export interface WorkflowFailure {
@@ -92,7 +90,7 @@ export type ProjectCleanupScanSessionView = Omit<ProjectDataScan, "candidates"> 
 };
 
 export interface ProjectCleanupScanView {
-  phase: "idle" | "discovering" | "measuring" | "ready" | "stopped" | "failed";
+  phase: "idle" | "discovering" | "measuring" | "stopping" | "ready" | "stopped" | "failed";
   session: ProjectCleanupScanSessionView | null;
   pendingMeasurements: number;
   failure: WorkflowFailure | null;
@@ -215,7 +213,7 @@ export function createProjectCleanupWorkflow(
 ): ProjectCleanupWorkflow {
   const listeners = new Set<() => void>();
   let disposed = false;
-  let scanGeneration = 0;
+  let activeScan: { scanId: string | null; stopRequested: boolean; stopSent: boolean } | null = null;
   let batchSequence = 0;
   let view: ProjectCleanupView = {
     settings: {
@@ -257,7 +255,7 @@ export function createProjectCleanupWorkflow(
     if (disposed) return { kind: "unavailable", reason: "disposed" };
     if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
     if (view.settings.phase === "loading") return { kind: "unavailable", reason: "settings-busy" };
-    if (view.scan.phase === "discovering" || view.scan.phase === "measuring") return { kind: "unavailable", reason: "scan-active" };
+    if (activeScan) return { kind: "unavailable", reason: "scan-active" };
     const previous = view.settings;
     publish({ ...view, settings: { ...previous, phase: "loading" } });
     try {
@@ -266,7 +264,6 @@ export function createProjectCleanupWorkflow(
         publish({ ...view, settings: previous });
         return { kind: "cancelled" };
       }
-      if (invalidate) scanGeneration += 1;
       publish({
         ...view,
         settings: { ...settings, phase: "ready", failure: null },
@@ -301,52 +298,19 @@ export function createProjectCleanupWorkflow(
     publish({ ...view, history: { ...view.history, byPreset } });
   };
 
-  const recordScan = async (
-    session: ProjectCleanupScanSessionView,
-    measurement: ProjectScanMeasurement,
-    presetId: string | null,
-    finishedAt: number,
-  ) => {
-    if (!presetId) return;
-    try {
-      const record = await effects.recordScanHistory({
-        presetId,
-        scanId: session.scanId,
-        rootPath: session.rootPath,
-        maxDepth: session.maxDepth,
-        finishedAt,
-        skipped: session.skipped,
-        measurement,
-        projects: session.projects,
-        candidates: session.candidates.map((candidate) => ({
-          kind: candidate.kind,
-          directoryPath: candidate.directoryPath,
-        })),
-      });
-      if (!view.settings.presets.some((preset) => preset.id === presetId)) return;
-      const current = view.history;
-      const records = [record, ...(current.byPreset[presetId] ?? [])]
-        .sort((left, right) => right.finishedAt - left.finishedAt)
-        .slice(0, 20);
-      publish({
-        ...view,
-        history: {
-          ...current,
-          phase: "ready",
-          byPreset: { ...current.byPreset, [presetId]: records },
-          warning: null,
-          recordWarning: null,
-        },
-      });
-    } catch (error) {
-      publish({
-        ...view,
-        history: {
-          ...view.history,
-          recordWarning: errorText(error),
-        },
-      });
-    }
+  const sendScanStop = (run: NonNullable<typeof activeScan>) => {
+    if (!run.scanId || !run.stopRequested || run.stopSent) return;
+    run.stopSent = true;
+    void effects.requestScanStop(run.scanId).catch((error) => {
+      if (activeScan !== run || disposed) return;
+      run.stopSent = false;
+      run.stopRequested = false;
+      publish({ ...view, scan: {
+        ...view.scan,
+        phase: view.scan.session ? "measuring" : "discovering",
+        failure: { operation: "scan", message: `无法停止扫描：${errorText(error)}` },
+      } });
+    });
   };
 
   return {
@@ -450,158 +414,79 @@ export function createProjectCleanupWorkflow(
       if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
       const rootId = view.settings.rootId;
       if (!rootId) return { kind: "unavailable", reason: "no-root" };
-      const presetId = view.settings.activePresetId;
-      if (view.scan.phase === "discovering" || view.scan.phase === "measuring") {
-        return { kind: "unavailable", reason: "scan-active" };
-      }
-      const generation = scanGeneration + 1;
-      scanGeneration = generation;
-
-      publish({
-        ...view,
-        scan: {
-          phase: "discovering",
-          session: null,
-          pendingMeasurements: 0,
-          failure: null,
-        },
-        history: {
-          ...view.history,
-          recordWarning: null,
-        },
+      if (activeScan) return { kind: "unavailable", reason: "scan-active" };
+      const run = { scanId: null as string | null, stopRequested: false, stopSent: false };
+      activeScan = run;
+      publish({ ...view,
+        scan: { phase: "discovering", session: null, pendingMeasurements: 0, failure: null },
+        history: { ...view.history, recordWarning: null },
       });
-
-      try {
-        const discovered = await effects.scan({
-          rootId,
-          maxDepth: view.settings.maxDepth,
-        });
-        if (generation !== scanGeneration) return { kind: "cancelled" };
-        const session: ProjectCleanupScanSessionView = {
-          ...discovered,
-          candidates: discovered.candidates.map((candidate) =>
-            candidateView(candidate, discovered),
-          ),
-        };
-        const candidates = session.candidates.filter(
-          (candidate) => candidate.status === "Ready" || candidate.status === "Unrecognized",
-        );
-        publish({
-          ...view,
-          scan: {
-            phase: candidates.length ? "measuring" : "ready",
-            session,
-            pendingMeasurements: candidates.length,
+      const onProgress = (progress: ProjectScanProgress) => {
+        if (activeScan !== run) return;
+        if (progress.phase === "started") {
+          run.scanId = progress.scanId;
+          sendScanStop(run);
+          return;
+        }
+        if (disposed) return;
+        if (progress.phase === "discovered") {
+          const discovered = progress.scan;
+          publish({ ...view, scan: {
+            phase: run.stopRequested ? "stopping" : "measuring",
+            session: { ...discovered, candidates: discovered.candidates.map((candidate) => candidateView(candidate, discovered)) },
+            pendingMeasurements: discovered.candidates.filter((candidate) => candidate.status === "Ready" || candidate.status === "Unrecognized").length,
             failure: null,
-          },
-        });
-
-        let cursor = 0;
-        const measureNext = async () => {
-          while (generation === scanGeneration && cursor < candidates.length) {
-            const candidate = candidates[cursor];
-            cursor += 1;
-            let measurement: DirectoryMeasurement;
-            try {
-              measurement = await effects.measure({
-                scanId: session.scanId,
-                candidateId: candidate.candidateId,
-              });
-            } catch (error) {
-              measurement = failedMeasurement(error);
-            }
-            if (generation !== scanGeneration) return;
-            const currentSession = view.scan.session;
-            if (!currentSession || currentSession.scanId !== session.scanId) return;
-            publish({
-              ...view,
-              scan: {
-                ...view.scan,
-                session: {
-                  ...currentSession,
-                  candidates: currentSession.candidates.map((current) =>
-                    current.candidateId === candidate.candidateId
-                      ? candidateView(
-                          { ...current, measurement },
-                          currentSession,
-                          current.selected,
-                        )
-                      : current,
-                  ),
-                },
-                pendingMeasurements: Math.max(0, view.scan.pendingMeasurements - 1),
-              },
-            });
-          }
-        };
-        await Promise.all(
-          Array.from({ length: Math.min(4, candidates.length) }, () => measureNext()),
-        );
-        if (generation !== scanGeneration) return { kind: "cancelled" };
-        const finishedAt = Date.now();
-        publish({
-          ...view,
-          scan: {
+          } });
+        } else {
+          const session = view.scan.session;
+          if (!session) return;
+          publish({ ...view, scan: {
             ...view.scan,
-            phase: "ready",
+            session: { ...session, candidates: session.candidates.map((candidate) =>
+              candidate.candidateId === progress.candidateId && candidate.cleanup.kind === "not-attempted"
+                ? candidateView({ ...candidate, measurement: progress.measurement }, session, candidate.selected)
+                : candidate) },
+            pendingMeasurements: Math.max(0, view.scan.pendingMeasurements - 1),
+          } });
+        }
+      };
+      try {
+        const summary = await effects.runScan({ rootId, maxDepth: view.settings.maxDepth, onProgress });
+        if (disposed) return { kind: "cancelled" };
+        const phase = summary.finish === "stopped" ? "stopped" : "ready";
+        const record = summary.record;
+        publish({ ...view,
+          scan: { ...view.scan, phase, pendingMeasurements: 0, failure: null },
+          history: { ...view.history,
+            ...(record ? {
+              phase: "ready" as const,
+              byPreset: { ...view.history.byPreset, [record.presetId]: [record, ...(view.history.byPreset[record.presetId] ?? [])]
+                .sort((left, right) => right.finishedAt - left.finishedAt).slice(0, 20) },
+              warning: null,
+            } : {}),
+            recordWarning: summary.historyWarning,
           },
         });
-        recordProjectObservation(session, "ready");
-        await recordScan(session, "finished", presetId, finishedAt);
-        return {
-          kind: "succeeded",
-          value: { scanId: session.scanId, finish: "completed" },
-        };
+        if (view.scan.session) recordProjectObservation(view.scan.session, phase);
+        return summary.finish === "stopped" ? { kind: "cancelled" }
+          : { kind: "succeeded", value: { scanId: summary.scanId, finish: "completed" } };
       } catch (error) {
-        if (generation !== scanGeneration) return { kind: "cancelled" };
-        const failure: WorkflowFailure = {
-          operation: "scan",
-          message: errorText(error),
-        };
-        publish({
-          ...view,
-          scan: {
-            ...view.scan,
-            phase: "failed",
-            pendingMeasurements: 0,
-            failure,
-          },
-        });
-        const scope = view.settings.rootPath
-          ? projectScopeKey(view.settings.rootPath, view.settings.maxDepth)
-          : null;
-        recordObservation({
-          kind: "attempt",
-          itemId: "project-scan",
-          at: Date.now(),
-          outcome: "failed",
-          scope,
-          reason: failure.message,
-        });
+        if (disposed) return { kind: "cancelled" };
+        const failure: WorkflowFailure = { operation: "scan", message: errorText(error) };
+        publish({ ...view, scan: { ...view.scan, phase: "failed", pendingMeasurements: 0, failure } });
+        const scope = view.settings.rootPath ? projectScopeKey(view.settings.rootPath, view.settings.maxDepth) : null;
+        recordObservation({ kind: "attempt", itemId: "project-scan", at: Date.now(), outcome: "failed", scope, reason: failure.message });
         return { kind: "failed", failure };
+      } finally {
+        if (activeScan === run) activeScan = null;
       }
     },
     requestScanStop: () => {
       if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
-      if (view.scan.phase !== "discovering" && view.scan.phase !== "measuring") {
-        return { kind: "unavailable", reason: "scan-inactive" };
-      }
-      const stoppedSession = view.scan.session;
-      const presetId = view.settings.activePresetId;
-      const finishedAt = Date.now();
-      scanGeneration += 1;
-      publish({
-        ...view,
-        scan: {
-          ...view.scan,
-          phase: "stopped",
-          pendingMeasurements: 0,
-        },
-      });
-      if (stoppedSession) {
-        recordProjectObservation(stoppedSession, "stopped");
-        void recordScan(stoppedSession, "stopped", presetId, finishedAt);
-      }
+      if (!activeScan || activeScan.stopRequested) return { kind: "unavailable", reason: "scan-inactive" };
+      activeScan.stopRequested = true;
+      publish({ ...view, scan: { ...view.scan, phase: "stopping", failure: null } });
+      sendScanStop(activeScan);
       return { kind: "succeeded", value: undefined };
     },
     setSelected: (candidateIds, selected) => {
@@ -662,6 +547,7 @@ export function createProjectCleanupWorkflow(
       return { kind: "succeeded", value: undefined };
     },
     prepareCleanupBatch: (orderedSelectedCandidateIds) => {
+      if (view.scan.phase === "stopping") return { kind: "unavailable", reason: "scan-stopping" };
       if (view.settings.phase === "loading") return { kind: "unavailable", reason: "settings-busy" };
       if (view.batch) return { kind: "unavailable", reason: "batch-lock" };
       const session = view.scan.session;
@@ -908,7 +794,7 @@ export function createProjectCleanupWorkflow(
     },
     dispose: () => {
       disposed = true;
-      scanGeneration += 1;
+      if (activeScan) { activeScan.stopRequested = true; sendScanStop(activeScan); }
       listeners.clear();
     },
   };
@@ -959,19 +845,6 @@ function candidateView(
     cleanability,
     selected: selected && cleanability.kind === "cleanable",
     cleanup,
-  };
-}
-
-function failedMeasurement(error: unknown): DirectoryMeasurement {
-  return {
-    status: "Error",
-    bytes: null,
-    human: null,
-    files: 0,
-    directories: 0,
-    skipped: 0,
-    latestModifiedMs: null,
-    message: errorText(error),
   };
 }
 

@@ -126,7 +126,8 @@ export function projectObservationFacts(view: ProjectCleanupView): ObservationFa
   const { settings, scan } = view;
   const reading = settings.phase === "loading"
     || scan.phase === "discovering"
-    || scan.phase === "measuring";
+    || scan.phase === "measuring"
+    || scan.phase === "stopping";
   const failure = scan.phase === "failed"
     ? { outcome: "failed" as const, reason: scan.failure?.message ?? "项目扫描失败" }
     : null;
