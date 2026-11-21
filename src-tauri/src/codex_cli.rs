@@ -1,3 +1,4 @@
+use crate::command::{run_process, ProcessCleanup, ProcessOutcome, ProcessStartError};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -18,7 +19,6 @@ pub(crate) struct Output {
 struct Process {
     child: Child,
     stdout: File,
-    stderr: File,
 }
 
 impl Drop for Process {
@@ -45,14 +45,8 @@ fn start_program(
 ) -> Result<Process, String> {
     let stdout = tempfile::tempfile().map_err(|e| e.to_string())?;
     let stderr = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let mut command = Command::new(program);
+    let mut command = configured_command(home, program, args);
     command
-        .args(args)
-        .current_dir("/")
-        .env("CODEX_HOME", home)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "never")
-        .env("SSH_ASKPASS_REQUIRE", "never")
         .stdin(if input { Stdio::piped() } else { Stdio::null() })
         .stdout(stdout.try_clone().map_err(|e| e.to_string())?)
         .stderr(stderr.try_clone().map_err(|e| e.to_string())?);
@@ -61,21 +55,33 @@ fn start_program(
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let child = command.spawn().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            format!(
-                "未找到 {} CLI，请确认应用的 PATH。",
-                if program == "codex" { "Codex" } else { program }
-            )
-        } else {
-            format!("无法运行 Codex CLI：{e}")
-        }
-    })?;
-    Ok(Process {
-        child,
-        stdout,
-        stderr,
-    })
+    let child = command
+        .spawn()
+        .map_err(|error| spawn_error(program, error))?;
+    Ok(Process { child, stdout })
+}
+
+fn configured_command(home: &Path, program: &str, args: &[&str]) -> Command {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir("/")
+        .env("CODEX_HOME", home)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GCM_INTERACTIVE", "never")
+        .env("SSH_ASKPASS_REQUIRE", "never");
+    command
+}
+
+fn spawn_error(program: &str, error: std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        format!(
+            "未找到 {} CLI，请确认应用的 PATH。",
+            if program == "codex" { "Codex" } else { program }
+        )
+    } else {
+        format!("无法运行 Codex CLI：{error}")
+    }
 }
 
 fn read_output(file: &mut File) -> Result<String, String> {
@@ -99,25 +105,29 @@ fn run_program(
     args: &[&str],
     timeout: Duration,
 ) -> Result<Output, String> {
-    let mut process = start_program(home, program, args, false)?;
-    let started = Instant::now();
-    loop {
-        match process.child.try_wait().map_err(|e| e.to_string())? {
-            Some(status) => {
-                return Ok(Output {
-                    success: status.success(),
-                    stdout: read_output(&mut process.stdout)?,
-                    stderr: read_output(&mut process.stderr)?,
-                })
+    run_process(
+        &mut configured_command(home, program, args),
+        timeout,
+        None,
+        ProcessCleanup::Always,
+        |outcome, stdout, stderr| match outcome {
+            ProcessOutcome::Exited(status) => Ok(Output {
+                success: status.success(),
+                stdout: read_output(stdout)?,
+                stderr: read_output(stderr)?,
+            }),
+            ProcessOutcome::TimedOut => {
+                Err("Codex 操作超时。请检查网络和本机 Git 认证，再重新读取清单核对结果。".into())
             }
-            None if started.elapsed() >= timeout => {
-                return Err(
-                    "Codex 操作超时。请检查网络和本机 Git 认证，再重新读取清单核对结果。".into(),
-                )
-            }
-            None => std::thread::sleep(Duration::from_millis(25)),
+            ProcessOutcome::WaitFailed(error) => Err(error.to_string()),
+        },
+    )
+    .map_err(|error| match error {
+        ProcessStartError::Capture(error) | ProcessStartError::CaptureClone(error) => {
+            error.to_string()
         }
-    }
+        ProcessStartError::Spawn(error) => spawn_error(program, error),
+    })?
 }
 
 #[derive(Debug, PartialEq)]
@@ -293,3 +303,7 @@ pub(crate) fn diagnostic(stderr: &str) -> String {
         message.trim().into()
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "codex_cli_tests.rs"]
+mod tests;

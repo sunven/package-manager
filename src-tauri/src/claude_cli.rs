@@ -1,10 +1,11 @@
+use crate::command::{run_process, ProcessCleanup, ProcessOutcome, ProcessStartError};
 use serde_json::Value;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub(crate) static OPERATIONS: Mutex<()> = Mutex::new(());
 
@@ -33,19 +34,6 @@ pub(crate) fn resolve_home() -> Result<PathBuf, String> {
     }
 }
 
-struct Process(Child);
-
-impl Drop for Process {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        unsafe {
-            libc::kill(-(self.0.id() as i32), libc::SIGKILL);
-        }
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 fn read_output(file: &mut File) -> Result<String, String> {
     file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
     let mut text = String::new();
@@ -56,45 +44,48 @@ fn read_output(file: &mut File) -> Result<String, String> {
 }
 
 pub(crate) fn run(home: &Path, args: &[&str], timeout: Duration) -> Result<Output, String> {
-    let mut stdout = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let mut stderr = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let mut command = Command::new("claude");
+    run_program(home, "claude", args, timeout)
+}
+
+fn run_program(
+    home: &Path,
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<Output, String> {
+    let mut command = Command::new(program);
     command
         .args(args)
         .current_dir("/")
         .env("CLAUDE_CONFIG_DIR", home)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GCM_INTERACTIVE", "never")
-        .env("SSH_ASKPASS_REQUIRE", "never")
-        .stdin(Stdio::null())
-        .stdout(stdout.try_clone().map_err(|e| e.to_string())?)
-        .stderr(stderr.try_clone().map_err(|e| e.to_string())?);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-    let mut process = Process(command.spawn().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            "未找到 Claude CLI，请确认应用 PATH 中有 claude。".into()
-        } else {
-            format!("无法运行 Claude CLI：{e}")
-        }
-    })?);
-    let started = Instant::now();
-    loop {
-        if let Some(status) = process.0.try_wait().map_err(|e| e.to_string())? {
-            return Ok(Output {
+        .env("SSH_ASKPASS_REQUIRE", "never");
+    run_process(
+        &mut command,
+        timeout,
+        None,
+        ProcessCleanup::Always,
+        |outcome, stdout, stderr| match outcome {
+            ProcessOutcome::Exited(status) => Ok(Output {
                 success: status.success(),
-                stdout: read_output(&mut stdout)?,
-                stderr: read_output(&mut stderr)?,
-            });
+                stdout: read_output(stdout)?,
+                stderr: read_output(stderr)?,
+            }),
+            ProcessOutcome::TimedOut => Err("Claude 操作超时，结果尚未确认。请重新读取清单核对；需要认证时先在 Claude CLI 完成。".into()),
+            ProcessOutcome::WaitFailed(error) => Err(error.to_string()),
+        },
+    )
+    .map_err(|error| match error {
+        ProcessStartError::Capture(error) | ProcessStartError::CaptureClone(error) => error.to_string(),
+        ProcessStartError::Spawn(error) => {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                "未找到 Claude CLI，请确认应用 PATH 中有 claude。".into()
+            } else {
+                format!("无法运行 Claude CLI：{error}")
+            }
         }
-        if started.elapsed() >= timeout {
-            return Err("Claude 操作超时，结果尚未确认。请重新读取清单核对；需要认证时先在 Claude CLI 完成。".into());
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    })?
 }
 
 pub(crate) fn json_output(output: &Output) -> Result<Value, String> {
@@ -151,3 +142,7 @@ pub(crate) fn diagnostic(output: &Output) -> String {
         "Claude CLI 未完成操作。请检查来源、依赖、权限与认证，然后重新读取核对结果。".into()
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "claude_cli_tests.rs"]
+mod tests;

@@ -1,12 +1,13 @@
+use crate::command::{run_process, ProcessCleanup, ProcessOutcome, ProcessStartError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use toml_edit::{DocumentMut, Item, Table};
 
 #[derive(Clone, Default)]
@@ -536,32 +537,68 @@ fn parse_inventory(stdout: &str) -> Result<Vec<InventoryPlugin>, ListFailure> {
 }
 
 fn list_plugins(home: &Path) -> Result<Vec<InventoryPlugin>, ListFailure> {
+    let mut command = Command::new("codex");
+    command
+        .args(["plugin", "list", "--available", "--json"])
+        .current_dir("/")
+        .env("CODEX_HOME", home);
+    list_plugins_command(&mut command, Duration::from_secs(15))
+}
+
+fn list_plugins_command(
+    command: &mut Command,
+    timeout: Duration,
+) -> Result<Vec<InventoryPlugin>, ListFailure> {
     let fail = |message: String| ListFailure {
         status: PluginScanStatus::Failed,
         message,
     };
-    // Files drain both streams while waiting, including inventories larger than a pipe buffer.
-    let mut stdout =
-        tempfile::tempfile().map_err(|error| fail(format!("无法准备插件清单读取：{error}")))?;
-    let mut stderr =
-        tempfile::tempfile().map_err(|error| fail(format!("无法准备插件清单读取：{error}")))?;
-    let mut child = Command::new("codex")
-        .args(["plugin", "list", "--available", "--json"])
-        .current_dir("/")
-        .env("CODEX_HOME", home)
-        .stdin(Stdio::null())
-        .stdout(
+    run_process(
+        command,
+        timeout,
+        None,
+        ProcessCleanup::OnWaitFailure,
+        |outcome, stdout, stderr| {
+            let status = match outcome {
+                ProcessOutcome::Exited(status) => status,
+                ProcessOutcome::TimedOut => return Err(fail("读取插件清单超时，请稍后刷新。".into())),
+                ProcessOutcome::WaitFailed(error) => {
+                    return Err(fail(format!("无法等待 Codex CLI：{error}")))
+                }
+            };
+            let mut output = String::new();
             stdout
-                .try_clone()
-                .map_err(|error| fail(error.to_string()))?,
-        )
-        .stderr(
+                .seek(SeekFrom::Start(0))
+                .and_then(|_| stdout.read_to_string(&mut output))
+                .map_err(|error| fail(format!("无法读取插件清单：{error}")))?;
+            if status.success() {
+                return parse_inventory(&output);
+            }
+            let mut diagnostic = String::new();
             stderr
-                .try_clone()
-                .map_err(|error| fail(error.to_string()))?,
-        )
-        .spawn()
-        .map_err(|error| ListFailure {
+                .seek(SeekFrom::Start(0))
+                .and_then(|_| stderr.read_to_string(&mut diagnostic))
+                .map_err(|error| fail(error.to_string()))?;
+            let incompatible = diagnostic.contains("unrecognized subcommand")
+                || diagnostic.contains("unexpected argument");
+            Err(ListFailure {
+                status: if incompatible {
+                    PluginScanStatus::Incompatible
+                } else {
+                    PluginScanStatus::Failed
+                },
+                message: if incompatible {
+                    "当前 Codex CLI 不支持插件清单，请更新 CLI 后刷新。".into()
+                } else {
+                    format!("Codex CLI 读取插件清单失败（退出码 {}）。请检查用户配置，并在终端运行 codex plugin list --json 核对。", status.code().map(|code| code.to_string()).unwrap_or_else(|| "未知".into()))
+                },
+            })
+        },
+    )
+    .map_err(|error| match error {
+        ProcessStartError::Capture(error) => fail(format!("无法准备插件清单读取：{error}")),
+        ProcessStartError::CaptureClone(error) => fail(error.to_string()),
+        ProcessStartError::Spawn(error) => ListFailure {
             status: if error.kind() == std::io::ErrorKind::NotFound {
                 PluginScanStatus::MissingCli
             } else {
@@ -573,51 +610,8 @@ fn list_plugins(home: &Path) -> Result<Vec<InventoryPlugin>, ListFailure> {
             } else {
                 format!("无法运行 Codex CLI：{error}")
             },
-        })?;
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < Duration::from_secs(15) => {
-                std::thread::sleep(Duration::from_millis(25))
-            }
-            result => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(fail(match result {
-                    Err(error) => format!("无法等待 Codex CLI：{error}"),
-                    _ => "读取插件清单超时，请稍后刷新。".into(),
-                }));
-            }
-        }
-    };
-    let mut output = String::new();
-    stdout
-        .seek(SeekFrom::Start(0))
-        .and_then(|_| stdout.read_to_string(&mut output))
-        .map_err(|error| fail(format!("无法读取插件清单：{error}")))?;
-    if status.success() {
-        return parse_inventory(&output);
-    }
-    let mut diagnostic = String::new();
-    stderr
-        .seek(SeekFrom::Start(0))
-        .and_then(|_| stderr.read_to_string(&mut diagnostic))
-        .map_err(|error| fail(error.to_string()))?;
-    let incompatible = diagnostic.contains("unrecognized subcommand")
-        || diagnostic.contains("unexpected argument");
-    Err(ListFailure {
-        status: if incompatible {
-            PluginScanStatus::Incompatible
-        } else {
-            PluginScanStatus::Failed
         },
-        message: if incompatible {
-            "当前 Codex CLI 不支持插件清单，请更新 CLI 后刷新。".into()
-        } else {
-            format!("Codex CLI 读取插件清单失败（退出码 {}）。请检查用户配置，并在终端运行 codex plugin list --json 核对。", status.code().map(|code| code.to_string()).unwrap_or_else(|| "未知".into()))
-        },
-    })
+    })?
 }
 
 pub(crate) struct ConfigFile {
@@ -736,6 +730,98 @@ fn persist_config(path: &Path, config: ConfigFile) -> Result<(), PluginChangeRes
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[cfg(unix)]
+    fn list_from_shell(script: &str) -> Result<Vec<InventoryPlugin>, ListFailure> {
+        list_plugins_command(
+            Command::new("/bin/sh").args(["-c", script]),
+            Duration::from_secs(2),
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn listing_decodes_stdout_strictly_and_ignores_stderr_on_success() {
+        assert!(list_from_shell(
+            "printf '{\"installed\":[],\"available\":[]}'; printf '\\377' >&2",
+        )
+        .unwrap()
+        .is_empty());
+        let error = list_from_shell("printf '\\377'").unwrap_err();
+        assert_eq!(error.status, PluginScanStatus::Failed);
+        assert!(error.message.starts_with("无法读取插件清单："));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn listing_keeps_missing_and_nonzero_exit_classifications() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = list_plugins_command(
+            &mut Command::new(directory.path().join("missing-cli")),
+            Duration::from_secs(2),
+        )
+        .unwrap_err();
+        assert_eq!(error.status, PluginScanStatus::MissingCli);
+        assert!(error.message.starts_with("未找到 Codex CLI。"));
+
+        let error =
+            list_from_shell("printf '{}' ; printf 'unexpected argument' >&2; exit 2").unwrap_err();
+        assert_eq!(error.status, PluginScanStatus::Incompatible);
+        let error =
+            list_from_shell("printf '{}' ; printf 'Unexpected argument' >&2; exit 9").unwrap_err();
+        assert_eq!(error.status, PluginScanStatus::Failed);
+        assert!(error.message.contains("退出码 9"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn listing_timeout_stops_descendants() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("continued");
+        let ready = directory.path().join("ready");
+        let error = list_plugins_command(
+            Command::new("/bin/sh").args([
+                "-c",
+                "touch \"$2\"; (sleep 1; touch \"$1\") & wait",
+                "probe",
+                marker.to_str().unwrap(),
+                ready.to_str().unwrap(),
+            ]),
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert_eq!(error.status, PluginScanStatus::Failed);
+        assert_eq!(error.message, "读取插件清单超时，请稍后刷新。");
+        assert!(ready.exists(), "the fixture never started");
+        std::thread::sleep(Duration::from_millis(1200));
+        assert!(
+            !marker.exists(),
+            "the descendant kept running after timeout"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn listing_normal_exits_leave_descendants_running() {
+        let directory = tempfile::tempdir().unwrap();
+        for exit_code in ["0", "7"] {
+            let marker = directory.path().join(exit_code);
+            let result = list_plugins_command(
+                Command::new("/bin/sh").args([
+                    "-c",
+                    "printf '{\"installed\":[],\"available\":[]}'; (sleep 1; touch \"$1\") & exit \"$2\"",
+                    "probe",
+                    marker.to_str().unwrap(),
+                    exit_code,
+                ]),
+                Duration::from_secs(2),
+            );
+            assert_eq!(result.is_ok(), exit_code == "0");
+        }
+        std::thread::sleep(Duration::from_millis(1200));
+        assert!(directory.path().join("0").exists());
+        assert!(directory.path().join("7").exists());
+    }
 
     fn inventory() -> Vec<InventoryPlugin> {
         parse_inventory(&json!({"installed": [

@@ -3,9 +3,99 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[derive(Debug)]
+pub(crate) enum ProcessStartError {
+    Capture(std::io::Error),
+    CaptureClone(std::io::Error),
+    Spawn(std::io::Error),
+}
+
+#[derive(Debug)]
+pub(crate) enum ProcessOutcome {
+    Exited(ExitStatus),
+    TimedOut,
+    WaitFailed(std::io::Error),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ProcessCleanup {
+    OnWaitFailure,
+    Always,
+}
+
+struct Process {
+    child: Child,
+    cleanup_on_drop: bool,
+}
+
+impl Process {
+    fn stop(&mut self) {
+        stop_child(&mut self.child);
+        self.cleanup_on_drop = false;
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        if self.cleanup_on_drop {
+            self.stop();
+        }
+    }
+}
+
+// Collect output before normal-exit cleanup; failed waits stop writers before collection.
+// A supplied start time includes capture and spawn in the caller's timeout.
+pub(crate) fn run_process<T>(
+    command: &mut Command,
+    timeout: Duration,
+    started: Option<Instant>,
+    cleanup: ProcessCleanup,
+    collect: impl FnOnce(ProcessOutcome, &mut File, &mut File) -> T,
+) -> Result<T, ProcessStartError> {
+    let mut stdout = tempfile::tempfile().map_err(ProcessStartError::Capture)?;
+    let mut stderr = tempfile::tempfile().map_err(ProcessStartError::Capture)?;
+    let stdout_sink = stdout
+        .try_clone()
+        .map_err(ProcessStartError::CaptureClone)?;
+    let stderr_sink = stderr
+        .try_clone()
+        .map_err(ProcessStartError::CaptureClone)?;
+    command
+        .stdin(Stdio::null())
+        .stdout(stdout_sink)
+        .stderr(stderr_sink);
+    #[cfg(unix)]
+    command.process_group(0);
+
+    let child = command.spawn().map_err(ProcessStartError::Spawn)?;
+    let started = started.unwrap_or_else(Instant::now);
+    let mut process = Process {
+        child,
+        cleanup_on_drop: true,
+    };
+    let outcome = loop {
+        match process.child.try_wait() {
+            Ok(Some(status)) => {
+                process.cleanup_on_drop = matches!(cleanup, ProcessCleanup::Always);
+                break ProcessOutcome::Exited(status);
+            }
+            Ok(None) if started.elapsed() >= timeout => {
+                process.stop();
+                break ProcessOutcome::TimedOut;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(error) => {
+                process.stop();
+                break ProcessOutcome::WaitFailed(error);
+            }
+        }
+    };
+    Ok(collect(outcome, &mut stdout, &mut stderr))
+}
 
 pub(crate) fn run_recorded_stdout<F>(
     snapshot: &mut ManagerSnapshot,
@@ -65,110 +155,87 @@ pub(crate) fn run_command(
 ) -> Result<CommandRun, CommandFailure> {
     let envelope = envelope(program, args, timeout.as_millis() as u64);
     let started = Instant::now();
-    let capture = (|| -> std::io::Result<_> {
-        let stdout = tempfile::tempfile()?;
-        let stderr = tempfile::tempfile()?;
-        let outputs = (stdout.try_clone()?, stderr.try_clone()?);
-        Ok((stdout, stderr, outputs))
-    })();
-    let (mut stdout, mut stderr, (stdout_sink, stderr_sink)) =
-        capture.map_err(|err| CommandFailure {
-            kind: FailureKind::CommandFailed,
-            message: format!("Could not capture output from {}", envelope.preview),
-            command: Some(envelope.clone()),
-            stdout: String::new(),
-            stderr: err.to_string(),
-        })?;
+    let failure = |kind, message, stdout, stderr| CommandFailure {
+        kind,
+        message,
+        command: Some(envelope.clone()),
+        stdout,
+        stderr,
+    };
     let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(stdout_sink)
-        .stderr(stderr_sink);
-    #[cfg(unix)]
-    command.process_group(0);
-
+    command.args(args);
     if program == "brew" {
         command
             .env("HOMEBREW_NO_AUTO_UPDATE", "1")
             .env("HOMEBREW_NO_ENV_HINTS", "1");
     }
 
-    let child = command.spawn();
-
-    match child {
-        Ok(mut child) => loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let output = match read_output(&mut stdout)
-                        .and_then(|stdout| read_output(&mut stderr).map(|stderr| (stdout, stderr)))
-                    {
-                        Ok(output) => output,
-                        Err(err) => {
-                            return Err(CommandFailure {
-                                kind: FailureKind::CommandFailed,
-                                message: format!("Could not read output from {}", envelope.preview),
-                                command: Some(envelope),
-                                stdout: String::new(),
-                                stderr: err.to_string(),
-                            })
-                        }
-                    };
-
-                    return Ok(CommandRun {
-                        envelope,
-                        stdout: output.0,
-                        stderr: output.1,
-                        exit_code: status.code(),
-                        duration_ms: started.elapsed().as_millis(),
-                    });
-                }
-                Ok(None) if started.elapsed() >= timeout => {
-                    stop_child(&mut child);
-
-                    return Err(CommandFailure {
-                        kind: FailureKind::Timeout,
-                        message: format!("{} exceeded the configured timeout", envelope.preview),
-                        command: Some(envelope),
-                        stdout: read_output(&mut stdout).unwrap_or_default(),
-                        stderr: read_output(&mut stderr).unwrap_or_default(),
-                    });
-                }
-                Ok(None) => thread::sleep(Duration::from_millis(25)),
-                Err(err) => {
-                    stop_child(&mut child);
-                    return Err(CommandFailure {
-                        kind: FailureKind::CommandFailed,
-                        message: format!("Could not wait for {}", envelope.preview),
-                        command: Some(envelope),
-                        stdout: String::new(),
-                        stderr: err.to_string(),
-                    })
-                }
+    run_process(
+        &mut command,
+        timeout,
+        Some(started),
+        ProcessCleanup::OnWaitFailure,
+        |outcome, stdout, stderr| match outcome {
+            ProcessOutcome::Exited(status) => {
+                let (stdout, stderr) = read_output(stdout)
+                    .and_then(|stdout| read_output(stderr).map(|stderr| (stdout, stderr)))
+                    .map_err(|error| {
+                        failure(
+                            FailureKind::CommandFailed,
+                            format!("Could not read output from {}", envelope.preview),
+                            String::new(),
+                            error.to_string(),
+                        )
+                    })?;
+                Ok(CommandRun {
+                    envelope: envelope.clone(),
+                    stdout,
+                    stderr,
+                    exit_code: status.code(),
+                    duration_ms: started.elapsed().as_millis(),
+                })
             }
+            ProcessOutcome::TimedOut => Err(failure(
+                FailureKind::Timeout,
+                format!("{} exceeded the configured timeout", envelope.preview),
+                read_output(stdout).unwrap_or_default(),
+                read_output(stderr).unwrap_or_default(),
+            )),
+            ProcessOutcome::WaitFailed(error) => Err(failure(
+                FailureKind::CommandFailed,
+                format!("Could not wait for {}", envelope.preview),
+                String::new(),
+                error.to_string(),
+            )),
         },
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(CommandFailure {
-            kind: FailureKind::MissingBinary,
-            message: format!("{program} is not installed or is not on PATH"),
-            command: Some(envelope),
-            stdout: String::new(),
-            stderr: err.to_string(),
-        }),
-        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => Err(CommandFailure {
-            kind: FailureKind::PermissionDenied,
-            message: format!("Permission denied while running {}", envelope.preview),
-            command: Some(envelope),
-            stdout: String::new(),
-            stderr: err.to_string(),
-        }),
-        Err(err) => Err(CommandFailure {
-            kind: FailureKind::CommandFailed,
-            message: format!("Could not run {}", envelope.preview),
-            command: Some(envelope),
-            stdout: String::new(),
-            stderr: err.to_string(),
-        }),
-    }
+    )
+    .map_err(|error| {
+        let (kind, message, error) = match error {
+            ProcessStartError::Capture(error) | ProcessStartError::CaptureClone(error) => (
+                FailureKind::CommandFailed,
+                format!("Could not capture output from {}", envelope.preview),
+                error,
+            ),
+            ProcessStartError::Spawn(error) => {
+                let (kind, message) = match error.kind() {
+                    std::io::ErrorKind::NotFound => (
+                        FailureKind::MissingBinary,
+                        format!("{program} is not installed or is not on PATH"),
+                    ),
+                    std::io::ErrorKind::PermissionDenied => (
+                        FailureKind::PermissionDenied,
+                        format!("Permission denied while running {}", envelope.preview),
+                    ),
+                    _ => (
+                        FailureKind::CommandFailed,
+                        format!("Could not run {}", envelope.preview),
+                    ),
+                };
+                (kind, message, error)
+            }
+        };
+        failure(kind, message, String::new(), error.to_string())
+    })?
 }
 
 fn read_output(file: &mut File) -> std::io::Result<String> {
@@ -262,6 +329,57 @@ pub(crate) fn envelope_preview_owned(program: &str, args: &[String]) -> String {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normal_exits_leave_descendants_running() {
+        let directory = tempfile::tempdir().unwrap();
+        for exit_code in ["0", "7"] {
+            let marker = directory.path().join(exit_code);
+            let run = run_command(
+                "/bin/sh",
+                &[
+                    "-c",
+                    "printf started; (sleep 1; touch \"$1\") & exit \"$2\"",
+                    "probe",
+                    marker.to_str().unwrap(),
+                    exit_code,
+                ],
+                Duration::from_secs(2),
+            )
+            .unwrap();
+            assert_eq!(run.exit_code, exit_code.parse().ok());
+            assert_eq!(run.stdout, "started");
+        }
+        thread::sleep(Duration::from_millis(1200));
+        assert!(directory.path().join("0").exists());
+        assert!(directory.path().join("7").exists());
+    }
+
+    #[test]
+    fn signal_exit_and_spawn_failures_keep_their_classification() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let run = run_command(
+            "/bin/sh",
+            &["-c", "printf '\\377'; printf '\\377' >&2; kill -TERM $$"],
+            Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(run.exit_code, None);
+        assert_eq!(run.stdout, "\u{fffd}");
+        assert_eq!(run.stderr, "\u{fffd}");
+
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("cli");
+        let missing =
+            run_command(binary.to_str().unwrap(), &[], Duration::from_secs(2)).unwrap_err();
+        assert!(matches!(missing.kind, FailureKind::MissingBinary));
+        std::fs::write(&binary, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let denied =
+            run_command(binary.to_str().unwrap(), &[], Duration::from_secs(2)).unwrap_err();
+        assert!(matches!(denied.kind, FailureKind::PermissionDenied));
+    }
 
     #[test]
     fn drains_large_stdout_and_stderr_without_timing_out() {
